@@ -4,7 +4,7 @@ Oligarchy NixOS is a custom NixOS distribution optimized for the Framework Lapto
 
 ![Oligarchy](https://repository-images.githubusercontent.com/1072001868/8b510033-8549-4c89-995d-d40f79680900)
 
-## Why Oligarchy NixOS is Optimized
+## Why Oligarchy NixOS is Optimized and Supreme
 
 - **Low Idle Power Consumption**: Tailored for the Framework Laptop 16 with power-efficient settings:
   - **Power Profiles Daemon**: Dynamically adjusts CPU performance to minimize idle power usage (`power-profiles-daemon` enables balanced/low-power modes).
@@ -18,7 +18,7 @@ Oligarchy NixOS is a custom NixOS distribution optimized for the Framework Lapto
 - **Customization Scripts**: Tools for resolution cycling, Hyprland configuration, theme switching, and web app integration enhance user control, accessible via Wofi or keybindings.
 - **Flatpak and Snap Support**: Flatpak is enabled by default for broad application access. Snap is optional, expanding software availability without compromising Nix’s reproducibility.
 
-## Who and What It’s Good For
+## Who and What It’s Good For.
 
 Oligarchy NixOS is ideal for:
 - **Developers**: Offers a robust toolset for programming (gcc, rustc, Python, Go, SBCL with Lisp packages, Docker) and networking (Wireshark, nmap, Mininet). The lightweight Hyprland desktop and VS Code server (`openvscode-server`) ensure efficient workflows.
@@ -29,7 +29,7 @@ Oligarchy NixOS is ideal for:
 
 Use cases include software development, content creation, gaming, and running a lightweight, secure Linux system on modern hardware.
 
-## Features
+## Features for the Masses
 
 - **Guided TUI Installer**: Prompts for keyboard layout, disk (LUKS-encrypted ext4), Framework hardware support, locale, timezone, hostname, user accounts, gaming, and Snap support.
 - **Hyprland Desktop**: Fast Wayland compositor with Waybar (system status) and Wofi (application launcher), configured for multi-monitor and clamshell mode.
@@ -43,7 +43,7 @@ Use cases include software development, content creation, gaming, and running a 
 - **Framework 16 Optimization**: Hardware-specific modules for AMD Ryzen 7040, with fallback for other systems.
 - **Comprehensive Packages**: Development, multimedia, networking, and utilities (see below).
 
-## Packages
+## Packages from the Elite
 
 ### Main Packages
 Always installed, covering development, multimedia, networking, utilities, and desktop environment:
@@ -86,7 +86,7 @@ Always installed, covering development, multimedia, networking, utilities, and d
 - **Development Servers**:
   - `unstable.openvscode-server`: VS Code server (from nixpkgs-unstable)
 
-### Optional Gaming Packages
+### Optional Gaming Packages for Optimal State Sanctioned Entertainment 
 Enabled with `custom.steam.enable` (prompted during install):
 - `steam`, `steam-run`, `linuxConsoleTools`, `lutris`, `wineWowPackages.stable`, `dhewm3`, `r2modman`, `darkradiant`, `proton-ge-bin` (via `programs.steam.extraCompatPackages`)
 
@@ -96,7 +96,7 @@ Included in the live ISO for installation:
 - `dialog`: TUI framework
 - `python3`: Script runtime
 
-### Flatpak and Snap
+### Flatpak and Snap Apologists
 - **Flatpak**: Enabled by default (`services.flatpak.enable`). Install with:
   ```bash
   flatpak install flathub <app-id>
@@ -108,7 +108,7 @@ Included in the live ISO for installation:
   ```
   Example: `snap install core; snap install hello-world`
 
-## Prerequisites
+## Prerequisites for Worthiness
 
 - A system with Nix installed (or a NixOS environment).
 - Framework Laptop 16 (AMD Ryzen 7040 series) for optimal hardware support, though compatible with other hardware.
@@ -158,7 +158,7 @@ Included in the live ISO for installation:
    qemu-system-x86_64 -cdrom result/iso/nixos-*.iso -m 4G -enable-kvm -cpu host
    ```
 
-## Usage
+## State Sanctioned Usage
 
 - **Desktop**: Hyprland with Waybar (CPU, memory, battery, network status) and Wofi (launch apps with `SUPER+D`).
 - **Customization**:
@@ -178,11 +178,11 @@ Included in the live ISO for installation:
 
 ## Contributing
 
-Contributions are welcome! Submit pull requests or issues to the [GitHub repository](https://github.com/ALH477/DeMoD-Framework16-NIXOS). Ensure changes maintain compatibility with NixOS and Framework 16.
+Contributions are nascent. Fork. Submit pull requests or issues to the [GitHub repository](https://github.com/ALH477/Oligarchy). Ensure changes maintain compatibility with NixOS and Framework 16. 
 
 ## License
 
-This project is licensed under the BSD 3-Clause License:
+This project is licensed under the BSD 3-Clause License, be thankful:
 
 ```
 Copyright (c) 2025, DeMoD LLC
