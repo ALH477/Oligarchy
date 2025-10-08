@@ -214,11 +214,15 @@
             bindl = ,switch:off:Lid Switch,exec,~/.config/hypr/lid.sh open
             bindl = ,switch:on:Lid Switch,exec,~/.config/hypr/lid.sh close
           '';
-          # Hyprpaper config
+          # Hyprpaper config with fallback to repo wallpaper
           environment.etc."hypr/hyprpaper.conf".text = ''
             preload = ~/Pictures/wall.jpg
             wallpaper = eDP-2,~/Pictures/wall.jpg
+            preload = /etc/nixos/hypr/wallpaper.jpg
+            wallpaper = eDP-2,/etc/nixos/hypr/wallpaper.jpg
           '';
+          # Wallpaper from repo
+          environment.etc."hypr/wallpaper.jpg".source = ./wallpaper.jpg;
           # Waybar config
           environment.etc."waybar/config".text = ''
             {
@@ -352,9 +356,8 @@
           environment.etc."hypr/lid.sh" = {
             text = ''
               #!/usr/bin/env bash
-              if [ "$1" == "close" ]; then
-                hyprctl keyword monitor "eDP-2,disable"
-              else
+              hyprctl keyword monitor "eDP-2,disable"  # Always disable laptop screen on lid close
+              if [[ $1 == "open" ]]; then
                 hyprctl keyword monitor "eDP-2,2560x1600@165,auto,1"
               fi
             '';
@@ -365,7 +368,7 @@
             text = ''
               #!/usr/bin/env bash
               INTERNAL="eDP-2"
-              if hyprctl monitors | grep -q "DP-"; then
+              if [[ "$(hyprctl monitors)" =~ DP- ]]; then
                 if hyprctl monitors | grep -q "$INTERNAL" && ! hyprctl monitors | grep -q "$INTERNAL.*(disabled)"; then
                   hyprctl keyword monitor "$INTERNAL,disable"
                   notify-send "Clamshell Mode" "Laptop screen disabled"
@@ -574,8 +577,15 @@
                   if icon_path and not Path(icon_path).exists():
                       print("Error: Icon file does not exist")
                       return
+                  print("Select browser: 1. Firefox, 2. Brave, 3. Default (xdg-open)")
+                  browser_choice = input("Enter choice (1-3): ")
+                  if browser_choice == "1":
+                      browser = "firefox"
+                  elif browser_choice == "2":
+                      browser = "brave"
+                  else:
+                      browser = "xdg-open"
                   desktop_file = Path.home() / f".local/share/applications/webapp-{app_name.lower().replace(' ', '-')}.desktop"
-                  browser = "xdg-open"
                   desktop_content = f"""
               [Desktop Entry]
               Name={app_name}
