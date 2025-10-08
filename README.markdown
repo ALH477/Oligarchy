@@ -2,7 +2,7 @@
 
 Oligarchy NixOS is a custom NixOS distribution optimized for the Framework Laptop 16 (AMD Ryzen 7040 series), designed for developers, creators, gamers, and Framework enthusiasts. Inspired by Omarchy’s seamless installation, it provides a lightweight Hyprland desktop, a guided TUI installer, and extensive customization options. The system supports Flatpak and Snap packages, a robust gaming suite, and hardware-specific optimizations, ensuring performance, low power consumption, and flexibility on Framework 16 and other hardware.
 
-![Oligarchy](ascii-art-text.jpg)
+![Oligarchy](https://repository-images.githubusercontent.com/1072001868/8b510033-8549-4c89-995d-d40f79680900)
 
 ## Why Oligarchy NixOS is Optimized
 
