@@ -1,5 +1,7 @@
 # Oligarchy NixOS
 
+![Oligarchy](ascii-art-text.jpg)
+
 Oligarchy NixOS is a custom NixOS distribution optimized for the Framework Laptop 16 (AMD Ryzen 7040 series), inspired by the seamless installation experience of Omarchy. It provides a polished Hyprland desktop with VIM-green aesthetics, Sierpinski fractal-inspired animations, and DeMoD LLC branding. The installer offers a guided TUI for configuring locale, timezone, hostname, user accounts, disk encryption, and optional gaming support, delivering a modern, customizable Linux environment for developers, creators, and gamers.
 
 ## Features
