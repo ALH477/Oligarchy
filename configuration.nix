@@ -171,7 +171,7 @@
       ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio pkgsi686Linux.libpulseaudio pavucontrol guitarix
       qemu virt-manager docker-compose docker-buildx
       vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
-      dhewm3 darkradiant r2modman
+      darkradiant
       brave vlc pandoc kdePackages.okular obs-studio firefox thunderbird
       blueberry vesktop font-awesome fastfetch gnugrep kitty wofi waybar hyprpaper brightnessctl zip unzip
       gimp kdePackages.kdenlive inkscape blender libreoffice krita
