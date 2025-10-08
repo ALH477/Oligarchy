@@ -230,7 +230,7 @@
                 "position": "top",
                 "height": 32,
                 "modules-left": [],
-                "modules-center": ["custom/demod", "hyprland/workspaces", "cpu", "memory", "clock", "battery", "network", "tray"],
+                "modules-center": ["custom/oligarchy", "hyprland/workspaces", "cpu", "memory", "clock", "battery", "network", "tray"],
                 "modules-right": [],
                 "hyprland/workspaces": {
                     "format": "{icon}",
@@ -261,8 +261,8 @@
                     "tooltip-format": "{ifname}: {ipaddr}"
                 },
                 "custom/demod": {
-                    "format": "\uf121 DeMoD LLC",
-                    "tooltip": "Founder: Innovating with VIM and Sierpinski fractals"
+                    "format": "\uf121 Oligarchy",
+                    "tooltip": "Our reign shall be eternal."
                 },
                 "tray": {
                     "icon-size": 16,
