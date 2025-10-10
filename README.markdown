@@ -70,7 +70,7 @@ Always installed, covering development, multimedia, networking, utilities, and d
   - `networkmanager`: Network configuration (enabled separately)
 - **Utilities**:
   - `htop`, `nvme-cli`, `lm_sensors`, `s-tui`, `stress`, `dmidecode`, `util-linux`, `gparted`, `usbutils`: System monitoring and disk management
-  - `zip`, `unzip`, `fastfetch`, `gnugrep`: File and system utilities
+  - `zip`, `unzip`, `fastfetch`, `gnugrep`, `systemctl-tui`: File and system utilities
   - `unetbootin`, `popsicle`, `gnome-disk-utility`, `framework-tool`: USB and Framework utilities
 - **Desktop Environment**:
   - `kitty`, `wofi`, `waybar`, `hyprpaper`, `brightnessctl`, `wl-clipboard`, `grim`, `slurp`, `v4l-utils`: Hyprland tools
