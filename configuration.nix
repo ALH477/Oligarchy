@@ -176,7 +176,7 @@
       blueberry vesktop font-awesome fastfetch gnugrep kitty wofi waybar hyprpaper brightnessctl zip unzip
       gimp kdePackages.kdenlive inkscape blender libreoffice krita
       xfce.thunar xfce.thunar-volman gvfs udiskie polkit_gnome framework-tool
-      wl-clipboard grim slurp v4l-utils
+      wl-clipboard grim slurp v4l-utils systemctl-tui
       mininet
       unstable.openvscode-server
       (perl.withPackages (ps: with ps; [ JSON GetoptLong CursesUI ModulePluggable Appcpanminus ]))
