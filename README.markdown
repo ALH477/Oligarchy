@@ -229,5 +229,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - **Validation**: Locale/timezone inputs are not validated; use standard formats (e.g., `en_US.UTF-8`, `America/Los_Angeles`).
 - **Flatpak/Snap**: Flatpak is enabled by default; Snap requires enabling during installation. Use `flatpak` or `snap` commands post-install.
 - **Support**: For issues, check the [NixOS Wiki](https://nixos.wiki) or open a GitHub issue.
+- - [NoteBookLM](https://notebooklm.google.com/notebook/0a472e47-f990-44d2-8ed9-4f2686c944ce)
 
 ![wallpaper](wallpaper.jpg)
