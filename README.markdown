@@ -43,7 +43,7 @@ Use cases include software development, content creation, gaming, and running a 
 - **Framework 16 Optimization**: Hardware-specific modules for AMD Ryzen 7040, with fallback for other systems.
 - **Comprehensive Packages**: Development, multimedia, networking, and utilities (see below).
 
-## Packages from the Elite
+## Packages
 
 ### Main Packages
 Always installed, covering development, multimedia, networking, utilities, and desktop environment:
@@ -60,17 +60,26 @@ Always installed, covering development, multimedia, networking, utilities, and d
   - `sbcl` with `cffi`, `cl-ppcre`, `cl-json`, `cl-csv`, `usocket`, `bordeaux-threads`, `log4cl`, `trivial-backtrace`, `cl-store`, `hunchensocket`, `fiveam`, `cl-dot`, `cserial-port`
   - `libserialport`, `can-utils`, `lksctp-tools`, `cjson`, `ncurses`, `libuuid`: Hardware and networking libraries
   - `kicad`, `graphviz`, `mako`, `openscad`, `freecad`: PCB design and CAD
+  - `nextflow`, `emboss`, `blast`, `lammps`, `gromacs`, `snakemake`: Bioinformatics and scientific computing
+  - `librecad`, `qcad`, `sweethome3d.application`: CAD and home design
+  - `opencode`: Open-source code tools
+  - `systemctl-tui`: Systemd TUI manager
 - **Multimedia**:
   - `ardour`, `audacity`, `ffmpeg-full`, `jack2`, `qjackctl`, `libpulseaudio`, `pkgsi686Linux.libpulseaudio`, `pavucontrol`, `guitarix`: Audio production
   - `vlc`, `obs-studio`: Media playback and streaming
   - `gimp`, `kdePackages.kdenlive`, `inkscape`, `blender`, `libreoffice`, `krita`: Graphics and video editing
+  - `natron`: Video effects
+  - `sofa`: Spatial audio
+  - `xnec2c`: Antenna modeling
+  - `eliza`: AI conversation simulator
 - **Networking**:
   - `wireshark`, `tcpdump`, `nmap`, `netcat`, `mininet`: Network analysis and emulation
   - `blueberry`: Bluetooth management
   - `networkmanager`: Network configuration (enabled separately)
+  - `sdrpp`: Software-defined radio
 - **Utilities**:
   - `htop`, `nvme-cli`, `lm_sensors`, `s-tui`, `stress`, `dmidecode`, `util-linux`, `gparted`, `usbutils`: System monitoring and disk management
-  - `zip`, `unzip`, `fastfetch`, `gnugrep`, `systemctl-tui`: File and system utilities
+  - `zip`, `unzip`, `fastfetch`, `gnugrep`: File and system utilities
   - `unetbootin`, `popsicle`, `gnome-disk-utility`, `framework-tool`: USB and Framework utilities
 - **Desktop Environment**:
   - `kitty`, `wofi`, `waybar`, `hyprpaper`, `brightnessctl`, `wl-clipboard`, `grim`, `slurp`, `v4l-utils`: Hyprland tools
@@ -82,11 +91,12 @@ Always installed, covering development, multimedia, networking, utilities, and d
   - `vulkan-tools`, `vulkan-loader`, `vulkan-validation-layers`, `libva-utils`: Vulkan and VAAPI
   - `mesa`, `amdvlk`, `vaapiVdpau`, `libvdpau-va-gl`, `rocmPackages.clr.icd`: Graphics drivers
 - **Browsers/Productivity**:
-  - `brave`, `firefox`, `thunderbird`, `pandoc`, `kdePackages.okular`, `vesktop`: Web, email, and documents
+  - `brave`, `vlc`, `pandoc`, `kdePackages.okular`, `obs-studio`, `floorp-bin`, `thunderbird`: Web, media, and documents
+  - `blueberry`, `vesktop`, `font-awesome`, `fastfetch`, `gnugrep`, `kitty`, `wofi`, `waybar`, `hyprpaper`, `brightnessctl`, `zip`, `unzip`: Utilities and desktop tools
 - **Development Servers**:
   - `unstable.openvscode-server`: VS Code server (from nixpkgs-unstable)
 
-### Optional Gaming Packages for Optimal State Sanctioned Entertainment 
+### Optional Gaming Packages
 Enabled with `custom.steam.enable` (prompted during install):
 - `steam`, `steam-run`, `linuxConsoleTools`, `lutris`, `wineWowPackages.stable`, `dhewm3`, `r2modman`, `darkradiant`, `proton-ge-bin` (via `programs.steam.extraCompatPackages`)
 
@@ -96,7 +106,7 @@ Included in the live ISO for installation:
 - `dialog`: TUI framework
 - `python3`: Script runtime
 
-### Flatpak and Snap Apologists
+### Flatpak and Snap
 - **Flatpak**: Enabled by default (`services.flatpak.enable`). Install with:
   ```bash
   flatpak install flathub <app-id>
@@ -108,7 +118,7 @@ Included in the live ISO for installation:
   ```
   Example: `snap install core; snap install hello-world`
 
-## Prerequisites for Worthiness
+## Prerequisites
 
 - A system with Nix installed (or a NixOS environment).
 - Framework Laptop 16 (AMD Ryzen 7040 series) for optimal hardware support, though compatible with other hardware.
