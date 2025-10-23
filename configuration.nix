@@ -178,7 +178,7 @@
       xfce.thunar xfce.thunar-volman gvfs udiskie polkit_gnome framework-tool
       wl-clipboard grim slurp v4l-utils systemctl-tui
       mininet
-      unstable.openvscode-server
+      unstable.openvscode-server opencode
       (perl.withPackages (ps: with ps; [ JSON GetoptLong CursesUI ModulePluggable Appcpanminus ]))
       (sbcl.withPackages (ps: with ps; [
         cffi cl-ppcre cl-json cl-csv usocket bordeaux-threads log4cl trivial-backtrace cl-store hunchensocket fiveam cl-dot cserial-port
