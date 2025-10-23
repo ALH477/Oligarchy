@@ -1,14 +1,16 @@
 # Oligarchy NixOS
 
-Oligarchy NixOS is a custom NixOS distribution optimized for the Framework Laptop 16 (AMD Ryzen 7040 series), designed for developers, creators, researchers, gamers, and Framework enthusiasts. Conceived and built in just 3 hours by a self-taught 22-year-old founder, it provides a lightweight Hyprland desktop, a guided TUI installer, and extensive customization options. The system supports Flatpak and Snap packages, a robust gaming suite, and hardware-specific optimizations, ensuring performance, low power consumption, and flexibility on Framework 16 and other hardware.
+Oligarchy NixOS is a custom NixOS distribution optimized for the Framework Laptop 16 (AMD Ryzen 7040 series), designed for developers, creators, gamers, and Framework enthusiasts. Inspired by Omarchy’s seamless installation, it provides a lightweight Hyprland desktop, a guided TUI installer, and extensive customization options. The system supports Flatpak and Snap packages, a robust gaming suite, and hardware-specific optimizations, ensuring performance, low power consumption, and flexibility on Framework 16 and other hardware.
+
+![Oligarchy](https://repository-images.githubusercontent.com/1072001868/8b510033-8549-4c89-995d-d40f79680900)
 
 ## Why Oligarchy NixOS is Optimized and Supreme
 
 - **Low Idle Power Consumption**: Tailored for the Framework Laptop 16 with power-efficient settings:
   - **Power Profiles Daemon**: Dynamically adjusts CPU performance to minimize idle power usage (`power-profiles-daemon` enables balanced/low-power modes).
-  - **AMDGPU Configuration**: Fine-tuned kernel parameters (`amdgpu.abmlevel=0`, `amdgpu.sg_display=0`, `amdgpu.exp_hw_support=1`) optimize GPU power draw, achieving 5-7W idle consumption on Framework 16.
-  - **Fan Control**: `fw-fanctrl` ensures efficient cooling, reducing fan activity during low loads to lower power usage.
-  - **Lid Switch Handling**: Configurable scripts (`lid.sh`, `toggle_clamshell.sh`) disable the display in clamshell mode, further saving power.
+  - **AMDGPU Configuration**: Fine-tuned kernel parameters (`amdgpu.abmlevel=0`, `amdgpu.sg_display=0`, `amdgpu.exp_hw_support=1`) optimize GPU power draw, reducing idle consumption to as low as 5-7W on Framework 16.
+  - **Fan Control**: `fw-fanctrl` ensures efficient cooling, reducing fan activity during low loads, further lowering power usage.
+  - **Lid Switch Handling**: Configurable lid close behavior (`lid.sh`, `toggle_clamshell.sh`) disables the display to save power in clamshell mode.
 - **Framework 16 Compatibility**: Leverages `nixos-hardware` and `fw-fanctrl` for AMD Ryzen 7040 support, including GPU drivers (`amdgpu`), firmware updates (`fwupd`), and fingerprint authentication (`fprintd`). Optional toggle ensures compatibility with other hardware.
 - **Modular Package Management**: Nix’s declarative configuration allows precise control. Gaming (`steam`, `dhewm3`, `r2modman`, `darkradiant`) and Snap support are optional, keeping the system lean.
 - **Lightweight Desktop**: Hyprland with Waybar and Wofi provides a fast, Wayland-based environment, minimizing resource usage while supporting multi-monitor and clamshell setups.
@@ -18,20 +20,15 @@ Oligarchy NixOS is a custom NixOS distribution optimized for the Framework Lapto
 
 ## Who and What It’s Good For
 
-Oligarchy NixOS is ideal for:
-- **Developers**: Offers a robust toolset for programming (gcc, rustc, Python, Go, SBCL with Lisp packages, Docker) and networking (Wireshark, nmap, Mininet). The lightweight Hyprland desktop and VS Code server (`openvscode-server`) ensure efficient workflows.
-- **Creators**: Includes a comprehensive multimedia suite (Blender, Kdenlive, GIMP, Inkscape, Audacity, Ardour, Natron) for video editing, 3D modeling, and audio production, with hardware-accelerated graphics via Mesa and AMD Vulkan.
-- **Researchers**: Provides specialized tools for scientific computing and analysis:
-  - **Bioinformatics**: `nextflow`, `emboss`, `blast`, `snakemake` for genomic workflows and data processing.
-  - **Molecular Dynamics**: `lammps`, `gromacs` for simulations in computational chemistry and physics.
-  - **CAD and Design**: `librecad`, `qcad`, `sweethome3d.application` for 2D/3D design and architectural modeling.
-  - **Specialized Tools**: `xnec2c` (antenna modeling), `sofa` (spatial audio), `eliza` (AI conversation simulation), `sdrpp` (software-defined radio) for niche research applications.
-  - **System Analysis**: `systemctl-tui` for systemd management and `opencode` for open-source research tools.
-- **Gamers**: Optional gaming toggle provides Steam, Lutris, Wine, dhewm3 (Doom 3 port), r2modman (mod manager), and DarkRadiant (level editor), optimized for Framework 16’s GPU performance.
-- **Framework Enthusiasts**: Tailored for Framework Laptop 16 with power-efficient settings, fan control, and hardware support, while remaining compatible with other systems via a flexible installer.
-- **General Users**: Flatpak and Snap support allow easy installation of popular apps (e.g., Spotify, Discord), while Wofi and web app integration streamline access to tools and services.
+Oligarchy NixOS is ideal for users seeking a utilitarian, educational, stable, and accessible Linux experience. It emphasizes practical tools, learning opportunities, reliability, and ease of use, making it suitable for:
 
-Use cases include software development, content creation, scientific research, gaming, and running a lightweight, secure Linux system on modern hardware.
+- **Developers and Learners**: Provides a robust toolset for programming (gcc, rustc, Python with scientific libraries like numpy and matplotlib, Go, SBCL with Lisp packages, Docker) and networking (Wireshark, nmap, Mininet). The declarative Nix configuration encourages educational exploration of system management, with scripts like `hyprland_config_modifier` and `theme_changer` serving as practical examples for scripting and customization. It's excellent for self-taught developers or students learning DevOps, as the modular setup (e.g., optional Snap/Flatpak) teaches package ecosystem integration without overwhelming complexity. Tools like Nextflow and Snakemake offer utilitarian workflow management for data pipelines, while EMBOSS, BLAST, LAMMPS, and GROMACS provide stable platforms for bioinformatics and molecular simulations, accessible via the TUI installer for quick setup.
+- **Creators and Content Producers**: Includes a comprehensive multimedia suite (Blender, Kdenlive, GIMP, Inkscape, Audacity, Ardour) for video editing, 3D modeling, audio production, and more. The hardware-accelerated graphics (Mesa, AMD Vulkan) ensure efficient performance, while accessibility features like Wofi app launcher and web app integration (`webapp_to_wofi`) streamline workflows. Its stability (Nix’s rollback capabilities) prevents disruptions during creative sessions. Natron offers utilitarian VFX compositing, while Sweet Home 3D provides educational 3D home planning, with tools like LibreCAD and QCAD enabling accessible CAD drafting for architects and designers.
+- **Gamers and Modders**: Optional gaming toggle offers Steam, Lutris, Wine, dhewm3 (Doom 3 port), r2modman (mod manager), and DarkRadiant (level editor), optimized for Framework 16’s GPU. This setup is utilitarian for gamers who value low-power efficiency during non-gaming tasks, with educational value in exploring modding tools like DarkRadiant. Stability is ensured through Nix’s reproducible environments, preventing conflicts in gaming setups.
+- **Framework Enthusiasts and Mobile Users**: Tailored for Framework Laptop 16 with power-efficient settings (5-7W idle), fan control, and hardware support, while remaining compatible with other systems. Its accessibility shines through the TUI installer and Wofi/keybinding-based tools, making it easy for hardware tinkerers to customize without deep technical knowledge. The distro promotes educational hardware experimentation (e.g., via `framework-tool`) and stability for daily use. Tools like SDR++ and xnec2c provide utilitarian software-defined radio and antenna simulation, accessible for radio engineers, with ELIZA offering an educational AI chatbot for computer science exploration.
+- **Scientific Researchers and Engineers**: Features specialized tools like LAMMPS and GROMACS for molecular dynamics simulations, BLAST and EMBOSS for bioinformatics sequence analysis, and Snakemake/Nextflow for reproducible workflows. These enable utilitarian scientific computing, with Nix’s stability ensuring consistent results across environments. The distro is educational for researchers learning simulation techniques, accessible via pre-configured packages and scripts.
+
+Overall, Oligarchy NixOS brings utilitarian efficiency through modular toggles and scripts, educational value via Nix’s declarative system and examples, stability with reproducible builds and hardware optimizations, and accessibility with a simple installer and intuitive desktop—making it a supreme choice for practical, learning-focused users on modern hardware.
 
 ## Features for the Masses
 
@@ -45,12 +42,12 @@ Use cases include software development, content creation, scientific research, g
 - **Gaming Support**: Optional toggle for Steam, Lutris, Wine, dhewm3, r2modman, and DarkRadiant.
 - **Flatpak and Snap**: Install Flatpaks by default (`flatpak install flathub <app-id>`). Enable Snap during installation for additional package support (`snap install <package>`).
 - **Framework 16 Optimization**: Hardware-specific modules for AMD Ryzen 7040, with fallback for other systems.
-- **Comprehensive Packages**: Development, multimedia, research, networking, and utilities (see below).
+- **Comprehensive Packages**: Development, multimedia, networking, and utilities (see below).
 
 ## Packages
 
 ### Main Packages
-Always installed, covering development, multimedia, research, networking, utilities, and desktop environment:
+Always installed, covering development, multimedia, networking, utilities, and desktop environment:
 - **Development Tools**:
   - `vim`: Text editor
   - `docker`: Containerization
@@ -64,21 +61,20 @@ Always installed, covering development, multimedia, research, networking, utilit
   - `sbcl` with `cffi`, `cl-ppcre`, `cl-json`, `cl-csv`, `usocket`, `bordeaux-threads`, `log4cl`, `trivial-backtrace`, `cl-store`, `hunchensocket`, `fiveam`, `cl-dot`, `cserial-port`
   - `libserialport`, `can-utils`, `lksctp-tools`, `cjson`, `ncurses`, `libuuid`: Hardware and networking libraries
   - `kicad`, `graphviz`, `mako`, `openscad`, `freecad`: PCB design and CAD
-  - `nextflow`, `emboss`, `blast`, `lammps`, `gromacs`, `snakemake`: Bioinformatics and molecular dynamics
+  - `nextflow`, `emboss`, `blast`, `lammps`, `gromacs`, `snakemake`: Bioinformatics and scientific computing
   - `librecad`, `qcad`, `sweethome3d.application`: CAD and home design
-  - `opencode`: Open-source code tools
+  - `sdrpp`: Software-defined radio
+  - `natron`: Video effects
+  - `xnec2c`: Antenna modeling
+  - `eliza`: AI conversation simulator
   - `systemctl-tui`: Systemd TUI manager
 - **Multimedia**:
   - `ardour`, `audacity`, `ffmpeg-full`, `jack2`, `qjackctl`, `libpulseaudio`, `pkgsi686Linux.libpulseaudio`, `pavucontrol`, `guitarix`: Audio production
-  - `vlc`, `obs-studio`, `natron`: Media playback, streaming, and video effects
-  - `gimp`, `kdePackages.kdenlive`, `inkscape`, `blender`, `libreoffice`, `krita`: Graphics and video editing
-  - `sofa`: Spatial audio
-  - `xnec2c`: Antenna modeling
-  - `eliza`: AI conversation simulator
+  - `vlc`, `pandoc`, `kdePackages.okular`, `obs-studio`: Media playback and documents
+  - `gimp`, `kdePackages.kdenlive`, `inkscape`, `blender`, `libreoffice`, `krita`, `sofa`: Graphics, video, and spatial audio
 - **Networking**:
   - `wireshark`, `tcpdump`, `nmap`, `netcat`, `mininet`: Network analysis and emulation
   - `blueberry`: Bluetooth management
-  - `sdrpp`: Software-defined radio
   - `networkmanager`: Network configuration (enabled separately)
 - **Utilities**:
   - `htop`, `nvme-cli`, `lm_sensors`, `s-tui`, `stress`, `dmidecode`, `util-linux`, `gparted`, `usbutils`: System monitoring and disk management
@@ -94,8 +90,8 @@ Always installed, covering development, multimedia, research, networking, utilit
   - `vulkan-tools`, `vulkan-loader`, `vulkan-validation-layers`, `libva-utils`: Vulkan and VAAPI
   - `mesa`, `amdvlk`, `vaapiVdpau`, `libvdpau-va-gl`, `rocmPackages.clr.icd`: Graphics drivers
 - **Browsers/Productivity**:
-  - `brave`, `floorp-bin`, `thunderbird`, `pandoc`, `kdePackages.okular`, `vesktop`: Web, email, and documents
-- **Development Servers**:
+  - `brave`, `floorp-bin`, `thunderbird`: Web and email
+  - `vesktop`: Discord client
   - `unstable.openvscode-server`: VS Code server (from nixpkgs-unstable)
 
 ### Optional Gaming Packages
@@ -190,11 +186,11 @@ Included in the live ISO for installation:
 
 ## Contributing
 
-Contributions are welcome. Fork and submit pull requests or issues to the [GitHub repository](https://github.com/ALH477/DeMoD-Framework16-NIXOS). Ensure changes maintain compatibility with NixOS and Framework 16.
+Contributions are nascent. Fork. Submit pull requests or issues to the [GitHub repository](https://github.com/ALH477/Oligarchy). Ensure changes maintain compatibility with NixOS and Framework 16. 
 
 ## License
 
-This project is licensed under the BSD 3-Clause License:
+This project is licensed under the BSD 3-Clause License, be thankful:
 
 ```
 Copyright (c) 2025, DeMoD LLC
