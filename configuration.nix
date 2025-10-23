@@ -172,7 +172,7 @@
       qemu virt-manager docker-compose docker-buildx
       vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
       darkradiant
-      brave vlc pandoc kdePackages.okular obs-studio firefox thunderbird
+      brave vlc pandoc kdePackages.okular obs-studio floorp-bin thunderbird
       blueberry vesktop font-awesome fastfetch gnugrep kitty wofi waybar hyprpaper brightnessctl zip unzip
       gimp kdePackages.kdenlive inkscape blender libreoffice krita
       xfce.thunar xfce.thunar-volman gvfs udiskie polkit_gnome framework-tool
