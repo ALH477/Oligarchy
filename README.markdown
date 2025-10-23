@@ -69,7 +69,7 @@ Always installed, covering development, multimedia, networking, utilities, and d
   - `eliza`: AI conversation simulator
   - `systemctl-tui`: Systemd TUI manager
 - **Multimedia**:
-  - `ardour`, `audacity`, `ffmpeg-full`, `jack2`, `qjackctl`, `libpulseaudio`, `pkgsi686Linux.libpulseaudio`, `pavucontrol`, `guitarix`: Audio production
+  - `ardour`, `audacity`, `ffmpeg-full`, `jack2`, `qjackctl`, `libpulseaudio`, `pkgsi686Linux.libpulseaudio`, `pavucontrol`, `guitarix`, `CSound`, `Faust`: Audio production
   - `vlc`, `pandoc`, `kdePackages.okular`, `obs-studio`: Media playback and documents
   - `gimp`, `kdePackages.kdenlive`, `inkscape`, `blender`, `libreoffice`, `krita`, `sofa`: Graphics, video, and spatial audio
 - **Networking**:
