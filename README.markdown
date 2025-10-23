@@ -184,6 +184,8 @@ Included in the live ISO for installation:
   - Run: `snap run hello-world`.
 - **Wallpaper**: Place your wallpaper at `~/Pictures/wall.jpg` or use the default (`/etc/nixos/hypr/wallpaper.jpg`).
 
+![](wallpaper2.jpg)
+
 ## Contributing
 
 Contributions are nascent. Fork. Submit pull requests or issues to the [GitHub repository](https://github.com/ALH477/Oligarchy). Ensure changes maintain compatibility with NixOS and Framework 16. 
