@@ -168,7 +168,7 @@
       ]))
       wireshark tcpdump nmap netcat
       cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy
-      ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio pkgsi686Linux.libpulseaudio pavucontrol guitarix
+      ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio pkgsi686Linux.libpulseaudio pavucontrol guitarix csound faust 
       qemu virt-manager docker-compose docker-buildx
       vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
       darkradiant nextflow emboss librecad qcad sweethome3d.application sdrpp natron
