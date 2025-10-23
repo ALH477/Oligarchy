@@ -171,10 +171,10 @@
       ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio pkgsi686Linux.libpulseaudio pavucontrol guitarix
       qemu virt-manager docker-compose docker-buildx
       vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
-      darkradiant
+      darkradiant nextflow emboss librecad qcad sweethome3d.application sdrpp natron
       brave vlc pandoc kdePackages.okular obs-studio floorp-bin thunderbird
       blueberry vesktop font-awesome fastfetch gnugrep kitty wofi waybar hyprpaper brightnessctl zip unzip
-      gimp kdePackages.kdenlive inkscape blender libreoffice krita
+      gimp kdePackages.kdenlive inkscape blender libreoffice krita sofa xnec2c eliza blast lammps gromacs snakemake
       xfce.thunar xfce.thunar-volman gvfs udiskie polkit_gnome framework-tool
       wl-clipboard grim slurp v4l-utils systemctl-tui
       mininet
