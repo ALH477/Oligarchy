@@ -40,7 +40,7 @@
 
     services.displayManager.sddm = {
       enable = true;
-      wayland.enable = true;  # Fixed for Hyprland
+      wayland.enable = true;
     };
     services.displayManager.defaultSession = "hyprland";
     services.xserver.enable = true;
@@ -166,19 +166,19 @@
       (python3Full.withPackages (ps: with ps; [
         pip virtualenv cryptography pycryptodome grpcio grpcio-tools protobuf numpy matplotlib python-snappy
       ]))
-      wireshark tcpdump nmap netcat
+      wireshark tcpdump nmap netcat nextflow emboss librecad qcad sweethome3d.application sdrpp natron
       cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy
-      ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio pkgsi686Linux.libpulseaudio pavucontrol guitarix csound faust 
+      ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio pkgsi686Linux.libpulseaudio pavucontrol guitarix
       qemu virt-manager docker-compose docker-buildx
       vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
-      darkradiant nextflow emboss librecad qcad sweethome3d.application sdrpp natron
+      dhewm3 darkradiant r2modman xnec2c eliza blast lammps gromacs snakemake
       brave vlc pandoc kdePackages.okular obs-studio floorp-bin thunderbird
-      blueberry vesktop font-awesome fastfetch gnugrep kitty wofi waybar hyprpaper brightnessctl zip unzip
-      gimp kdePackages.kdenlive inkscape blender libreoffice krita sofa xnec2c eliza blast lammps gromacs snakemake
+      blueberry legcord font-awesome fastfetch gnugrep kitty wofi waybar hyprpaper brightnessctl zip unzip
+      gimp kdePackages.kdenlive inkscape blender libreoffice krita sofa
       xfce.thunar xfce.thunar-volman gvfs udiskie polkit_gnome framework-tool
       wl-clipboard grim slurp v4l-utils systemctl-tui
-      mininet
-      unstable.openvscode-server opencode
+      mininet opencode
+      unstable.openvscode-server
       (perl.withPackages (ps: with ps; [ JSON GetoptLong CursesUI ModulePluggable Appcpanminus ]))
       (sbcl.withPackages (ps: with ps; [
         cffi cl-ppcre cl-json cl-csv usocket bordeaux-threads log4cl trivial-backtrace cl-store hunchensocket fiveam cl-dot cserial-port
@@ -186,8 +186,9 @@
       libserialport can-utils lksctp-tools cjson ncurses libuuid kicad graphviz mako openscad freecad
       xorg.xinit
       unetbootin popsicle gnome-disk-utility
+      zenity
     ] ++ lib.optionals config.custom.steam.enable [
-      steam steam-run linuxConsoleTools lutris wineWowPackages.stable dhewm3 r2modman
+      steam steam-run linuxConsoleTools lutris wineWowPackages.stable dhewm3 r2modman darkradiant
     ];
 
     programs.steam = lib.mkIf config.custom.steam.enable {
@@ -223,36 +224,6 @@
       HandleLidSwitchExternalPower=ignore
       HandleLidSwitchDocked=ignore
     '';
-
-    environment.etc."hypr/lid.sh" = {
-      text = ''
-        #!/usr/bin/env bash
-        hyprctl keyword monitor "eDP-2,disable"  # Always disable laptop screen on lid close
-        if [[ $1 == "open" ]]; then
-          hyprctl keyword monitor "eDP-2,2560x1600@165,auto,1"
-        fi
-      '';
-      mode = "0755";
-    };
-
-    environment.etc."hypr/toggle_clamshell.sh" = {
-      text = ''
-        #!/usr/bin/env bash
-        INTERNAL="eDP-2"
-        if [[ "$(hyprctl monitors)" =~ DP- ]]; then
-          if hyprctl monitors | grep -q "$INTERNAL" && ! hyprctl monitors | grep -q "$INTERNAL.*(disabled)"; then
-            hyprctl keyword monitor "$INTERNAL,disable"
-            notify-send "Clamshell Mode" "Laptop screen disabled"
-          else
-            hyprctl keyword monitor "$INTERNAL,2560x1600@165,auto,1"
-            notify-send "Clamshell Mode" "Laptop screen enabled"
-          fi
-        else
-          notify-send "Clamshell Mode" "No external monitor connected"
-        fi
-      '';
-      mode = "0755";
-    };
 
     system.stateVersion = "25.05";
   };
