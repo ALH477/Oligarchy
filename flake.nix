@@ -25,6 +25,7 @@
         fw-fanctrl.nixosModules.default
         ./hardware-configuration.nix
         ./configuration.nix
+        ./hydramesh.nix
         ({ config, lib, ... }: {
           options = {
             hardware.framework.enable = lib.mkEnableOption "Framework 16-inch 7040 AMD support";
@@ -56,12 +57,16 @@
         nixos-hardware.nixosModules.framework-16-7040-amd
         fw-fanctrl.nixosModules.default
         ./configuration.nix
+        ./hydramesh.nix
         ({ config, pkgs, lib, ... }: {
           # Overrides for live ISO
           services.xserver.desktopManager.gnome.enable = lib.mkForce false;
           services.xserver.displayManager.gdm.enable = lib.mkForce false;
           services.xserver.displayManager.sddm.enable = true;
           services.xserver.displayManager.sddm.wayland.enable = true;
+          services.xserver.displayManager.sddm.settings = {
+            General.Background = "/etc/nixos/hypr/wallpaper.jpg";
+          };
           services.xserver.displayManager.autoLogin.enable = true;
           services.xserver.displayManager.autoLogin.user = "nixos";
           services.xserver.displayManager.defaultSession = "hyprland";
@@ -74,9 +79,9 @@
           security.sudo.wheelNeedsPassword = false;
           # Embed flake
           environment.etc."nixos-flake".source = self;
-          # Hyprland config (user-provided with VIM-green, fractal aesthetics)
+          # Hyprland config with keybindings
           environment.etc."hypr/hyprland.conf".text = ''
-            # Polished Hyprland config: Modern sleek with VIM-green accents, fractal depth (Sierpinski-inspired layers), DeMoD LLC founder nod.
+            # Polished Hyprland config
             exec-once = kitty
             exec-once = waybar
             exec-once = hyprpaper
@@ -206,6 +211,9 @@
             bind = $mainMod SHIFT, P, exec, ${pkgs.python3}/bin/python ~/.config/hypr/hyprland_config_modifier.py
             bind = $mainMod SHIFT, T, exec, ${pkgs.python3}/bin/python ~/.config/hypr/theme_changer.py
             bind = $mainMod SHIFT, A, exec, ${pkgs.python3}/bin/python ~/.config/hypr/webapp_to_wofi.py
+            bind = $mainMod SHIFT, H, exec, ${pkgs.hydramesh-toggle}/bin/hydramesh-toggle
+            bind = $mainMod SHIFT, E, exec, ${pkgs.hydramesh-config-editor}/bin/hydramesh-config-editor
+            bind = $mainMod SHIFT, K, exec, ~/.config/hypr/keybindings_cheatsheet.sh
             windowrulev2 = suppressevent maximize, class:.*
             windowrulev2 = float, class:^(pavucontrol)$
             windowrulev2 = float, class:^(blueman-manager)$
@@ -223,14 +231,14 @@
           '';
           # Wallpaper from repo
           environment.etc."hypr/wallpaper.jpg".source = ./wallpaper.jpg;
-          # Waybar config
+          # Waybar config with HydraMesh status
           environment.etc."waybar/config".text = ''
             {
                 "layer": "top",
                 "position": "top",
                 "height": 32,
                 "modules-left": [],
-                "modules-center": ["custom/oligarchy", "hyprland/workspaces", "cpu", "memory", "clock", "battery", "network", "tray"],
+                "modules-center": ["custom/demod", "hyprland/workspaces", "cpu", "memory", "clock", "battery", "network", "custom/hydramesh", "tray"],
                 "modules-right": [],
                 "hyprland/workspaces": {
                     "format": "{icon}",
@@ -261,8 +269,15 @@
                     "tooltip-format": "{ifname}: {ipaddr}"
                 },
                 "custom/demod": {
-                    "format": "\uf121 Oligarchy",
-                    "tooltip": "Our reign shall be eternal."
+                    "format": "\uf121 DeMoD LLC",
+                    "tooltip": "Founder: Innovating with VIM and Sierpinski fractals"
+                },
+                "custom/hydramesh": {
+                    "format": "{}",
+                    "exec": "${pkgs.hydramesh-status}/bin/hydramesh-status",
+                    "return-type": "json",
+                    "interval": 5,
+                    "tooltip": true
                 },
                 "tray": {
                     "icon-size": 16,
@@ -270,7 +285,7 @@
                 }
             }
           '';
-          # Waybar style
+          # Waybar style with HydraMesh status
           environment.etc."waybar/style.css".text = ''
             * {
                 border: none;
@@ -303,9 +318,15 @@
                 background: rgba(51, 255, 51, 0.3);
                 border-radius: 8px;
             }
-            #cpu, #memory, #clock, #battery, #network, #custom-demod, #tray {
+            #cpu, #memory, #clock, #battery, #network, #custom-demod, #custom-hydramesh, #tray {
                 padding: 0 12px;
                 color: #33ff33;
+            }
+            #custom-hydramesh.hydramesh-active {
+                color: #33ff33;
+            }
+            #custom-hydramesh.hydramesh-inactive {
+                color: #ff3333;
             }
             #tray {
                 background: transparent;
@@ -471,7 +492,7 @@
             '';
             mode = "0755";
           };
-          # Unified theme changer script with researched palettes
+          # Unified theme changer script
           environment.etc."hypr/theme_changer.py" = {
             text = ''
               #!/usr/bin/env python3
@@ -605,6 +626,14 @@
             '';
             mode = "0755";
           };
+          # Keybindings cheatsheet script
+          environment.etc."hypr/keybindings_cheatsheet.sh" = {
+            text = ''
+              #!/usr/bin/env bash
+              zenity --info --title="Hyprland Keybindings Cheat Sheet" --text="SUPER + Q: Open Terminal\nSUPER + E: Open File Manager\nSUPER + D: Open Wofi Launcher\nSUPER + SHIFT + W: Toggle Resolution\nSUPER + SHIFT + P: Hyprland Config Modifier\nSUPER + SHIFT + T: Theme Changer\nSUPER + SHIFT + A: Add Web App to Wofi\nSUPER + SHIFT + H: Toggle HydraMesh Service\nSUPER + SHIFT + E: HydraMesh Config Editor\nSUPER + SHIFT + K: Show this Cheat Sheet\nSUPER + 1-0: Switch Workspaces\nSUPER + SHIFT + 1-0: Move Window to Workspace\nSUPER + PRINT: Screenshot Desktop\nSUPER + SHIFT + PRINT: Screenshot Region\nAnd more - check ~/.config/hypr/hyprland.conf for full list."
+            '';
+            mode = "0755";
+          };
           # .desktop files for Wofi access
           environment.etc."applications/toggle_resolution.desktop".text = ''
             [Desktop Entry]
@@ -633,6 +662,27 @@
             Exec=webapp_to_wofi
             Type=Application
             Terminal=true
+          '';
+          environment.etc."applications/hydramesh_toggle.desktop".text = ''
+            [Desktop Entry]
+            Name=Toggle HydraMesh Service
+            Exec=hydramesh-toggle
+            Type=Application
+            Terminal=true
+          '';
+          environment.etc."applications/hydramesh_config_editor.desktop".text = ''
+            [Desktop Entry]
+            Name=HydraMesh Config Editor
+            Exec=hydramesh-config-editor
+            Type=Application
+            Terminal=true
+          '';
+          environment.etc."applications/keybindings_cheatsheet.desktop".text = ''
+            [Desktop Entry]
+            Name=Keybindings Cheat Sheet
+            Exec=keybindings-cheatsheet
+            Type=Application
+            Terminal=false
           '';
           # Installer dependencies
           environment.systemPackages = [ pkgs.disko pkgs.dialog pkgs.python3 ] ++ config.environment.systemPackages;
@@ -727,8 +777,11 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
               mkdir -p /mnt/etc/nixos/waybar
               mkdir -p /mnt/etc/nixos/wofi
               mkdir -p /mnt/etc/nixos/applications
+              mkdir -p /mnt/etc/nixos/hydramesh
               cp /etc/nixos-flake/flake.nix /mnt/etc/nixos/
               cp /etc/nixos-flake/configuration.nix /mnt/etc/nixos/
+              cp /etc/nixos-flake/hydramesh.nix /mnt/etc/nixos/
+              cp /etc/nixos-flake/hydramesh_config_editor.py /mnt/etc/nixos/
               cp /etc/hypr/hyprland.conf /mnt/etc/nixos/hypr/
               cp /etc/hypr/hyprpaper.conf /mnt/etc/nixos/hypr/
               cp /etc/hypr/lid.sh /mnt/etc/nixos/hypr/
@@ -737,6 +790,7 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
               cp /etc/hypr/hyprland_config_modifier.py /mnt/etc/nixos/hypr/
               cp /etc/hypr/theme_changer.py /mnt/etc/nixos/hypr/
               cp /etc/hypr/webapp_to_wofi.py /mnt/etc/nixos/hypr/
+              cp /etc/hypr/keybindings_cheatsheet.sh /mnt/etc/nixos/hypr/
               cp /etc/waybar/config /mnt/etc/nixos/waybar/
               cp /etc/waybar/style.css /mnt/etc/nixos/waybar/
               cp /etc/wofi/style.css /mnt/etc/nixos/wofi/
@@ -744,6 +798,9 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
               cp /etc/applications/hyprland_config_modifier.desktop /mnt/etc/nixos/applications/
               cp /etc/applications/theme_changer.desktop /mnt/etc/nixos/applications/
               cp /etc/applications/webapp_to_wofi.desktop /mnt/etc/nixos/applications/
+              cp /etc/applications/hydramesh_toggle.desktop /mnt/etc/nixos/applications/
+              cp /etc/applications/hydramesh_config_editor.desktop /mnt/etc/nixos/applications/
+              cp /etc/applications/keybindings_cheatsheet.desktop /mnt/etc/nixos/applications/
               # Framework hardware prompt
               FRAMEWORK=$(dialog --yesno "Is this a Framework Laptop 16 (AMD Ryzen 7040 series)?\nEnable optimized hardware module if yes.\n(If no, proceed without it or use your own custom hardware config.)" 9 60 && echo yes || echo no)
               if [ "$FRAMEWORK" = "no" ]; then
@@ -763,8 +820,9 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
               [ "$USERPW" = "$USERPW_CONFIRM" ] || { dialog --msgbox "Passwords mismatch" 7 50; exit 1; }
               ROOTPW=$(dialog --insecure --passwordbox "Enter root password (optional, leave blank for none):" 8 50 3>&1 1>&2 2>&3)
               ROOTPW_CONFIRM=$(dialog --insecure --passwordbox "Confirm root password:" 8 50 3>&1 1>&2 2>&3)
-              if [ -n "$ROOTPW" ] && [ "$ROOTPW" != "$ROOTPW_CONFIRM" ]; then dialog --msgbox "Passwords mismatch" 7 50; exit 1; fi
+              if [ -n "$ROOTPW" ] && [ "$ROOTPW" != "$ROOTPW_CONFIRM" ]; then dialog --msgbox "Passwords mismatch" 7 50; exit 1; }
               STEAM=$(dialog --yesno "Enable Steam and gaming support?" 7 60 && echo true || echo false)
+              SNAP=$(dialog --yesno "Enable Snap package support?" 7 60 && echo true || echo false)
               # Update configuration.nix
               cd /mnt/etc/nixos
               sed -i "s|time.timeZone = \"America/Los_Angeles\";|time.timeZone = \"$TZ\";|g" configuration.nix
@@ -775,10 +833,15 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
               sed -i "s|networking.hostName = \"nixos\";|networking.hostName = \"$HOSTNAME\";|g" configuration.nix
               sed -i "s|custom.steam.enable = true;|custom.steam.enable = $STEAM;|g" configuration.nix
               if [ "$STEAM" = "true" ]; then
-                sed -i '/] ++ lib.optionals config.custom.steam.enable \[/i\        dhewm3\n        r2modman\n' configuration.nix
+                sed -i '/] ++ lib.optionals config.custom.steam.enable \[/i\        dhewm3\n        r2modman\n        darkradiant\n' configuration.nix
+              fi
+              if [ "$SNAP" = "true" ]; then
+                sed -i '/custom.steam.enable = /i\  custom.snap.enable = true;\n' configuration.nix
+              else
+                sed -i '/custom.steam.enable = /i\  custom.snap.enable = false;\n' configuration.nix
               fi
               sed -i '/users.users.asher = {/,/};/d' configuration.nix
-              sed -i '/systemd.user.services.quicklisp-install = {/i users.users.'"$USERNAME"' = {\n      isNormalUser = true;\n      description = "'"$FULLNAME"'";\n      extraGroups = [ "networkmanager" "wheel" "docker" "wireshark" "disk" ];\n      shell = pkgs.bash;\n      initialPassword = "'"$USERPW"'";\n      packages = with pkgs; [\n        (writeShellScriptBin "install-quicklisp" '\'\'\n          curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp\n          ${pkgs.sbcl}/bin/sbcl --load /tmp/quicklisp.lisp --eval '\''(quicklisp-quickstart:install)'\'' --quit\n        '\'\'')\n        (writeShellScriptBin "toggle_resolution" "'\''\n          ~/.config/hypr/toggle_resolution.sh\n        '\'\'')\n        (writeShellScriptBin "hyprland_config_modifier" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/hyprland_config_modifier.py\n        '\'\'')\n        (writeShellScriptBin "theme_changer" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/theme_changer.py\n        '\'\'')\n        (writeShellScriptBin "webapp_to_wofi" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/webapp_to_wofi.py\n        '\'\'')\n      ];\n    };\n' configuration.nix
+              sed -i '/systemd.user.services.quicklisp-install = {/i users.users.'"$USERNAME"' = {\n      isNormalUser = true;\n      description = "'"$FULLNAME"'";\n      extraGroups = [ "networkmanager" "wheel" "docker" "wireshark" "disk" ];\n      shell = pkgs.bash;\n      initialPassword = "'"$USERPW"'";\n      packages = with pkgs; [\n        (writeShellScriptBin "install-quicklisp" '\'\'\n          curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp\n          ${pkgs.sbcl}/bin/sbcl --load /tmp/quicklisp.lisp --eval '\''(quicklisp-quickstart:install)'\'' --quit\n        '\'\'')\n        (writeShellScriptBin "toggle_resolution" "'\''\n          ~/.config/hypr/toggle_resolution.sh\n        '\'\'')\n        (writeShellScriptBin "hyprland_config_modifier" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/hyprland_config_modifier.py\n        '\'\'')\n        (writeShellScriptBin "theme_changer" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/theme_changer.py\n        '\'\'')\n        (writeShellScriptBin "webapp_to_wofi" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/webapp_to_wofi.py\n        '\'\'')\n        (writeShellScriptBin "hydramesh_toggle" "'\''\n          ${pkgs.hydramesh-toggle}/bin/hydramesh-toggle\n        '\'\'')\n        (writeShellScriptBin "hydramesh_config_editor" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/hydramesh_config_editor.py\n        '\'''')\n        (writeShellScriptBin "keybindings_cheatsheet" "'\''\n          ~/.config/hypr/keybindings_cheatsheet.sh\n        '\'''')\n      ];\n    };\n' configuration.nix
               if [ -n "$ROOTPW" ]; then
                 echo 'users.users.root.initialPassword = "'"$ROOTPW"'";' >> configuration.nix
               fi
@@ -795,6 +858,8 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
               cp /etc/hypr/hyprland_config_modifier.py /mnt/home/"$USERNAME"/.config/hypr/
               cp /etc/hypr/theme_changer.py /mnt/home/"$USERNAME"/.config/hypr/
               cp /etc/hypr/webapp_to_wofi.py /mnt/home/"$USERNAME"/.config/hypr/
+              cp /etc/hypr/keybindings_cheatsheet.sh /mnt/home/"$USERNAME"/.config/hypr/
+              cp /etc/nixos/hydramesh_config_editor.py /mnt/home/"$USERNAME"/.config/hypr/
               cp /etc/waybar/config /mnt/home/"$USERNAME"/.config/waybar/
               cp /etc/waybar/style.css /mnt/home/"$USERNAME"/.config/waybar/
               cp /etc/wofi/style.css /mnt/home/"$USERNAME"/.config/wofi/
@@ -802,6 +867,9 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
               cp /etc/applications/hyprland_config_modifier.desktop /mnt/home/"$USERNAME"/.local/share/applications/
               cp /etc/applications/theme_changer.desktop /mnt/home/"$USERNAME"/.local/share/applications/
               cp /etc/applications/webapp_to_wofi.desktop /mnt/home/"$USERNAME"/.local/share/applications/
+              cp /etc/applications/hydramesh_toggle.desktop /mnt/home/"$USERNAME"/.local/share/applications/
+              cp /etc/applications/hydramesh_config_editor.desktop /mnt/home/"$USERNAME"/.local/share/applications/
+              cp /etc/applications/keybindings_cheatsheet.desktop /mnt/home/"$USERNAME"/.local/share/applications/
               chown -R 1000:100 /mnt/home/"$USERNAME"
               # Install
               nixos-install --root /mnt --flake /mnt/etc/nixos#nixos
@@ -823,6 +891,8 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
             cp /etc/hypr/hyprland_config_modifier.py /home/nixos/.config/hypr/hyprland_config_modifier.py
             cp /etc/hypr/theme_changer.py /home/nixos/.config/hypr/theme_changer.py
             cp /etc/hypr/webapp_to_wofi.py /home/nixos/.config/hypr/webapp_to_wofi.py
+            cp /etc/hypr/keybindings_cheatsheet.sh /home/nixos/.config/hypr/keybindings_cheatsheet.sh
+            cp /etc/nixos/hydramesh_config_editor.py /home/nixos/.config/hypr/hydramesh_config_editor.py
             cp /etc/waybar/config /home/nixos/.config/waybar/config
             cp /etc/waybar/style.css /home/nixos/.config/waybar/style.css
             cp /etc/wofi/style.css /home/nixos/.config/wofi/style.css
@@ -830,6 +900,9 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
             cp /etc/applications/hyprland_config_modifier.desktop /home/nixos/.local/share/applications/
             cp /etc/applications/theme_changer.desktop /home/nixos/.local/share/applications/
             cp /etc/applications/webapp_to_wofi.desktop /home/nixos/.local/share/applications/
+            cp /etc/applications/hydramesh_toggle.desktop /home/nixos/.local/share/applications/
+            cp /etc/applications/hydramesh_config_editor.desktop /home/nixos/.local/share/applications/
+            cp /etc/applications/keybindings_cheatsheet.desktop /home/nixos/.local/share/applications/
             chown -R nixos:users /home/nixos
             chmod +x /home/nixos/.config/hypr/lid.sh
             chmod +x /home/nixos/.config/hypr/toggle_clamshell.sh
@@ -837,6 +910,8 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
             chmod +x /home/nixos/.config/hypr/hyprland_config_modifier.py
             chmod +x /home/nixos/.config/hypr/theme_changer.py
             chmod +x /home/nixos/.config/hypr/webapp_to_wofi.py
+            chmod +x /home/nixos/.config/hypr/keybindings_cheatsheet.sh
+            chmod +x /home/nixos/.config/hypr/hydramesh_config_editor.py
           '';
           # Live ISO tweaks
           isoImage.squashfsCompression = "gzip -Xcompression-level 1";
