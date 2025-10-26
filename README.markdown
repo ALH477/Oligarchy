@@ -1,7 +1,7 @@
 # Oligarchy NixOS
 
-### Oligarchy NixOS is a custom NixOS distribution optimized for the Framework Laptop 16 (AMD Ryzen 7040 series), designed for developers, creators, gamers, and Framework enthusiasts. Inspired by Omarchy’s seamless installation, it provides a lightweight Hyprland desktop, a guided TUI installer, and extensive customization options. The system supports Flatpak and Snap packages, a robust gaming suite, a HydraMesh service for distributed communication, and hardware-specific optimizations, ensuring performance, low power consumption, and flexibility on Framework 16 and other hardware.
-# In a time of ever increasing chaos, why would you want your technology to be the same? There's a solution, there's Oligarchy NixOS.
+Oligarchy NixOS is a custom NixOS distribution optimized for the Framework Laptop 16 (AMD Ryzen 7040 series), designed for developers, creators, gamers, and Framework enthusiasts. Inspired by Omarchy’s seamless installation, it provides a lightweight Hyprland desktop, a guided TUI installer, and extensive customization options. The system supports Flatpak and Snap packages, a robust gaming suite, a HydraMesh service for distributed communication, and hardware-specific optimizations, ensuring performance, low power consumption, and flexibility on Framework 16 and other hardware.
+
 ![Oligarchy](https://repository-images.githubusercontent.com/1072001868/8b510033-8549-4c89-995d-d40f79680900)
 
 ## Why Oligarchy NixOS is Optimized and Supreme
@@ -12,7 +12,7 @@
   - **Fan Control**: `fw-fanctrl` ensures efficient cooling, reducing fan activity during low loads, further lowering power usage.
   - **Lid Switch Handling**: Configurable lid close behavior (`lid.sh`, `toggle_clamshell.sh`) disables the display to save power in clamshell mode.
 - **Framework 16 Compatibility**: Leverages `nixos-hardware` and `fw-fanctrl` for AMD Ryzen 7040 support, including GPU drivers (`amdgpu`), firmware updates (`fwupd`), and fingerprint authentication (`fprintd`). Optional toggle ensures compatibility with other hardware.
-- **Modular Package Management**: Nix’s declarative configuration allows precise control. Gaming (`steam`, `dhewm3`, `r2modman`, `darkradiant`), Snap, and HydraMesh services are optional, keeping the system lean.
+- **Modular Package Management**: Nix’s declarative configuration allows precise control. Gaming (`steam`, `dhewm3`, `r2modman`, `darkradiant`) and Snap support are optional, keeping the system lean.
 - **Lightweight Desktop**: Hyprland with Waybar and Wofi provides a fast, Wayland-based environment, minimizing resource usage while supporting multi-monitor and clamshell setups.
 - **Streamlined Installation**: TUI installer simplifies disk setup (LUKS-encrypted ext4), user configuration, and hardware options, ensuring quick deployment.
 - **Customization Scripts**: Tools for resolution cycling, Hyprland configuration, theme switching, web app integration, HydraMesh toggling, and keybindings cheat sheet enhance user control, accessible via Wofi or keybindings.
@@ -22,7 +22,7 @@
 
 Oligarchy NixOS is ideal for users seeking a utilitarian, educational, stable, and accessible Linux experience. It emphasizes practical tools, learning opportunities, reliability, and ease of use, making it suitable for:
 
-- **Developers and Learners**: Provides a robust toolset for programming (gcc, rustc, Python with scientific libraries like numpy and matplotlib, Go, SBCL with Lisp packages, Docker) and networking (Wireshark, nmap, Mininet). The declarative Nix configuration encourages educational exploration of system management, with scripts like `hyprland_config_modifier`, `theme_changer`, and `hydramesh-toggle` serving as practical examples for scripting and customization. The HydraMesh service, powered by the DeMoD-LISP SDK, supports distributed computing education with its P2P networking and AI-driven optimization. Tools like Nextflow and Snakemake offer utilitarian workflow management for data pipelines, while EMBOSS, BLAST, LAMMPS, and GROMACS provide stable platforms for bioinformatics and molecular simulations, accessible via the TUI installer for quick setup.
+- **Developers and Learners**: Provides a robust toolset for programming (gcc, rustc, Python with scientific libraries like numpy and matplotlib, Go, SBCL with Lisp packages, Docker) and networking (Wireshark, nmap, Mininet). The declarative Nix configuration encourages educational exploration of system management, with scripts like `hyprland_config_modifier`, `theme_changer`, and `hydramesh-toggle` serving as practical examples for scripting and customization. The HydraMesh service, powered by the DeMoD-LISP SDK, supports distributed computing education with its P2P networking and StreamDB persistence. Tools like Nextflow and Snakemake offer utilitarian workflow management for data pipelines, while EMBOSS, BLAST, LAMMPS, and GROMACS provide stable platforms for bioinformatics and molecular simulations, accessible via the TUI installer for quick setup.
 - **Creators and Content Producers**: Includes a comprehensive multimedia suite (Blender, Kdenlive, GIMP, Inkscape, Audacity, Ardour) for video editing, 3D modeling, audio production, and more. The hardware-accelerated graphics (Mesa, AMD Vulkan) ensure efficient performance, while accessibility features like Wofi app launcher and web app integration (`webapp_to_wofi`) streamline workflows. Its stability (Nix’s rollback capabilities) prevents disruptions during creative sessions. Natron offers utilitarian VFX compositing, while Sweet Home 3D provides educational 3D home planning, with tools like LibreCAD and QCAD enabling accessible CAD drafting for architects and designers.
 - **Gamers and Modders**: Optional gaming toggle offers Steam, Lutris, Wine, dhewm3 (Doom 3 port), r2modman (mod manager), and DarkRadiant (level editor), optimized for Framework 16’s GPU. This setup is utilitarian for gamers who value low-power efficiency during non-gaming tasks, with educational value in exploring modding tools like DarkRadiant. Stability is ensured through Nix’s reproducible environments, preventing conflicts in gaming setups. HydraMesh’s P2P capabilities enhance multiplayer gaming with low-latency communication.
 - **Framework Enthusiasts and Mobile Users**: Tailored for Framework Laptop 16 with power-efficient settings (5-7W idle), fan control, and hardware support, while remaining compatible with other systems. Its accessibility shines through the TUI installer and Wofi/keybinding-based tools, making it easy for hardware tinkerers to customize without deep technical knowledge. The distro promotes educational hardware experimentation (e.g., via `framework-tool`) and stability for daily use. Tools like SDR++ and xnec2c provide utilitarian software-defined radio and antenna simulation, accessible for radio engineers, with ELIZA offering an educational AI chatbot for computer science exploration. HydraMesh supports IoT applications with secure, low-latency communication.
@@ -32,7 +32,7 @@ Overall, Oligarchy NixOS brings utilitarian efficiency through modular toggles a
 
 ## Features for the Masses
 
-- **Guided TUI Installer**: Prompts for keyboard layout, disk (LUKS-encrypted ext4), Framework hardware support, locale, timezone, hostname, user accounts, gaming, Snap support, and HydraMesh security (firewall, AppArmor), ensuring a secure and customized setup.
+- **Guided TUI Installer**: Prompts for keyboard layout, disk (LUKS-encrypted ext4), Framework hardware support, locale, timezone, hostname, user accounts, gaming, and Snap support, ensuring a customized setup.
 - **Hyprland Desktop**: Fast Wayland compositor with Waybar (system status, including HydraMesh) and Wofi (application launcher), configured for multi-monitor and clamshell mode.
 - **Customization Scripts**:
   - `toggle_resolution`: Cycle monitor resolutions (`SUPER+SHIFT+W` or Wofi).
@@ -42,7 +42,7 @@ Overall, Oligarchy NixOS brings utilitarian efficiency through modular toggles a
   - `hydramesh_toggle`: Toggle HydraMesh service (`SUPER+SHIFT+H` or Wofi), with status (🕸️ ON/OFF) shown in Waybar with the `hydramesh.svg` icon.
   - `keybindings_cheatsheet`: Display Hyprland keybindings in a popup (`SUPER+SHIFT+K` or Wofi).
 - **Gaming Support**: Optional toggle for Steam, Lutris, Wine, dhewm3, r2modman, and DarkRadiant.
-- **HydraMesh Service**: Runs the DeMoD-LISP SDK for low-latency P2P communication, supporting gRPC, WebSocket, and LoRaWAN (UDP 5683). Configurable via a TUI editor (`SUPER+SHIFT+E` or Wofi), with status displayed in Waybar. Secured with systemd hardening, optional firewall (TCP 50051, UDP 5683 for LoRaWAN), and AppArmor.
+- **HydraMesh Service**: Runs the DeMoD-LISP SDK for low-latency P2P communication, sourced from `./HydraMesh/` with `src/hydramesh.lisp`, `plugins/*.lisp`, and StreamDB in `streamdb/`. Configurable via a TUI editor (`SUPER+SHIFT+E` or Wofi), with status displayed in Waybar. Secured with systemd hardening.
 - **Flatpak and Snap**: Install Flatpaks by default (`flatpak install flathub <app-id>`). Enable Snap during installation for additional package support (`snap install <package>`).
 - **Framework 16 Optimization**: Hardware-specific modules for AMD Ryzen 7040, with fallback for other systems.
 - **Comprehensive Packages**: Development, multimedia, networking, and utilities (see below).
@@ -126,6 +126,10 @@ Included in the live ISO for installation:
 - Framework Laptop 16 (AMD Ryzen 7040 series) for optimal hardware support, though compatible with other hardware.
 - USB drive for flashing the ISO.
 - `wallpaper.jpg` and `hydramesh.svg` in the repository root for the default Hyprland wallpaper and HydraMesh Waybar icon.
+- `./HydraMesh/` directory in the repository root, containing:
+  - `src/hydramesh.lisp`: Main D-LISP SDK code.
+  - `plugins/*.lisp`: Plugin files (e.g., `lorawan.lisp`).
+  - `streamdb/src/`: StreamDB Rust source code for building `libstreamdb.so`.
 - Internet access for fetching dependencies (optional for offline installs).
 
 ## Installation
@@ -137,29 +141,31 @@ Included in the live ISO for installation:
    ```
 
 2. **Ensure Assets**:
-   - Place `wallpaper.jpg` in the repository root for the Hyprland and SDDM wallpaper.
-   - Place `hydramesh.svg` in the repository root for the HydraMesh Waybar status icon.
+   - Place `wallpaper.jpg` and `hydramesh.svg` in the repository root for the Hyprland wallpaper and HydraMesh Waybar status icon.
+   - Place the `./HydraMesh/` directory in the repository root, ensuring it contains `src/hydramesh.lisp`, `plugins/*.lisp`, and `streamdb/src/` with the StreamDB Rust source code.
 
-3. **Build the ISO**:
+3. **Compute StreamDB Hash**:
+   - Run `nix-prefetch-url --unpack file://$(pwd)/HydraMesh/streamdb` to compute the `cargoSha256` for the `streamdb` derivation in `hydramesh.nix`. Replace `sha256-placeholder-compute-with-nix-prefetch` with the output hash.
+
+4. **Build the ISO**:
    ```bash
    nix build .#nixosConfigurations.iso.config.system.build.isoImage
    ```
 
-4. **Flash to USB**:
+5. **Flash to USB**:
    Identify your USB device (`/dev/sdX`) with `lsblk`, then:
    ```bash
    sudo dd if=result/iso/nixos-*.iso of=/dev/sdX bs=4M status=progress
    sync
    ```
 
-5. **Boot and Install**:
+6. **Boot and Install**:
    - Boot from the USB drive (login: `nixos`, password: `nixos`).
    - The installer starts in a Kitty terminal, displaying the Oligarchy ASCII logo.
    - Follow the TUI prompts:
      - **Keyboard Layout**: Select from a menu (e.g., `us`, `gb`).
      - **Disk**: Choose a disk to wipe and install (LUKS-encrypted ext4).
      - **Framework Hardware**: Enable/disable Framework 16 optimizations.
-     - **HydraMesh Security**: Enable firewall (TCP 50051, UDP 5683 for LoRaWAN) and AppArmor for the HydraMesh service.
      - **Locale/Timezone**: Set language and region (e.g., `en_US.UTF-8`, `America/Los_Angeles`).
      - **Hostname/Username**: Configure system and user identity.
      - **Passwords**: Set user and optional root passwords.
@@ -167,7 +173,7 @@ Included in the live ISO for installation:
      - **Snap**: Enable Snap package support.
    - Reboot into the new system (enter LUKS password at boot).
 
-6. **Test in QEMU** (optional):
+7. **Test in QEMU** (optional):
    ```bash
    qemu-system-x86_64 -cdrom result/iso/nixos-*.iso -m 4G -enable-kvm -cpu host
    ```
@@ -199,8 +205,7 @@ Included in the live ISO for installation:
     - `optimization-level`: 0-3 for performance tuning.
     - `retry-max`: 1-10 for transient error retries.
   - Test with `/etc/hydramesh/test-hydramesh.sh`.
-  - Update with `/etc/hydramesh/update-hydramesh.sh` and rebuild.
-  - Firewall (if enabled) opens TCP 50051 and UDP 5683 (for LoRaWAN).
+  - Update by replacing `./HydraMesh/` contents and rebuilding with `nixos-rebuild switch`.
 - **Flatpak**:
   - Install: `flatpak install flathub <app-id>` (e.g., `flatpak install flathub com.spotify.Client`).
   - Run: `flatpak run com.spotify.Client`.
@@ -246,12 +251,13 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-**Note**: The embedded DeMoD-LISP SDK (HydraMesh) is licensed under LGPL-3.0. See `/etc/hydramesh/LICENSE` for details.
+**Note**: The HydraMesh codebase in `./HydraMesh/` is licensed under LGPL-3.0. See `./HydraMesh/LICENSE` for details.
 
 ## Notes
 - **Doom 3**: `dhewm3` requires separately owned Doom 3 data files (e.g., from Steam).
-- **Assets**: Ensure `wallpaper.jpg` and `hydramesh.svg` are in the repository root before building the ISO.
+- **Assets**: Ensure `wallpaper.jpg`, `hydramesh.svg`, and `./HydraMesh/` (with `src/hydramesh.lisp`, `plugins/*.lisp`, `streamdb/src/`) are in the repository root before building the ISO.
+- **StreamDB Build**: Replace `cargoSha256` in `hydramesh.nix` with the output of `nix-prefetch-url --unpack file://$(pwd)/HydraMesh/streamdb` before building.
 - **Validation**: Locale/timezone inputs are not validated; use standard formats (e.g., `en_US.UTF-8`, `America/Los_Angeles`).
 - **Flatpak/Snap**: Flatpak is enabled by default; Snap requires enabling during installation. Use `flatpak` or `snap` commands post-install.
-- **HydraMesh**: Place `hydramesh.svg` in the repo root for the Waybar status icon. Enable the service with `services.hydramesh.enable = true;` in `configuration.nix`. Toggle with `SUPER+SHIFT+H`, edit with `SUPER+SHIFT+E`, or view keybindings with `SUPER+SHIFT+K`, all accessible via Wofi.
+- **HydraMesh**: Place `./HydraMesh/` in the repo root for the service codebase, including `hydramesh.svg` for the Waybar status icon. Enable the service with `services.hydramesh.enable = true;` in `configuration.nix`. Toggle with `SUPER+SHIFT+H`, edit with `SUPER+SHIFT+E`, or view keybindings with `SUPER+SHIFT+K`, all accessible via Wofi.
 - **Support**: For issues, check the [NixOS Wiki](https://nixos.wiki) or open a GitHub issue.
