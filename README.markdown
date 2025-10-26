@@ -95,7 +95,7 @@ Always installed, covering development, multimedia, networking, utilities, and d
   - `mesa`, `amdvlk`, `vaapiVdpau`, `libvdpau-va-gl`, `rocmPackages.clr.icd`: Graphics drivers
 - **Browsers/Productivity**:
   - `brave`, `floorp-bin`, `thunderbird`: Web and email
-  - `vesktop`: Discord client
+  - `legcord`: Discord client
   - `unstable.openvscode-server`: VS Code server (from nixpkgs-unstable)
 
 ### Optional Gaming Packages
