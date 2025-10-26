@@ -32,6 +32,8 @@ Overall, Oligarchy NixOS brings utilitarian efficiency through modular toggles a
 
 ## Features for the Masses
 
+![HydraMesh](hydramesh.svg)
+
 - **Guided TUI Installer**: Prompts for keyboard layout, disk (LUKS-encrypted ext4), Framework hardware support, locale, timezone, hostname, user accounts, gaming, and Snap support.
 - **Hyprland Desktop**: Fast Wayland compositor with Waybar (system status) and Wofi (application launcher), configured for multi-monitor and clamshell mode.
 - **Customization Scripts**:
