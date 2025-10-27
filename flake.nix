@@ -1,5 +1,5 @@
 {
-  description = "Determinate NixOS Setup for R&D with Multiple Kernels, Desktops, and DeMoD Communication Framework";
+  description = "Oligarchy NixOS: Optimized for Framework 16 with HydraMesh and DeMoD-LISP SDK";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
@@ -208,7 +208,7 @@
             bind = $mainMod SHIFT, T, exec, ${pkgs.python3}/bin/python ~/.config/hypr/theme_changer.py
             bind = $mainMod SHIFT, A, exec, ${pkgs.python3}/bin/python ~/.config/hypr/webapp_to_wofi.py
             bind = $mainMod SHIFT, H, exec, ${pkgs.hydramesh-toggle}/bin/hydramesh-toggle
-            bind = $mainMod SHIFT, E, exec, ${pkgs.hydramesh-config-editor}/bin/hydramesh-config-editor
+            bind = $mainMod SHIFT, E, exec, ${pkgs.python3}/bin/python ~/.config/hypr/hydramesh_config_editor.py
             bind = $mainMod SHIFT, K, exec, ~/.config/hypr/keybindings_cheatsheet.sh
             windowrulev2 = suppressevent maximize, class:.*
             windowrulev2 = float, class:^(pavucontrol)$
@@ -225,13 +225,6 @@
             wallpaper = eDP-2,/etc/nixos/hypr/wallpaper.jpg
           '';
           environment.etc."hypr/wallpaper.jpg".source = ./wallpaper.jpg;
-          environment.etc."hypr/keybindings_cheatsheet.sh" = {
-            text = ''
-              #!/usr/bin/env bash
-              zenity --info --title="Hyprland Keybindings Cheat Sheet" --text="SUPER + Q: Open Terminal\nSUPER + E: Open File Manager\nSUPER + D: Open Wofi Launcher\nSUPER + SHIFT + W: Toggle Resolution\nSUPER + SHIFT + P: Hyprland Config Modifier\nSUPER + SHIFT + T: Theme Changer\nSUPER + SHIFT + A: Add Web App to Wofi\nSUPER + SHIFT + H: Toggle HydraMesh Service\nSUPER + SHIFT + E: HydraMesh Config Editor\nSUPER + SHIFT + K: Show this Cheat Sheet\nSUPER + 1-0: Switch Workspaces\nSUPER + SHIFT + 1-0: Move Window to Workspace\nSUPER + PRINT: Screenshot Desktop\nSUPER + SHIFT + PRINT: Screenshot Region\nAnd more - check ~/.config/hypr/hyprland.conf for full list."
-            '';
-            mode = "0755";
-          };
           environment.etc."waybar/config".text = ''
             {
                 "layer": "top",
@@ -317,7 +310,7 @@
                 background: rgba(51, 255, 51, 0.3);
                 border-radius: 8px;
             }
-            #cpu, #memory, #clock, #battery, #network, #custom-demod, #custom-hydramesh, #tray {
+            #cpu, #memory, #clock, #battery, #network, #custom-demod, #custom-hyramesh, #tray {
                 padding: 0 12px;
                 color: #33ff33;
             }
@@ -616,6 +609,13 @@
             '';
             mode = "0755";
           };
+          environment.etc."hypr/keybindings_cheatsheet.sh" = {
+            text = ''
+              #!/usr/bin/env bash
+              zenity --info --title="Hyprland Keybindings Cheat Sheet" --text="SUPER + Q: Open Terminal\nSUPER + E: Open File Manager\nSUPER + D: Open Wofi Launcher\nSUPER + SHIFT + W: Toggle Resolution\nSUPER + SHIFT + P: Hyprland Config Modifier\nSUPER + SHIFT + T: Theme Changer\nSUPER + SHIFT + A: Add Web App to Wofi\nSUPER + SHIFT + H: Toggle HydraMesh Service\nSUPER + SHIFT + E: HydraMesh Config Editor\nSUPER + SHIFT + K: Show this Cheat Sheet\nSUPER + 1-0: Switch Workspaces\nSUPER + SHIFT + 1-0: Move Window to Workspace\nSUPER + PRINT: Screenshot Desktop\nSUPER + SHIFT + PRINT: Screenshot Region\nAnd more - check ~/.config/hypr/hyprland.conf for full list."
+            '';
+            mode = "0755";
+          };
           environment.etc."applications/toggle_resolution.desktop".text = ''
             [Desktop Entry]
             Name=Toggle Resolution
@@ -727,6 +727,20 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
               HYDRAMESH=$(dialog --yesno "Enable HydraMesh service?" 7 60 && echo true || echo false)
               HYDRAMESH_FIREWALL=$(dialog --yesno "Enable firewall for HydraMesh ports (TCP from config.json, UDP 5683 for LoRaWAN if enabled)?" 7 60 && echo true || echo false)
               HYDRAMESH_APPARMOR=$(dialog --yesno "Enable AppArmor profile for HydraMesh (complain mode)?" 7 60 && echo true || echo false)
+              FRAMEWORK=$(dialog --yesno "Is this a Framework Laptop 16 (AMD Ryzen 7040 series)?\nEnable optimized hardware module if yes." 9 60 && echo true || echo false)
+              LOCALE=$(dialog --inputbox "Enter locale (e.g., en_US.UTF-8):" 8 50 "en_US.UTF-8" 3>&1 1>&2 2>&3)
+              TZ=$(dialog --inputbox "Enter timezone (e.g., America/Los_Angeles):" 8 50 "America/Los_Angeles" 3>&1 1>&2 2>&3)
+              HOSTNAME=$(dialog --inputbox "Enter hostname:" 8 50 "nixos" 3>&1 1>&2 2>&3)
+              USERNAME=$(dialog --inputbox "Enter username:" 8 50 "asher" 3>&1 1>&2 2>&3)
+              FULLNAME=$(dialog --inputbox "Enter full name:" 8 50 "Asher" 3>&1 1>&2 2>&3)
+              USERPW=$(dialog --insecure --passwordbox "Enter user password:" 8 50 3>&1 1>&2 2>&3)
+              USERPW_CONFIRM=$(dialog --insecure --passwordbox "Confirm user password:" 8 50 3>&1 1>&2 2>&3)
+              [ "$USERPW" = "$USERPW_CONFIRM" ] || { dialog --msgbox "Passwords mismatch" 7 50; exit 1; }
+              ROOTPW=$(dialog --insecure --passwordbox "Enter root password (optional, leave blank for none):" 8 50 3>&1 1>&2 2>&3)
+              ROOTPW_CONFIRM=$(dialog --insecure --passwordbox "Confirm root password:" 8 50 3>&1 1>&2 2>&3)
+              if [ -n "$ROOTPW" ] && [ "$ROOTPW" != "$ROOTPW_CONFIRM" ]; then dialog --msgbox "Passwords mismatch" 7 50; exit 1; }
+              STEAM=$(dialog --yesno "Enable Steam and gaming support?" 7 60 && echo true || echo false)
+              SNAP=$(dialog --yesno "Enable Snap package support?" 7 60 && echo true || echo false)
               cat <<EOF > /tmp/disko.nix
               { disks ? [ "$DISK" ], lib, ... }: {
                 disko.devices = {
@@ -753,6 +767,7 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
               mkdir -p /mnt/etc/nixos/wofi
               mkdir -p /mnt/etc/nixos/applications
               mkdir -p /mnt/etc/nixos/hydramesh
+              cp -r /etc/nixos-flake/HydraMesh /mnt/etc/nixos/
               cp /etc/nixos-flake/flake.nix /mnt/etc/nixos/
               cp /etc/nixos-flake/configuration.nix /mnt/etc/nixos/
               cp /etc/nixos-flake/hydramesh.nix /mnt/etc/nixos/
@@ -776,26 +791,6 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
               cp /etc/applications/hydramesh_toggle.desktop /mnt/etc/nixos/applications/
               cp /etc/applications/hydramesh_config_editor.desktop /mnt/etc/nixos/applications/
               cp /etc/applications/keybindings_cheatsheet.desktop /mnt/etc/nixos/applications/
-              FRAMEWORK=$(dialog --yesno "Is this a Framework Laptop 16 (AMD Ryzen 7040 series)?\nEnable optimized hardware module if yes." 9 60 && echo true || echo false)
-              if [ "$FRAMEWORK" = "no" ]; then
-                sed -i '/nixos-hardware.nixosModules.framework-16-7040-amd/d' /mnt/etc/nixos/flake.nix
-                sed -i '/fw-fanctrl.nixosModules.default/d' /mnt/etc/nixos/flake.nix
-                sed -i '/hardware.framework.enable =/d' /mnt/etc/nixos/flake.nix
-                sed -i '/hardware.fw-fanctrl.enable =/d' /mnt/etc/nixos/flake.nix
-              fi
-              LOCALE=$(dialog --inputbox "Enter locale (e.g., en_US.UTF-8):" 8 50 "en_US.UTF-8" 3>&1 1>&2 2>&3)
-              TZ=$(dialog --inputbox "Enter timezone (e.g., America/Los_Angeles):" 8 50 "America/Los_Angeles" 3>&1 1>&2 2>&3)
-              HOSTNAME=$(dialog --inputbox "Enter hostname:" 8 50 "nixos" 3>&1 1>&2 2>&3)
-              USERNAME=$(dialog --inputbox "Enter username:" 8 50 "asher" 3>&1 1>&2 2>&3)
-              FULLNAME=$(dialog --inputbox "Enter full name:" 8 50 "Asher" 3>&1 1>&2 2>&3)
-              USERPW=$(dialog --insecure --passwordbox "Enter user password:" 8 50 3>&1 1>&2 2>&3)
-              USERPW_CONFIRM=$(dialog --insecure --passwordbox "Confirm user password:" 8 50 3>&1 1>&2 2>&3)
-              [ "$USERPW" = "$USERPW_CONFIRM" ] || { dialog --msgbox "Passwords mismatch" 7 50; exit 1; }
-              ROOTPW=$(dialog --insecure --passwordbox "Enter root password (optional, leave blank for none):" 8 50 3>&1 1>&2 2>&3)
-              ROOTPW_CONFIRM=$(dialog --insecure --passwordbox "Confirm root password:" 8 50 3>&1 1>&2 2>&3)
-              if [ -n "$ROOTPW" ] && [ "$ROOTPW" != "$ROOTPW_CONFIRM" ]; then dialog --msgbox "Passwords mismatch" 7 50; exit 1; }
-              STEAM=$(dialog --yesno "Enable Steam and gaming support?" 7 60 && echo true || echo false)
-              SNAP=$(dialog --yesno "Enable Snap package support?" 7 60 && echo true || echo false)
               cd /mnt/etc/nixos
               sed -i "s|time.timeZone = \"America/Los_Angeles\";|time.timeZone = \"$TZ\";|g" configuration.nix
               sed -i "s|en_US.UTF-8|$LOCALE|g" configuration.nix
@@ -810,13 +805,19 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
                 echo "services.hydramesh.firewallEnable = $HYDRAMESH_FIREWALL;" >> configuration.nix
                 echo "services.hydramesh.apparmorEnable = $HYDRAMESH_APPARMOR;" >> configuration.nix
               fi
+              if [ "$FRAMEWORK" = "no" ]; then
+                sed -i '/nixos-hardware.nixosModules.framework-16-7040-amd/d' flake.nix
+                sed -i '/fw-fanctrl.nixosModules.default/d' flake.nix
+                sed -i '/hardware.framework.enable =/d' flake.nix
+                sed -i '/hardware.fw-fanctrl.enable =/d' flake.nix
+              fi
               if [ "$STEAM" = "true" ]; then
-                sed -i '/] ++ lib.optionals config.custom.steam.enable \[/i\        dhewm3\n        r2modman\n        darkradiant\n' configuration.nix
+                sed -i '/] ++ lib.optionals config.custom.steam.enable \[/i\        dhewm3\n        r2modman\n        darkradiant\n        proton-ge-bin\n' configuration.nix
               fi
               sed -i '/users.users.asher = {/,/};/d' configuration.nix
-              sed -i '/systemd.user.services.quicklisp-install = {/i users.users.'"$USERNAME"' = {\n      isNormalUser = true;\n      description = "'"$FULLNAME"'";\n      extraGroups = [ "networkmanager" "wheel" "docker" "wireshark" "disk" ];\n      shell = pkgs.bash;\n      initialPassword = "'"$USERPW"'";\n      packages = with pkgs; [\n        (writeShellScriptBin "install-quicklisp" '\'\'\n          curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp\n          ${pkgs.sbcl}/bin/sbcl --load /tmp/quicklisp.lisp --eval '\''(quicklisp-quickstart:install)'\'' --quit\n        '\'\'')\n        (writeShellScriptBin "toggle_resolution" "'\''\n          ~/.config/hypr/toggle_resolution.sh\n        '\'\'')\n        (writeShellScriptBin "hyprland_config_modifier" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/hyprland_config_modifier.py\n        '\'\'')\n        (writeShellScriptBin "theme_changer" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/theme_changer.py\n        '\'''')\n        (writeShellScriptBin "webapp_to_wofi" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/webapp_to_wofi.py\n        '\'''')\n        (writeShellScriptBin "hydramesh_toggle" "'\''\n          ${pkgs.hydramesh-toggle}/bin/hydramesh-toggle\n        '\'''')\n        (writeShellScriptBin "hydramesh_config_editor" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/hydramesh_config_editor.py\n        '\'')\n        (writeShellScriptBin "keybindings_cheatsheet" "'\''\n          ~/.config/hypr/keybindings_cheatsheet.sh\n        '\'')\n      ];\n    };\n' configuration.nix
+              sed -i '/systemd.user.services.quicklisp-install = {/i users.users.'"$USERNAME"' = {\n      isNormalUser = true;\n      description = "'"$FULLNAME"'";\n      extraGroups = [ "networkmanager" "wheel" "docker" "wireshark" "disk" ];\n      shell = pkgs.bash;\n      initialHashedPassword = "'$(mkpasswd -m sha-512 "$USERPW")'";\n      packages = with pkgs; [\n        (writeShellScriptBin "install-quicklisp" '\'\'\n          curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp\n          ${pkgs.sbcl}/bin/sbcl --load /tmp/quicklisp.lisp --eval '\''(quicklisp-quickstart:install)'\'' --quit\n        '\'\'')\n        (writeShellScriptBin "toggle_resolution" "'\''\n          ~/.config/hypr/toggle_resolution.sh\n        '\'\'')\n        (writeShellScriptBin "hyprland_config_modifier" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/hyprland_config_modifier.py\n        '\'\'')\n        (writeShellScriptBin "theme_changer" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/theme_changer.py\n        '\'\'')\n        (writeShellScriptBin "webapp_to_wofi" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/webapp_to_wofi.py\n        '\'\'')\n        (writeShellScriptBin "hydramesh_toggle" "'\''\n          ${pkgs.hydramesh-toggle}/bin/hydramesh-toggle\n        '\'\'')\n        (writeShellScriptBin "hydramesh_config_editor" "'\''\n          ${pkgs.python3}/bin/python ~/.config/hypr/hydramesh_config_editor.py\n        '\'\'')\n        (writeShellScriptBin "keybindings_cheatsheet" "'\''\n          ~/.config/hypr/keybindings_cheatsheet.sh\n        '\'\'')\n      ];\n    };\n' configuration.nix
               if [ -n "$ROOTPW" ]; then
-                echo 'users.users.root.initialPassword = "'"$ROOTPW"'";' >> configuration.nix
+                echo 'users.users.root.initialHashedPassword = "'$(mkpasswd -m sha-512 "$ROOTPW")'";' >> configuration.nix
               fi
               mkdir -p /mnt/home/"$USERNAME"/.config/hypr
               mkdir -p /mnt/home/"$USERNAME"/.config/waybar
