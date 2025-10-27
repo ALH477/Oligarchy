@@ -3,6 +3,7 @@
 {
   imports = [
     ./hardware-configuration.nix
+    ./hydramesh.nix
   ];
 
   options = {
@@ -64,6 +65,7 @@
 
     networking.hostName = "nixos";
     networking.networkmanager.enable = true;
+    networking.firewall.enable = true;  # System-wide firewall for added security
 
     hardware.bluetooth.enable = true;
     hardware.bluetooth.powerOnBoot = true;
@@ -110,12 +112,10 @@
       alsa.support32Bit = true;
       pulse.enable = true;
       jack.enable = true;
-      extraConfig = {
-        pipewire."90-custom" = {
-          "default.clock.quantum" = 1024;
-          "default.clock.min-quantum" = 512;
-          "default.clock.max-quantum" = 2048;
-        };
+      extraConfig.pipewire."90-custom" = {
+        "default.clock.quantum" = 1024;
+        "default.clock.min-quantum" = 512;
+        "default.clock.max-quantum" = 2048;
       };
     };
 
@@ -134,6 +134,8 @@
       login.fprintAuth = true;
       sudo.fprintAuth = true;
     };
+
+    security.apparmor.enable = true;  # Enable AppArmor system-wide
 
     virtualisation.docker.enable = true;
 
@@ -166,35 +168,168 @@
     };
 
     environment.systemPackages = with pkgs; [
-      vim docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress dmidecode util-linux gparted usbutils
+      vim
+      docker
+      git
+      git-lfs
+      gh
+      htop
+      nvme-cli
+      lm_sensors
+      s-tui
+      stress
+      dmidecode
+      util-linux
+      gparted
+      usbutils
       (python3Full.withPackages (ps: with ps; [
-        pip virtualenv cryptography pycryptodome grpcio grpcio-tools protobuf numpy matplotlib python-snappy
+        pip
+        virtualenv
+        cryptography
+        pycryptodome
+        grpcio
+        grpcio-tools
+        protobuf
+        numpy
+        matplotlib
+        python-snappy
       ]))
-      wireshark tcpdump nmap netcat
-      cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy
-      ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio pkgsi686Linux.libpulseaudio pavucontrol guitarix
-      qemu virt-manager docker-compose docker-buildx
-      vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
-      brave vlc pandoc kdePackages.okular obs-studio firefox thunderbird
-      blueberry vesktop font-awesome fastfetch gnugrep kitty wofi waybar hyprpaper brightnessctl zip unzip
-      gimp kdePackages.kdenlive inkscape blender libreoffice krita
-      xfce.thunar xfce.thunar-volman gvfs udiskie polkit_gnome framework-tool
-      wl-clipboard grim slurp v4l-utils
+      wireshark
+      tcpdump
+      nmap
+      netcat
+      cmake
+      gcc
+      gnumake
+      ninja
+      rustc
+      cargo
+      go
+      openssl
+      gnutls
+      pkgconf
+      snappy
+      ardour
+      audacity
+      ffmpeg-full
+      jack2
+      qjackctl
+      libpulseaudio
+      pkgsi686Linux.libpulseaudio
+      pavucontrol
+      guitarix
+      qemu
+      virt-manager
+      docker-compose
+      docker-buildx
+      vulkan-tools
+      vulkan-loader
+      vulkan-validation-layers
+      libva-utils
+      brave
+      vlc
+      pandoc
+      kdePackages.okular
+      obs-studio
+      firefox
+      thunderbird
+      blueberry
+      vesktop
+      font-awesome
+      fastfetch
+      gnugrep
+      kitty
+      wofi
+      waybar
+      hyprpaper
+      brightnessctl
+      zip
+      unzip
+      gimp
+      kdePackages.kdenlive
+      inkscape
+      blender
+      libreoffice
+      krita
+      xfce.thunar
+      xfce.thunar-volman
+      gvfs
+      udiskie
+      polkit_gnome
+      framework-tool
+      wl-clipboard
+      grim
+      slurp
+      v4l-utils
       mininet
       unstable.openvscode-server
-      (perl.withPackages (ps: with ps; [ JSON GetoptLong CursesUI ModulePluggable Appcpanminus ]))
-      (sbcl.withPackages (ps: with ps; [
-        cffi cl-ppcre cl-json cl-csv usocket bordeaux-threads log4cl trivial-backtrace cl-store hunchensocket fiveam cl-dot cserial-port
-        cl-lorawan cl-lsquic cl-can cl-sctp cl-zigbee
+      (perl.withPackages (ps: with ps; [
+        JSON
+        GetoptLong
+        CursesUI
+        ModulePluggable
+        Appcpanminus
       ]))
-      libserialport can-utils lksctp-tools cjson ncurses libuuid kicad graphviz mako openscad freecad
-      nextflow emboss blast lammps gromacs snakemake
-      librecad qcad sweethome3d.application sdrpp natron xnec2c eliza systemctl-tui
+      (sbcl.withPackages (ps: with ps; [
+        cffi
+        cl-ppcre
+        cl-json
+        cl-csv
+        usocket
+        bordeaux-threads
+        log4cl
+        trivial-backtrace
+        cl-store
+        hunchensocket
+        fiveam
+        cl-dot
+        cserial-port
+        cl-lorawan
+        cl-lsquic
+        cl-can
+        cl-sctp
+        cl-zigbee
+      ]))
+      libserialport
+      can-utils
+      lksctp-tools
+      cjson
+      ncurses
+      libuuid
+      kicad
+      graphviz
+      mako
+      openscad
+      freecad
+      nextflow
+      emboss
+      blast
+      lammps
+      gromacs
+      snakemake
+      librecad
+      qcad
+      sweethome3d
+      sdrpp
+      natron
+      xnec2c
+      eliza
+      systemctl-tui
       xorg.xinit
-      unetbootin popsicle gnome-disk-utility
+      unetbootin
+      popsicle
+      gnome-disk-utility
       zenity
     ] ++ lib.optionals config.custom.steam.enable [
-      steam steam-run linuxConsoleTools lutris wineWowPackages.stable dhewm3 r2modman darkradiant proton-ge-bin
+      steam
+      steam-run
+      linuxConsoleTools
+      lutris
+      wineWowPackages.stable
+      dhewm3
+      r2modman
+      darkradiant
+      proton-ge-bin
     ];
 
     programs.steam = lib.mkIf config.custom.steam.enable {
