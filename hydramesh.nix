@@ -4,17 +4,17 @@ let
   cfg = config.services.hydramesh;
   sbclWithPkgs = pkgs.sbcl.withPackages (ps: with ps; [
     cffi cl-ppcre cl-json cl-csv usocket bordeaux-threads log4cl trivial-backtrace cl-store hunchensocket fiveam cl-dot cserial-port
+    cl-lorawan cl-lsquic cl-can cl-sctp cl-zigbee
   ]);
   streamdb = pkgs.rustPlatform.buildRustPackage rec {
     pname = "streamdb";
-    version = "0.1.0";  # Adjust version as needed
+    version = "0.1.0";
     src = ./HydraMesh/streamdb;
-    cargoSha256 = "sha256-placeholder-compute-with-nix-prefetch";  # Replace with nix-prefetch-url --unpack src
+    cargoSha256 = "sha256-placeholder-compute-with-nix-prefetch";
     meta = with lib; {
       description = "StreamDB for HydraMesh";
       license = licenses.lgpl3;
     };
-    # Assuming it builds libstreamdb.so
     buildPhase = "cargo build --release --lib";
     installPhase = ''
       mkdir -p $out/lib
@@ -43,7 +43,6 @@ let
     fi
   '';
 in {
-  # Note: HydraMesh codebase is sourced from ./HydraMesh and licensed under LGPL-3.0 (see ./HydraMesh/LICENSE if available).
   options.services.hydramesh = {
     enable = lib.mkEnableOption "HydraMesh Lisp service";
     configFile = lib.mkOption {
@@ -51,19 +50,20 @@ in {
       default = "/etc/hydramesh/config.json";
       description = "Path to HydraMesh config.json";
     };
+    firewallEnable = lib.mkEnableOption "Enable firewall for HydraMesh ports";
+    apparmorEnable = lib.mkEnableOption "Enable AppArmor profile for HydraMesh";
   };
 
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [ sbclWithPkgs toggleScript statusScript streamdb ];
 
-    # Copy entire HydraMesh directory to /etc/hydramesh
     environment.etc."hydramesh".source = ./HydraMesh;
     environment.etc."hydramesh/config.json".text = ''
       {
         "transport": "gRPC",
         "host": "localhost",
         "port": 50051,
-        "mode": "AUTO",
+        "mode": "p2p",
         "node-id": "hydramesh-node-1",
         "peers": [],
         "group-rtt-threshold": 50,
@@ -75,19 +75,18 @@ in {
       }
     '';
 
-    # HydraMesh systemd service
+    environment.etc."hydramesh/hydramesh.svg".source = ./hydramesh.svg;
+
     systemd.services.hydramesh = {
       description = "HydraMesh Lisp Node";
       after = [ "network.target" ];
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
         ExecStart = "${pkgs.writeShellScriptBin "hydramesh-start" ''
-          # Setup Quicklisp if not present
           if [ ! -d "/root/quicklisp" ]; then
             curl -O https://beta.quicklisp.org/quicklisp.lisp
             ${sbclWithPkgs}/bin/sbcl --load quicklisp.lisp --eval '(quicklisp-quickstart:install)' --quit
           fi
-          # Load main HydraMesh file
           ${sbclWithPkgs}/bin/sbcl --load /root/quicklisp/setup.lisp \
             --load /etc/hydramesh/src/hydramesh.lisp \
             --eval '(dolist (plugin (directory "/etc/hydramesh/plugins/*.lisp")) (load plugin))' \
@@ -98,6 +97,7 @@ in {
         ''}/bin/hydramesh-start";
         Restart = "always";
         User = "hydramesh";
+        Group = "hydramesh";
         WorkingDirectory = "/etc/hydramesh";
         Environment = "LD_LIBRARY_PATH=${streamdb}/lib";
         DynamicUser = true;
@@ -110,15 +110,3 @@ in {
         RestrictNamespaces = true;
         SystemCallFilter = "@system-service ~@privileged";
       };
-    };
-
-    # Dedicated user for security
-    users.users.hydramesh = {
-      isSystemUser = true;
-      group = "hydramesh";
-      home = "/var/lib/hydramesh";
-      createHome = true;
-    };
-    users.groups.hydramesh = {};
-  };
-}
