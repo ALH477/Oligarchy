@@ -326,10 +326,12 @@
       linuxConsoleTools
       lutris
       wineWowPackages.stable
-      dhewm3
-      r2modman
-      darkradiant
-      proton-ge-bin
+      dhewm3 darkradiant r2modman
+      slade srb2
+      protonup-qt beyond-all-reason
+      doomseeker chocolate-doom rbdoom
+      quakespasm vkquake TrenchBroom
+      godot Quake3e retroarch-free
     ];
 
     programs.steam = lib.mkIf config.custom.steam.enable {
