@@ -31,6 +31,7 @@
           options = {
             hardware.framework.enable = lib.mkEnableOption "Framework 16-inch 7040 AMD support";
             hardware.fw-fanctrl.enable = lib.mkEnableOption "Framework fan control";
+            custom.nvidia.enable = lib.mkEnableOption "NVIDIA GPU support";
           };
           config = {
             nixpkgs.overlays = [
@@ -43,6 +44,37 @@
             ];
             hardware.framework.enable = true;
             hardware.fw-fanctrl.enable = true;
+            custom.nvidia.enable = false;
+
+            services.xserver.videoDrivers = if config.custom.nvidia.enable then [ "nvidia" ] else [ "amdgpu" ];
+
+            boot.kernelParams = lib.mkIf (!config.custom.nvidia.enable) [ "amdgpu.abmlevel=0" "amdgpu.sg_display=0" "amdgpu.exp_hw_support=1" ];
+            boot.initrd.kernelModules = lib.mkIf (!config.custom.nvidia.enable) [ "amdgpu" ];
+            boot.kernelModules = [ "v4l2loopback" ] ++ lib.optionals (!config.custom.nvidia.enable) [ "amdgpu" ];
+
+            hardware.nvidia = lib.mkIf config.custom.nvidia.enable {
+              modesetting.enable = true;
+              powerManagement.enable = false;
+              powerManagement.finegrained = false;
+              open = false;
+              nvidiaSettings = true;
+              package = config.boot.kernelPackages.nvidiaPackages.stable;
+            };
+
+            hardware.graphics = lib.mkMerge [
+              {
+                enable = true;
+                enable32Bit = true;
+              }
+              (lib.mkIf config.custom.nvidia.enable {
+                extraPackages = with pkgs; [ vaapiVdpau libvdpau-va-gl nvidia-vaapi-driver ];
+              })
+              (lib.mkIf (!config.custom.nvidia.enable) {
+                package = pkgs.mesa;
+                extraPackages = with pkgs; [ amdvlk vaapiVdpau libvdpau-va-gl rocmPackages.clr.icd ];
+                extraPackages32 = with pkgs.pkgsi686Linux; [ amdvlk ];
+              })
+            ];
           };
         })
       ];
@@ -59,7 +91,7 @@
         fw-fanctrl.nixosModules.default
         ./configuration.nix
         ./hydramesh/flake.nix
-        ./hydramesg/streamdb/flake.nix
+        ./hydramesh/streamdb/flake.nix
         ({ config, pkgs, lib, ... }: {
           services.xserver.desktopManager.gnome.enable = lib.mkForce false;
           services.xserver.displayManager.gdm.enable = lib.mkForce false;
@@ -730,6 +762,7 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
               HYDRAMESH_FIREWALL=$(dialog --yesno "Enable firewall for HydraMesh ports (TCP from config.json, UDP 5683 for LoRaWAN if enabled)?" 7 60 && echo true || echo false)
               HYDRAMESH_APPARMOR=$(dialog --yesno "Enable AppArmor profile for HydraMesh (complain mode)?" 7 60 && echo true || echo false)
               FRAMEWORK=$(dialog --yesno "Is this a Framework Laptop 16 (AMD Ryzen 7040 series)?\nEnable optimized hardware module if yes." 9 60 && echo true || echo false)
+              NVIDIA=$(dialog --yesno "Enable NVIDIA GPU support (disables Framework AMD optimizations if enabled)?" 7 60 && echo true || echo false)
               LOCALE=$(dialog --inputbox "Enter locale (e.g., en_US.UTF-8):" 8 50 "en_US.UTF-8" 3>&1 1>&2 2>&3)
               TZ=$(dialog --inputbox "Enter timezone (e.g., America/Los_Angeles):" 8 50 "America/Los_Angeles" 3>&1 1>&2 2>&3)
               HOSTNAME=$(dialog --inputbox "Enter hostname:" 8 50 "nixos" 3>&1 1>&2 2>&3)
@@ -740,7 +773,7 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
               [ "$USERPW" = "$USERPW_CONFIRM" ] || { dialog --msgbox "Passwords mismatch" 7 50; exit 1; }
               ROOTPW=$(dialog --insecure --passwordbox "Enter root password (optional, leave blank for none):" 8 50 3>&1 1>&2 2>&3)
               ROOTPW_CONFIRM=$(dialog --insecure --passwordbox "Confirm root password:" 8 50 3>&1 1>&2 2>&3)
-              if [ -n "$ROOTPW" ] && [ "$ROOTPW" != "$ROOTPW_CONFIRM" ]; then dialog --msgbox "Passwords mismatch" 7 50; exit 1; }
+              if [ -n "$ROOTPW" ] && [ "$ROOTPW" != "$ROOTPW_CONFIRM" ]; then dialog --msgbox "Passwords mismatch" 7 50; exit 1; fi
               STEAM=$(dialog --yesno "Enable Steam and gaming support?" 7 60 && echo true || echo false)
               SNAP=$(dialog --yesno "Enable Snap package support?" 7 60 && echo true || echo false)
               cat <<EOF > /tmp/disko.nix
@@ -772,7 +805,7 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
               cp -r /etc/nixos-flake/HydraMesh /mnt/etc/nixos/
               cp /etc/nixos-flake/flake.nix /mnt/etc/nixos/
               cp /etc/nixos-flake/configuration.nix /mnt/etc/nixos/
-              cp /etc/nixos-flake/hydramesh.nix /mnt/etc/nixos/
+              cp /etc/nixos-flake/hydramesh/flake.nix /mnt/etc/nixos/hydramesh/
               cp /etc/nixos-flake/hydramesh_config_editor.py /mnt/etc/nixos/
               cp /etc/hypr/hyprland.conf /mnt/etc/nixos/hypr/
               cp /etc/hypr/hyprpaper.conf /mnt/etc/nixos/hypr/
@@ -812,6 +845,11 @@ d8P'  `Y8b  `888'        `888'  d8P'  `Y8b        .888.      `888   `Y88.  d8P' 
                 sed -i '/fw-fanctrl.nixosModules.default/d' flake.nix
                 sed -i '/hardware.framework.enable =/d' flake.nix
                 sed -i '/hardware.fw-fanctrl.enable =/d' flake.nix
+              fi
+              if [ "$NVIDIA" = "true" ]; then
+                sed -i '/nixos-hardware.nixosModules.framework-16-7040-amd/d' flake.nix
+                sed -i 's|hardware.framework.enable = true;|hardware.framework.enable = false;|g' flake.nix
+                sed -i 's|custom.nvidia.enable = false;|custom.nvidia.enable = true;|g' flake.nix
               fi
               if [ "$STEAM" = "true" ]; then
                 sed -i '/] ++ lib.optionals config.custom.steam.enable \[/i\        dhewm3\n        r2modman\n        darkradiant\n        proton-ge-bin\n' configuration.nix
