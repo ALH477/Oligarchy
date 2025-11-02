@@ -147,6 +147,9 @@
 
     environment.systemPackages = with pkgs; [
       vim
+      neovim-unwrapped
+      neovim-qt
+      emacs
       docker
       git
       git-lfs
