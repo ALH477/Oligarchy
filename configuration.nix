@@ -4,6 +4,7 @@
   imports = [
     ./hardware-configuration.nix
     ./hydramesh.nix
+    ./hydramesh/streamdb/flake.nix
   ];
 
   options = {
