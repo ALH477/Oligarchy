@@ -58,7 +58,8 @@
         nixos-hardware.nixosModules.framework-16-7040-amd
         fw-fanctrl.nixosModules.default
         ./configuration.nix
-        ./hydramesh.nix
+        ./hydramesh/flake.nix
+        ./hydramesg/streamdb/flake.nix
         ({ config, pkgs, lib, ... }: {
           services.xserver.desktopManager.gnome.enable = lib.mkForce false;
           services.xserver.displayManager.gdm.enable = lib.mkForce false;
