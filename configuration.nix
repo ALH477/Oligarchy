@@ -3,7 +3,7 @@
 {
   imports = [
     ./hardware-configuration.nix
-    ./hydramesh.nix
+    ./hydramesh/flake.nix
     ./hydramesh/streamdb/flake.nix
   ];
 
@@ -27,16 +27,9 @@
     custom.steam.enable = true;
     custom.snap.enable = false;
 
-    boot.loader.systemd-boot.enable = true;
+    boot.loader.systemd-boot asla = true;
     boot.loader.efi.canTouchEfiVariables = true;
     boot.kernelPackages = pkgs.linuxPackages_latest;
-    boot.kernelParams = [
-      "amdgpu.abmlevel=0"
-      "amdgpu.sg_display=0"
-      "amdgpu.exp_hw_support=1"
-    ];
-    boot.initrd.kernelModules = [ "amdgpu" ];
-    boot.kernelModules = [ "amdgpu" "v4l2loopback" ];
     boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
     boot.extraModprobeConfig = ''
       options v4l2loopback devices=1 video_nr=10 card_label="Virtual Cam" exclusive_caps=1
@@ -48,7 +41,6 @@
     };
     services.displayManager.defaultSession = "hyprland";
     services.xserver.enable = true;
-    services.xserver.videoDrivers = [ "amdgpu" ];
     services.xserver.desktopManager.cinnamon.enable = true;
     services.xserver.windowManager.dwm.enable = true;
     programs.hyprland = {
@@ -66,27 +58,12 @@
 
     networking.hostName = "nixos";
     networking.networkmanager.enable = true;
-    networking.firewall.enable = true;  # System-wide firewall for added security
+    networking.firewall.enable = true;
 
     hardware.bluetooth.enable = true;
     hardware.bluetooth.powerOnBoot = true;
     hardware.enableRedistributableFirmware = true;
     powerManagement.cpuFreqGovernor = "performance";
-
-    hardware.graphics = {
-      enable = true;
-      enable32Bit = true;
-      package = pkgs.mesa;
-      extraPackages = with pkgs; [
-        amdvlk
-        vaapiVdpau
-        libvdpau-va-gl
-        rocmPackages.clr.icd
-      ];
-      extraPackages32 = with pkgs.pkgsi686Linux; [
-        amdvlk
-      ];
-    };
 
     time.timeZone = "America/Los_Angeles";
     i18n.defaultLocale = "en_US.UTF-8";
@@ -136,7 +113,7 @@
       sudo.fprintAuth = true;
     };
 
-    security.apparmor.enable = true;  # Enable AppArmor system-wide
+    security.apparmor.enable = true;
 
     virtualisation.docker.enable = true;
 
