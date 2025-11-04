@@ -37,7 +37,7 @@
 
     services.displayManager.sddm = {
       enable = true;
-      wayland.enable = true;
+      wayland.enable = false;
     };
     services.displayManager.defaultSession = "hyprland";
     services.xserver.enable = true;
