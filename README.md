@@ -1,6 +1,6 @@
 # Oligarchy NixOS
 
-Oligarchy NixOS is a custom NixOS distribution optimized for the Framework Laptop 16 (AMD Ryzen 7040 series), with robust support for other x86_64 hardware. It is designed for developers, researchers, creators, gamers, and Framework enthusiasts, offering a lightweight, Wayland-based Hyprland desktop (with optional X11 Cinnamon and DWM support), a guided Text User Interface (TUI) installer, and extensive customization options. The distribution integrates the HydraMesh service, powered by the DeMoD-LISP (D-LISP) SDK, for low-latency peer-to-peer (P2P) communication, suitable for Internet of Things (IoT), edge computing, and gaming applications. With a focus on utilitarian efficiency, educational value, stability, and accessibility, Oligarchy NixOS supports Flatpak and Snap packages, a comprehensive gaming suite, and hardware-specific optimizations to achieve low power consumption (5-7W idle on Framework 16) and high performance.
+Oligarchy NixOS is a custom NixOS distribution optimized for the Framework Laptop 16 (AMD Ryzen 7040 series), with robust support for other x86_64 hardware. It is designed for developers, researchers, creators, gamers, and Framework enthusiasts, offering a lightweight, Wayland-based Hyprland desktop (with optional X11 Cinnamon and DWM support), a graphical Calamares installer, and extensive customization options. The distribution integrates the HydraMesh service, powered by the DeMoD-LISP (D-LISP) SDK, for low-latency peer-to-peer (P2P) communication, suitable for Internet of Things (IoT), edge computing, and gaming applications. With a focus on utilitarian efficiency, educational value, stability, and accessibility, Oligarchy NixOS supports Snap packages, a comprehensive gaming suite, and hardware-specific optimizations to achieve low power consumption (5-7W idle on Framework 16) and high performance.
 
 ![Oligarchy](https://repository-images.githubusercontent.com/1072001868/8b510033-8549-4c89-995d-d40f79680900)
 
@@ -10,15 +10,15 @@ Oligarchy NixOS stands out due to its carefully crafted features, ensuring a rob
 
 - **Low Idle Power Consumption**: Optimized for the Framework Laptop 16 with power-efficient settings:
   - **Power Profiles Daemon**: Dynamically adjusts CPU performance to minimize idle power usage (`power-profiles-daemon` enables balanced and low-power modes).
-  - **AMDGPU Configuration**: Kernel parameters (`amdgpu.abmlevel=0`, `amdgpu.sg_display=0`, `amdgpu.exp_hw_support=1`) optimize GPU power draw, achieving 5-7W idle consumption on Framework 16.
+  - **AMDGPU Configuration**: Kernel parameters (`amdgpu.abmlevel=0`, `amdgpu.sg_display=0`, `amdgpu.exp_hw_support=1`) optimize GPU power draw, achieving 5-7W idle consumption on Framework 16 (when using integrated AMD graphics).
   - **Fan Control**: The `fw-fanctrl` module ensures efficient cooling, reducing fan activity during low loads to further lower power usage.
   - **Lid Switch Handling**: Configurable scripts (`lid.sh`, `toggle_clamshell.sh`) disable the laptop screen in clamshell mode, saving power for external monitor setups.
-- **Framework 16 Compatibility**: Leverages `nixos-hardware` and `fw-fanctrl` for AMD Ryzen 7040 support, including GPU drivers (`amdgpu`), firmware updates (`fwupd`), and fingerprint authentication (`fprintd`). A fallback option in the installer ensures compatibility with other hardware.
+- **Framework 16 Compatibility**: Leverages `nixos-hardware` and `fw-fanctrl` for AMD Ryzen 7040 support, including GPU drivers (`amdgpu`), firmware updates (`fwupd`), and fingerprint authentication (`fprintd`). A fallback option ensures compatibility with other hardware.
 - **Modular Package Management**: Nix’s declarative configuration allows precise control over installed components. Features like gaming (`steam`, `lutris`, `dhewm3`), Snap support, and the HydraMesh service are optional, keeping the system lean and customizable.
 - **Lightweight Desktop**: Hyprland, paired with Waybar (system status bar) and Wofi (application launcher), provides a fast, modern Wayland-based desktop environment, minimizing resource usage while supporting multi-monitor and clamshell configurations. Optional X11 support via Cinnamon and DWM.
-- **Streamlined Installation**: A TUI installer simplifies disk setup (LUKS-encrypted ext4), user configuration, hardware options, and HydraMesh security settings (firewall and AppArmor), ensuring a quick, secure, and user-friendly deployment process.
+- **Streamlined Installation**: The graphical Calamares installer simplifies disk setup (LUKS-encrypted ext4), user configuration, hardware options, and HydraMesh security settings (firewall and AppArmor), ensuring a quick, secure, and user-friendly deployment process.
 - **Customization Scripts**: Tools for resolution cycling, Hyprland configuration, theme switching, web app integration, HydraMesh management, and a keybindings cheat sheet enhance user control, accessible via Wofi or keyboard shortcuts.
-- **Flatpak and Snap Support**: Flatpak is enabled by default for broad application access, while Snap is optional, expanding software availability without compromising Nix’s reproducibility.
+- **Snap Support**: Snap is optional, expanding software availability without compromising Nix’s reproducibility.
 - **HydraMesh Service**: Integrates the DeMoD-LISP SDK for low-latency P2P communication, supporting transports like gRPC, WebSocket, and LoRaWAN. It includes a TUI configuration editor, Waybar status indicator, and robust security (systemd hardening, optional firewall, and AppArmor), making it ideal for IoT, gaming, and edge computing.
 - **Virtual Camera Support**: Kernel module `v4l2loopback` enables virtual webcams for streaming and video conferencing.
 
@@ -41,13 +41,13 @@ Oligarchy NixOS prioritizes security, particularly for the HydraMesh service, wh
   - **Value**: This aligns with containerization security principles (e.g., Docker’s default settings), ensuring robust isolation for networked applications.
 
 - **Optional Firewall**:
-  - **Dynamic Port Configuration**: If `services.hydramesh.firewallEnable` is set to `true` (prompted during installation), the firewall opens the TCP port specified in `/etc/hydramesh/config.json` (default 50051 for gRPC) and UDP 5683 for LoRaWAN if the `lorawan` plugin is enabled (`"plugins": {"lorawan": true}`).
+  - **Dynamic Port Configuration**: If `services.hydramesh.firewallEnable` is set to `true` (configured post-installation), the firewall opens the TCP port specified in `/etc/hydramesh/config.json` (default 50051 for gRPC) and UDP 5683 for LoRaWAN if the `lorawan` plugin is enabled (`"plugins": {"lorawan": true}`).
   - **Implementation**: The `networking.firewall` section in `hydramesh.nix` uses `builtins.fromJSON` to parse `config.json` and dynamically set `allowedTCPPorts` and `allowedUDPPorts`. This ensures only necessary ports are exposed, reducing the attack surface.
   - **Low-Level Mechanics**: NixOS’s firewall, based on `iptables` or `nftables`, applies rules during system activation (`nixos-rebuild switch`). For example, if `port = 50051` and LoRaWAN is enabled, rules like `iptables -A INPUT -p tcp --dport 50051 -j ACCEPT` and `iptables -A INPUT -p udp --dport 5683 -j ACCEPT` are added.
   - **Value**: Follows network segmentation best practices (e.g., CIS Control 12), ensuring only required ports are open, critical for public-facing IoT or gaming nodes.
 
 - **Optional AppArmor Profile**:
-  - **Confinement**: If `services.hydramesh.apparmorEnable` is set to `true` (prompted during installation), an AppArmor profile confines the HydraMesh service (`/usr/bin/sbcl`) to:
+  - **Confinement**: If `services.hydramesh.apparmorEnable` is set to `true` (configured post-installation), an AppArmor profile confines the HydraMesh service (`/usr/bin/sbcl`) to:
     - Read access to `/etc/hydramesh/**` (configuration files).
     - Read/write access to `/var/lib/hydramesh/**` (StreamDB data).
     - TCP and UDP network access for communication (e.g., gRPC, LoRaWAN).
@@ -96,32 +96,26 @@ Oligarchy NixOS prioritizes security, particularly for the HydraMesh service, wh
    ```
    Replace `cargoSha256` in `hydramesh/flake.nix` with the output. Note: The separate StreamDB flake uses Crane for building, with WASM and encryption features; integrate if needed via inputs.
 
-4. **Build the ISO**:
+4. **Customize Configuration (Optional)**:
+   - Edit `./configuration.nix` to toggle options like `custom.steam.enable`, `custom.snap.enable`, `custom.nvidia.enable` before building the ISO. By default, Steam, Snap, and NVIDIA support are enabled; Framework-specific optimizations and fan control are included via modules.
+
+5. **Build the ISO**:
    ```bash
    nix build .#nixosConfigurations.iso.config.system.build.isoImage
    ```
 
-5. **Flash the ISO**:
+6. **Flash the ISO**:
    Use `dd` or a tool like Popsicle to flash `result/iso/nixos-*.iso` to a USB drive.
 
-6. **Installation**:
-   - Boot from the USB.
-   - Run `sudo nixos-installer`.
-   - Follow TUI prompts:
-     - **Disk Selection**: Select a disk (e.g., `/dev/sda`) for installation, with LUKS encryption on ext4.
-     - **Encryption Password**: Enter and confirm a password for disk encryption.
-     - **HydraMesh Service**: Enable/disable the HydraMesh service.
-     - **HydraMesh Security**: Enable/disable firewall (opens TCP port from `config.json`, UDP 5683 for LoRaWAN if enabled) and AppArmor (complain mode).
-     - **Framework Hardware**: Enable/disable Framework 16 optimizations (disabling supports other hardware).
-     - **Locale/Timezone**: Set language (e.g., `en_US.UTF-8`) and timezone (e.g., `America/Los_Angeles`).
-     - **Hostname/Username**: Configure system hostname and user identity (e.g., `nixos`, `asher`).
-     - **Passwords**: Set user password and optional root password (hashed for security).
-     - **Gaming**: Enable/disable Steam and gaming packages.
-     - **Snap**: Enable/disable Snap package support.
-   - The installer partitions the disk, generates `hardware-configuration.nix`, copies configuration files, and installs the system.
-   - Reboot into the new system, entering the LUKS password at boot.
+7. **Installation**:
+   - Boot from the USB. The live environment uses LightDM and i3 for a minimal graphical session.
+   - Calamares will autostart on login. Follow the graphical steps:
+     - **Partitioning**: Select and partition the target disk (e.g., `/dev/sda`), enabling LUKS encryption on ext4 as needed.
+     - **User and System**: Configure hostname, username, passwords, locale, and timezone.
+     - The installer will generate `hardware-configuration.nix`, copy the preconfigured `./configuration.nix` (with enabled features like Steam, Snap, NVIDIA drivers, and Hyprland), and complete the installation.
+   - Reboot into the new system, entering the LUKS password at boot if encrypted.
 
-7. **Test in QEMU** (Optional):
+8. **Test in QEMU** (Optional):
    ```bash
    qemu-system-x86_64 -cdrom result/iso/nixos-*.iso -m 4G -enable-kvm -cpu host
    ```
@@ -131,7 +125,7 @@ Oligarchy NixOS prioritizes security, particularly for the HydraMesh service, wh
 Once installed, Oligarchy NixOS provides a powerful and customizable environment:
 
 - **Desktop**:
-  - Hyprland starts automatically, with Waybar displaying CPU, memory, battery, network, and HydraMesh status (🕸️ ON/OFF).
+  - Hyprland starts automatically via SDDM, with Waybar displaying CPU, memory, battery, network, and HydraMesh status (🕸️ ON/OFF).
   - Launch applications via Wofi (`SUPER+D`) or the terminal (`SUPER+Q` for Kitty).
   - Use `SUPER+1-0` to switch workspaces, `SUPER+SHIFT+1-0` to move windows to workspaces, and `SUPER+S` for a special `demod` workspace.
   - Optional: Switch to Cinnamon or DWM via SDDM.
@@ -145,12 +139,13 @@ Once installed, Oligarchy NixOS provides a powerful and customizable environment
   - **Keybindings Cheat Sheet**: View keybindings with `SUPER+SHIFT+K` or `keybindings_cheatsheet` via Wofi.
 
 - **Gaming**:
-  - If enabled, run `steam`, `lutris`, `dhewm3` (requires Doom 3 data files), `r2modman` for modded games, or `darkradiant` for level editing via Wofi or terminal.
+  - Steam, Lutris, and related tools are enabled by default. Run `steam`, `lutris`, `dhewm3` (requires Doom 3 data files), `r2modman` for modded games, or `darkradiant` for level editing via Wofi or terminal.
   - Use `proton-ge-bin` for enhanced game compatibility.
 
 - **HydraMesh**:
-  - Enable the service by adding to `configuration.nix`:
+  - Enable the service post-installation by adding to `configuration.nix` (then run `nixos-rebuild switch`):
     ```nix
+    imports = [ ./hydramesh.nix ];
     services.hydramesh.enable = true;
     services.hydramesh.firewallEnable = true;  # Enables firewall for TCP/UDP ports
     services.hydramesh.apparmorEnable = true;  # Enables AppArmor confinement
@@ -183,16 +178,8 @@ Once installed, Oligarchy NixOS provides a powerful and customizable environment
     sudo chmod 640 /etc/hydramesh/*
     ```
 
-- **Flatpak**:
-  - Install applications:
-    ```bash
-    flatpak install flathub <app-id>
-    ```
-    Example: `flatpak install flathub com.spotify.Client`
-  - Run: `flatpak run com.spotify.Client`
-
 - **Snap**:
-  - If enabled, install:
+  - If enabled during customization, install:
     ```bash
     snap install <package>
     ```
@@ -288,8 +275,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 - **Doom 3**: `dhewm3` requires separately owned Doom 3 data files (e.g., from Steam).
 - **Assets**: Ensure `wallpaper.jpg`, `hydramesh.svg`, and `./HydraMesh/` (with `src/hydramesh.lisp`, `plugins/*.lisp`, `streamdb/src/`) are in the repository root before building.
 - **StreamDB Build**: Replace `cargoSha256` in `hydramesh/flake.nix` with the output of `nix-prefetch-url --unpack file://$(pwd)/HydraMesh/streamdb`. For advanced builds, use the separate StreamDB flake with Crane for WASM/encryption support.
-- **Validation**: Locale/timezone inputs are not validated in the installer; use standard formats (e.g., `en_US.UTF-8`, `America/Los_Angeles`).
-- **Flatpak/Snap**: Flatpak is enabled by default; Snap requires enabling during installation. Use `flatpak` or `snap` commands post-install.
+- **Validation**: Locale/timezone inputs are handled via Calamares; use standard formats (e.g., `en_US.UTF-8`, `America/Los_Angeles`).
+- **Snap**: Enable via `custom.snap.enable` in `configuration.nix` before building. Use `snap` commands post-install.
 - **HydraMesh Security**: The firewall (if enabled) opens the TCP port specified in `config.json` (default 50051) and UDP 5683 for LoRaWAN if enabled. AppArmor (if enabled) confines the service to `/etc/hydramesh/**` (read) and `/var/lib/hydramesh/**` (read/write) with TCP/UDP access.
-- **Password Security**: User and root passwords are hashed using `mkpasswd -m sha-512` during installation for enhanced security.
+- **Password Security**: User and root passwords are set during Calamares installation and hashed for security.
 - **Memory Management**: To exclude prior conversation references, go to "Data Controls" in settings or click the book icon beneath relevant messages to forget specific chats.
+- **NVIDIA Support**: Enabled by default for hybrid graphics setups; disable via `custom.nvidia.enable = false;` in `configuration.nix` for pure AMD power optimization.
