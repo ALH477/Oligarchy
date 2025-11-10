@@ -8,6 +8,9 @@
   options = {
     custom.steam.enable = lib.mkEnableOption "Steam and gaming support";
     custom.snap.enable = lib.mkEnableOption "Snap package support";
+    hardware.framework.enable = lib.mkEnableOption "Framework 16-inch 7040 AMD support";
+    hardware.fw-fanctrl.enable = lib.mkEnableOption "Framework fan control";
+    custom.nvidia.enable = lib.mkEnableOption "NVIDIA GPU support";
   };
 
   config = {
@@ -24,9 +27,40 @@
 
     custom.steam.enable = true;
     custom.snap.enable = false;
+    hardware.framework.enable = true;
+    hardware.fw-fanctrl.enable = true;
+    custom.nvidia.enable = false;
 
-    boot.loader.systemd-boot asla = true;
-    boot.loader.efi.canTouchEfiVariables = true;
+    services.xserver.videoDrivers = if config.custom.nvidia.enable then [ "nvidia" ] else [ "amdgpu" ];
+
+    boot.kernelParams = lib.mkIf (!config.custom.nvidia.enable) [ "amdgpu.abmlevel=0" "amdgpu.sg_display=0" "amdgpu.exp_hw_support=1" ];
+    boot.initrd.kernelModules = lib.mkIf (!config.custom.nvidia.enable) [ "amdgpu" ];
+    boot.kernelModules = [ "v4l2loopback" ] ++ lib.optionals (!config.custom.nvidia.enable) [ "amdgpu" ];
+
+    hardware.nvidia = lib.mkIf config.custom.nvidia.enable {
+      modesetting.enable = true;
+      powerManagement.enable = false;
+      powerManagement.finegrained = false;
+      open = false;
+      nvidiaSettings = true;
+      package = config.boot.kernelPackages.nvidiaPackages.stable;
+    };
+
+    hardware.graphics = lib.mkMerge [
+      {
+        enable = true;
+        enable32Bit = true;
+      }
+      (lib.mkIf config.custom.nvidia.enable {
+        extraPackages = with pkgs; [ vaapiVdpau libvdpau-va-gl nvidia-vaapi-driver ];
+      })
+      (lib.mkIf (!config.custom.nvidia.enable) {
+        package = pkgs.mesa;
+        extraPackages = with pkgs; [ amdvlk vaapiVdpau libvdpau-va-gl rocmPackages.clr.icd ];
+        extraPackages32 = with pkgs.pkgsi686Linux; [ amdvlk ];
+      })
+    ];
+
     boot.kernelPackages = pkgs.linuxPackages_latest;
     boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
     boot.extraModprobeConfig = ''
@@ -54,7 +88,6 @@
       config.common.default = "*";
     };
 
-    networking.hostName = "nixos";
     networking.networkmanager.enable = true;
     networking.firewall.enable = true;
 
@@ -62,20 +95,6 @@
     hardware.bluetooth.powerOnBoot = true;
     hardware.enableRedistributableFirmware = true;
     powerManagement.cpuFreqGovernor = "performance";
-
-    time.timeZone = "America/Los_Angeles";
-    i18n.defaultLocale = "en_US.UTF-8";
-    i18n.extraLocaleSettings = {
-      LC_ADDRESS = "en_US.UTF-8";
-      LC_IDENTIFICATION = "en_US.UTF-8";
-      LC_MEASUREMENT = "en_US.UTF-8";
-      LC_MONETARY = "en_US.UTF-8";
-      LC_NAME = "en_US.UTF-8";
-      LC_NUMERIC = "en_US.UTF-8";
-      LC_PAPER = "en_US.UTF-8";
-      LC_TELEPHONE = "en_US.UTF-8";
-      LC_TIME = "en_US.UTF-8";
-    };
 
     services.libinput.enable = true;
     services.acpid.enable = true;
@@ -118,30 +137,6 @@
     programs.wireshark.enable = true;
 
     services.snap.enable = lib.mkIf config.custom.snap.enable true;
-
-    users.users.asher = {
-      isNormalUser = true;
-      description = "Asher";
-      extraGroups = [ "networkmanager" "wheel" "docker" "wireshark" "disk" ];
-      shell = pkgs.bash;
-      packages = with pkgs; [
-        (writeShellScriptBin "install-quicklisp" ''
-          curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
-          ${pkgs.sbcl}/bin/sbcl --load /tmp/quicklisp.lisp --eval '(quicklisp-quickstart:install)' --quit
-        '')
-      ];
-    };
-
-    systemd.user.services.quicklisp-install = {
-      description = "Install Quicklisp for D-LISP";
-      serviceConfig = {
-        Type = "oneshot";
-        ExecStart = "${pkgs.writeShellScriptBin "install-quicklisp" ''
-          curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
-          ${pkgs.sbcl}/bin/sbcl --load /tmp/quicklisp.lisp --eval '(quicklisp-quickstart:install)' --quit
-        ''}/bin/install-quicklisp";
-      };
-    };
 
     environment.systemPackages = with pkgs; [
       vim
