@@ -4,14 +4,13 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
-    determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate-nix/%2A";
-    nixos-hardware.url = "github:NixOS/nixpkgs/nixos-hardware";
+    nixos-hardware.url = "github:NixOS/nixos-hardware";
     fw-fanctrl.url = "github:TamtamHero/fw-fanctrl/packaging/nix";
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, determinate, nixos-hardware, fw-fanctrl, disko, ... }:
+  outputs = { self, nixpkgs, nixpkgs-unstable, nixos-hardware, fw-fanctrl, disko, ... }:
   let
     system = "x86_64-linux";
     lib = nixpkgs.lib;
@@ -20,7 +19,6 @@
       inherit system;
       specialArgs = { inherit nixpkgs-unstable lib; };
       modules = [
-        determinate.nixosModules.default
         nixos-hardware.nixosModules.framework-16-7040-amd
         fw-fanctrl.nixosModules.default
         ./hardware-configuration.nix
@@ -34,7 +32,6 @@
       modules = [
         "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-base.nix"  # Lightweight base
         "${nixpkgs}/nixos/modules/installer/cd-dvd/channel.nix"
-        determinate.nixosModules.default
         nixos-hardware.nixosModules.framework-16-7040-amd  # For live hardware support
         fw-fanctrl.nixosModules.default  # For live fan control if needed
         disko.nixosModules.disko
