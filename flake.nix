@@ -349,9 +349,8 @@
     system.stateVersion = "25.05";
   };
 }
-</DOCUMENT>
 
-<DOCUMENT filename="flake.nix">
+
 {
   description = "Oligarchy NixOS: Optimized for Framework 16 with HydraMesh and DeMoD-LISP SDK";
 
