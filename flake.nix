@@ -32,11 +32,11 @@
       inherit system;
       specialArgs = { inherit nixpkgs-unstable lib; };
       modules = [
-        "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-base.nix"  # Lighter base than plasma5
+        "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-base.nix"  # Lightweight base
         "${nixpkgs}/nixos/modules/installer/cd-dvd/channel.nix"
         determinate.nixosModules.default
-        nixos-hardware.nixosModules.framework-16-7040-amd  # Keep if needed for live hardware support
-        fw-fanctrl.nixosModules.default  # Keep if needed for live
+        nixos-hardware.nixosModules.framework-16-7040-amd  # For live hardware support
+        fw-fanctrl.nixosModules.default  # For live fan control if needed
         disko.nixosModules.disko
         ({ config, pkgs, lib, ... }: {
           nixpkgs.overlays = [
@@ -54,52 +54,58 @@
             })
           ];
 
-          # Enable minimal graphical environment for Calamares (lightweight WM instead of full DE)
+          # Minimal graphical environment (lightweight DM + WM)
           services.xserver.enable = true;
-          services.xserver.displayManager.sddm.enable = true;  # Or lightdm for lighter
-          services.xserver.desktopManager.plasma5.enable = lib.mkForce false;  # Disable heavy Plasma
-          services.xserver.windowManager.i3.enable = true;  # Lightweight WM
+          services.xserver.displayManager.lightdm.enable = true;  # Lighter than SDDM
+          services.xserver.windowManager.i3.enable = true;
 
-          # Enable Calamares installer
-          services.calamares.enable = true;
-
-          # Minimal packages for live environment (add only essentials)
+          # Minimal packages for live environment
           environment.systemPackages = with pkgs; [
-            calamares-nixos-extensions  # Ensure Calamares extensions
-            parted  # For partitioning if needed
-            # Avoid adding your long list here; it's for target only
+            calamares-nixos  # The Calamares installer package
+            calamares-nixos-extensions  # Extensions (with your patch)
+            parted  # For partitioning
           ];
 
-          # Disable unnecessary live services to save space
-          documentation.enable = false;  # Remove docs
+          # Disable unnecessary live features
+          documentation.enable = false;
           documentation.nixos.enable = false;
-          services.udisks2.enable = false;  # If not needed
-          # Add more disables as needed (e.g., printing, bluetooth if unused in live)
+          services.udisks2.enable = false;
+          services.printing.enable = false;
 
           environment.etc."nixos-flake".source = self;
 
-          services.calamares.settings = {
-            exec = [
-              "prepare"
-              "partition"
-              "mount"
-              "shellprocess@copycustom"
-              "nixos"
-              "shellprocess@install"
-              "unmount"
-            ];
-            moduleConfigurations.copycustom = {
-              type = "shellprocess";
-              timeout = -1;
-              commands = [
-                "cp -r /etc/nixos-flake/configuration.nix /mnt/etc/nixos/"
-              ];
-            };
-          };
+          # Provide Calamares settings as YAML
+          environment.etc."calamares/settings.conf".text = ''
+            ---
+            modules-search: [ local, files ]
+            exec:
+              - prepare
+              - partition
+              - mount
+              - shellprocess@copycustom
+              - nixos
+              - shellprocess@install
+              - unmount
+            moduleConfigurations:
+              copycustom:
+                type: shellprocess
+                timeout: -1
+                commands:
+                  - cp -r /etc/nixos-flake/configuration.nix /mnt/etc/nixos/
+          '';
+
+          # Autostart Calamares on login for convenience
+          environment.etc."xdg/autostart/calamares.desktop".text = ''
+            [Desktop Entry]
+            Type=Application
+            Exec=calamares -d
+            Name=Install NixOS
+            NoDisplay=false
+          '';
 
           nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
-          # Better compression for smaller ISO (zstd is efficient)
+          # Better compression for smaller ISO
           isoImage.squashfsCompression = "zstd -Xcompression-level 15";
         })
       ];
