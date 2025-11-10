@@ -4,8 +4,8 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
-    determinate.url = "https://flakehub.com/f/DeterminateSystems/determine/*";
-    nixos-hardware.url = "github:NixOS/nixos-hardware";
+    determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate-nix/%2A";
+    nixos-hardware.url = "github:NixOS/nixpkgs/nixos-hardware";
     fw-fanctrl.url = "github:TamtamHero/fw-fanctrl/packaging/nix";
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
