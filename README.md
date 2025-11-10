@@ -4,6 +4,8 @@ Oligarchy NixOS is a custom NixOS distribution optimized for the Framework Lapto
 
 ![Oligarchy](https://repository-images.githubusercontent.com/1072001868/8b510033-8549-4c89-995d-d40f79680900)
 
+[ISO download](https://archive.org/details/oligarchy)
+
 ## Why Oligarchy NixOS is Optimized and Supreme
 
 Oligarchy NixOS stands out due to its carefully crafted features, ensuring a robust, secure, and user-friendly experience tailored to modern hardware and advanced use cases:
