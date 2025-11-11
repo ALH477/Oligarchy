@@ -30,7 +30,7 @@
       inherit system;
       specialArgs = { inherit nixpkgs-unstable lib; };
       modules = [
-        "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-base.nix"  # Lightweight base
+        "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-plasma5.nix"  # Standard Plasma Calamares preset
         "${nixpkgs}/nixos/modules/installer/cd-dvd/channel.nix"
         nixos-hardware.nixosModules.framework-16-7040-amd  # For live hardware support
         fw-fanctrl.nixosModules.default  # For live fan control if needed
@@ -51,27 +51,15 @@
             })
           ];
 
-          # Minimal graphical environment (lightweight DM + WM)
-          services.xserver.enable = true;
-          services.xserver.displayManager.lightdm.enable = true;  # Lighter than SDDM
-          services.xserver.windowManager.i3.enable = true;
-
-          # Minimal packages for live environment
+          # Enable Calamares with custom settings
           environment.systemPackages = with pkgs; [
-            calamares-nixos  # The Calamares installer package
-            calamares-nixos-extensions  # Extensions (with your patch)
-            parted  # For partitioning
+            calamares-nixos
+            calamares-nixos-extensions
           ];
-
-          # Disable unnecessary live features
-          documentation.enable = false;
-          documentation.nixos.enable = false;
-          services.udisks2.enable = false;
-          services.printing.enable = false;
 
           environment.etc."nixos-flake".source = self;
 
-          # Provide Calamares settings as YAML
+          # Calamares settings for easy install with custom config copy
           environment.etc."calamares/settings.conf".text = ''
             ---
             modules-search: [ local, files ]
@@ -91,7 +79,7 @@
                   - cp -r /etc/nixos-flake/configuration.nix /mnt/etc/nixos/
           '';
 
-          # Autostart Calamares on login for convenience
+          # Autostart Calamares on login
           environment.etc."xdg/autostart/calamares.desktop".text = ''
             [Desktop Entry]
             Type=Application
@@ -102,7 +90,7 @@
 
           nix.settings.experimental-features = [ "nix-command" "flakes" ];
 
-          # Better compression for smaller ISO
+          # Compression for reasonable ISO size
           isoImage.squashfsCompression = "zstd -Xcompression-level 15";
         })
       ];
