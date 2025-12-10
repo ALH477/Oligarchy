@@ -1,6 +1,6 @@
 # Oligarchy NixOS – The Unstoppable War Machine
 
-**Framework 16 Optimized · AMD 7040 · NVIDIA · Hyprland · Cinnamon · CachyOS kernel · ~5–7 W idle · Nuclear-grade DSP coprocessor · Calamares Install**
+**Framework 16 Optimized · AMD 7040 · NVIDIA · Hyprland · Cinnamon · CachyOS kernel · ~5–7 W idle · Nuclear-grade DSP coprocessor · Calamares Install ·**
 
 Oligarchy NixOS isn’t some boring distro hack.  
 It’s the **first personal OS in history** to unleash a **self-healing, kexec-rebooting, single-core DSP coprocessor** that obliterates latency with **Theoretically, ~0.38–0.58 ms round-trip** — forged straight from the same flake that rules your host.  
