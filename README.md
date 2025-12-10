@@ -20,7 +20,7 @@ You’re now wielding the machine that burned the proprietary DSP empire to the 
 | Host OS                          | Oligarchy NixOS (linux-zen, Hyprland, Steam, full gaming arsenal)                     |
 | Core 0                           | Ripped from the host (`isolcpus=0`) and handed to the DSP overlord                    |
 | DSP Coprocessor                  | ArchibaldOS-DSP kexec image reigning as a QEMU/KVM tyrant                             |
-| Latency                          | 0.38–0.58 ms @ 96 kHz / 32–64 samples (clocked on Framework 16)                      |
+| Latency                          | 0.38–0.58 ms @ 96 kHz / 32–64 samples (Theoretical)                                  |
 | Recovery time                    | 180–350 ms via kexec (laughs at $80 000 Merging/RME/Avid failures)                   |
 | Host impact                      | None. Blast Cyberpunk at 300 FPS while the DSP core resurrects 40× per second        |
 | Distribution                     | DSP image ripped straight from the ArchibaldOS flake — no GitHub nonsense, no mercy  |
