@@ -10,12 +10,16 @@
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
 
-    # Pull ArchibaldOS so we can reference its built DSP image directly
+    # Pull ArchibaldOS for the DSP image
     archibaldos.url = "github:ALH477/ArchibaldOS";
     archibaldos.inputs.nixpkgs.follows = "nixpkgs";
+
+    # Add CachyOS kernel
+    nixos-cachyos-kernel.url = "github:drakon64/nixos-cachyos-kernel";
+    nixos-cachyos-kernel.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, nixos-hardware, fw-fanctrl, disko, archibaldos, ... }:
+  outputs = { self, nixpkgs, nixpkgs-unstable, nixos-hardware, fw-fanctrl, disko, archibaldos, nixos-cachyos-kernel, ... }:
   let
     system = "x86_64-linux";
     lib = nixpkgs.lib;
@@ -30,7 +34,8 @@
 
         ./hardware-configuration.nix
         ./configuration.nix
-        ./modules/archibaldos-dsp-vm.nix   # ← your new DSP VM module lives here
+        ./modules/archibaldos-dsp-vm.nix   # DSP module remains
+        nixos-cachyos-kernel.nixosModules.default   # Add CachyOS kernel
       ];
     };
 
@@ -45,12 +50,13 @@
         fw-fanctrl.nixosModules.default
         disko.nixosModules.disko
 
-        # Import the exact same modules the real system uses → the ISO will behave identically
+        # Import the exact same modules for the ISO
         ./configuration.nix
         ./modules/archibaldos-dsp-vm.nix
+        nixos-cachyos-kernel.nixosModules.default   # Include in ISO too
 
         ({ config, pkgs, ... }: {
-          # Calamares tweaks so the installed system gets your full config
+          # Calamares tweaks to copy the full config
           environment.etc."nixos-flake".source = self;
 
           environment.etc."calamares/settings.conf".text = ''
