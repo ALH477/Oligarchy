@@ -11,7 +11,7 @@ You’re now wielding the machine that burned the proprietary DSP empire to the 
 
 ![Oligarchy + ArchibaldOS-DSP](https://repository-images.githubusercontent.com/1072001868/8b510033-8549-4c89-995d-d40f79680900)
 
-[ISO download](https://archive.org/details/oligarchy) · [Live demo (YouTube)](https://youtube.com/@demodllc) · [Discord](https://discord.gg/dem0d)
+[ISO download](https://archive.org/details/oligarchy) · [Live demo (YouTube)](https://youtube.com/@demodllc) ·
 
 ## What you’re actually commanding right now
 
