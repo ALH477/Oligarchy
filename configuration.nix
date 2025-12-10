@@ -1,9 +1,14 @@
 { config, pkgs, lib, nixpkgs-unstable, ... }:
-custom.archibaldos-dsp-vm.enable = true;
+
 {
   imports = [
     ./hardware-configuration.nix
   ];
+
+  # ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
+  # DSP COPROCESSOR — THE NUCLEAR OPTION
+  custom.archibaldos-dsp-vm.enable = true;
+  # ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
 
   options = {
     custom.steam.enable = lib.mkEnableOption "Steam and gaming support";
