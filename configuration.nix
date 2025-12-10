@@ -1,5 +1,5 @@
 { config, pkgs, lib, nixpkgs-unstable, ... }:
-
+custom.archibaldos-dsp-vm.enable = true;
 {
   imports = [
     ./hardware-configuration.nix
