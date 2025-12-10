@@ -3,16 +3,15 @@
 
 let
   cfg = config.custom.archibaldos-dsp-vm;
-  # Point this to your built image — can be local path, GitHub release, or cachix later
-  dspImage = pkgs.fetchurl {
-    url = "https://github.com/ALH477/ArchibaldOS/releases/download/latest/archibaldOS-dsp.img.xz";
-    sha256 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; # ← replace after first download
-  };
 
-  # Decompress once at evaluation time → raw img
+  # This is the canonical way — the image comes straight from the ArchibaldOS flake
+  # No URLs, no manual sha256, no web server, no GitHub LFS, no 2 GB limit
+  dspImage = archibaldos.packages.${pkgs.system}.dsp;   # ← the .xz image you already build
+
+  # Decompress once, at evaluation time → raw .img ready for QEMU
   diskImage = pkgs.runCommandNoCC "archibaldos-dsp-disk.img" {} ''
     mkdir -p $out
-    ${pkgs.xz}/bin/xz -d --keep --stdout ${dspImage} > $out/disk.img
+    ${pkgs.xz}/bin/xz -d --stdout ${dspImage} > $out/disk.img
   '';
 in
 {
