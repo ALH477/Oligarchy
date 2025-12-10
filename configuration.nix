@@ -28,6 +28,8 @@
       })
     ];
 
+    boot.kernelPackages = pkgs.linuxPackagesFor pkgs.linuxPackages_cachyos;
+
     nixpkgs.config.allowUnfree = true;
 
     custom.steam.enable = true;
@@ -66,7 +68,6 @@
       })
     ];
 
-    boot.kernelPackages = pkgs.linuxPackages_latest;
     boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
     boot.extraModprobeConfig = ''
       options v4l2loopback devices=1 video_nr=10 card_label="Virtual Cam" exclusive_caps=1
