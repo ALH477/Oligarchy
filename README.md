@@ -22,7 +22,7 @@ You’re now wielding the machine that burned the proprietary DSP empire to the 
 | DSP Coprocessor                  | ArchibaldOS-DSP kexec image reigning as a QEMU/KVM tyrant                             |
 | Latency                          | 0.38–0.58 ms @ 96 kHz / 32–64 samples (Theoretical)                                  |
 | Recovery time                    | 180–350 ms via kexec (laughs at $80 000 Merging/RME/Avid failures)                   |
-| Host impact                      | None. Blast Cyberpunk at 300 FPS while the DSP core resurrects 40× per second        |
+| Host impact                      | None. Blast DOOM 2016 at 300 FPS while the DSP core resurrects 40× per second        |
 | Distribution                     | DSP image ripped straight from the ArchibaldOS flake — no GitHub nonsense, no mercy  |
 
 You now wield **Abbey Road monitoring latency** on a laptop that also annihilates Doom Eternal at max settings. Bow down.
