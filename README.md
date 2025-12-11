@@ -46,6 +46,7 @@ This isn’t just a system — it’s a conquest machine, engineered to crush mo
 - **Snap Support**: Optional Snap expands your arsenal without breaking Nix’s reproducibility.
 - **HydraMesh Service**: DeMoD-LISP SDK powers low-latency P2P (gRPC/WebSocket/LoRaWAN) with a TUI editor, Waybar status, and ironclad security (systemd hardening, optional firewall, AppArmor) — perfect for IoT, gaming, and edge domination.
 - **Virtual Camera Support**: `v4l2loopback` kernel module turns your rig into a streaming warhead.
+- **Virtual DSP Co Processor**:  a loud, chaotic party bus (The CachyOS Host) that drives at 100mph, but engineering a soundproof, vibration-free clean room (The RT Guest) in the back seat where a surgeon can perform delicate eye surgery. Making sure the bus's vibration (scheduler latency) never shakes the surgeon's hand (audio buffer) is a massive technical achievement.
 
 ## Security – The Iron Curtain
 
