@@ -5,6 +5,8 @@
 Oligarchy NixOS isn’t some boring distro hack.  
 It’s the **first personal OS in history** to unleash a **self-healing, kexec-rebooting, single-core DSP coprocessor** that obliterates latency with **Theoretically, ~0.38–0.58 ms round-trip** — forged straight from the same flake that rules your host.  
 
+The Host (CachyOS' kernel) is like a Sports Car designed to go as fast as possible (high FPS). The VM (CachyOS' RT BORE Kernel) is like a Swiss Watch designed to never miss a beat, even if it moves slower (perfect timing). You wouldn't want a watch engine in a car, nor a car engine in a watch.
+
 You’re now wielding the machine that burned the proprietary DSP empire to the ground.
 
 **HydraMesh Features are still WIP**
