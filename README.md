@@ -9,7 +9,7 @@ The Host (CachyOS' kernel) is like a Sports Car designed to go as fast as possib
 
 You’re now wielding the machine that burned the proprietary DSP empire to the ground.
 
-**HydraMesh Features are still WIP**
+**HydraMesh Features are still WIP and DSP coprocessor is being polished**
 
 ![Oligarchy + ArchibaldOS-DSP](https://repository-images.githubusercontent.com/1072001868/8b510033-8549-4c89-995d-d40f79680900)
 
