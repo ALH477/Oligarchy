@@ -1,0 +1,94 @@
+# CachyOS Kernel NixOS Module
+
+**Copyright © 2025 DeMoD LLC**  
+**Licensed under BSD-3-Clause**
+
+A standalone, configurable NixOS module for easily installing and switching between performance-optimized **CachyOS kernels** – ideal for gaming, creative workloads (Blender, video editing, etc.), and responsive desktop use.
+
+The module wraps the actively maintained upstream flake at  
+https://github.com/xddxdd/nix-cachyos-kernel (release branch, last updated December 20, 2025).
+
+### Features
+- Simple enable option with sensible defaults
+- Choice of all major CachyOS variants (`bore`, `lts`, `eevdf`, `hardened`, etc.)
+- Optional ThinLTO builds for extra performance
+- Uses pinned overlay for reliable binary cache hits (no long kernel builds)
+
+**Recommended configuration for gaming + creative work:**  
+`variant = "bore"` (BORE scheduler) – consistently tops 2025 benchmarks for low latency, smooth frame times, and desktop responsiveness.
+
+### Directory Structure
+```
+modules/
+  CachyOS/
+    flake.nix
+    module.nix
+```
+
+### Installation & Usage
+
+1. **Add as a flake input** in your system flake:
+
+   ```nix
+   inputs = {
+     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+     cachyos-kernel-module.url = "path:/path/to/modules/CachyOS";  # or git/github url
+     # ... other inputs
+   };
+   ```
+
+2. **Import the module**:
+
+   ```nix
+   nixosConfigurations.yourHost = nixpkgs.lib.nixosSystem {
+     modules = [
+       # your other modules
+       cachyos-kernel-module.nixosModules.cachyosKernel
+     ];
+   };
+   ```
+
+3. **Enable in your configuration.nix** (or any imported module):
+
+   ```nix
+   boot.cachyosKernel = {
+     enable = true;
+     variant = "bore";   # strongly recommended for gaming/creative
+     lto = true;         # optional: small extra performance (usually cached)
+   };
+   ```
+
+4. **Add binary caches** (highly recommended to download pre-built kernels):
+
+   ```nix
+   nix.settings = {
+     substituters = [
+       "https://attic.xuyh0120.win/lantian"
+       "https://cache.garnix.io"
+     ];
+     trusted-public-keys = [
+       "lantian:EeAUQ+W+6r7EtwnmYjeVwx5kOGEBpjlBfPlzGlTNvHc="
+       "cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g="
+     ];
+   };
+   ```
+
+5. **Rebuild and reboot**:
+
+   ```bash
+   sudo nixos-rebuild switch --flake .#your-hostname
+   ```
+
+Your previous kernel remains available in the bootloader as a fallback.
+
+### Available Variants
+- `latest` – newest kernel with default CachyOS tunings
+- `lts` – long-term support
+- `bore` – **recommended** BORE scheduler (best for gaming/interactive)
+- `eevdf` – tuned EEVDF
+- `bmq`, `hardened`, `rt-bore`, `server`, `deckify`
+
+### License
+BSD 3-Clause – see file headers for full text.
+
+Enjoy top-tier performance on NixOS!
