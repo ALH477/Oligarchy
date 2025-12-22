@@ -86,6 +86,21 @@ let
           restart: unless-stopped
           ipc: host
           shm_size: "${currentPreset.shmSize}"
+    ''
+    + (if effectiveAcceleration == "rocm" then ''
+          devices:
+            - "/dev/kfd:/dev/kfd"
+            - "/dev/dri:/dev/dri"
+    '' else if effectiveAcceleration == "cuda" then ''
+          deploy:
+            resources:
+              reservations:
+                devices:
+                  - driver: nvidia
+                    count: all
+                    capabilities: [gpu]
+    '' else "")
+    + ''
           environment:
             OLLAMA_FLASH_ATTENTION: "1"
             OLLAMA_NUM_PARALLEL: "${toString currentPreset.numParallel}"
@@ -97,20 +112,6 @@ let
     + optionalString (effectiveAcceleration == "rocm") ''
             ROCR_VISIBLE_DEVICES: "0,1"
             HSA_OVERRIDE_GFX_VERSION: "11.0.0"
-    ''
-    + optionalString (effectiveAcceleration == "rocm") ''
-          devices:
-            - /dev/kfd:/dev/kfd
-            - /dev/dri:/dev/dri
-    ''
-    + optionalString (effectiveAcceleration == "cuda") ''
-          deploy:
-            resources:
-              reservations:
-                devices:
-                  - driver: nvidia
-                    count: all
-                    capabilities: [gpu]
     ''
     + ''
           volumes:
@@ -155,20 +156,12 @@ let
           image: ghcr.io/linuxserver/foldingathome:latest
           container_name: foldingathome
           restart: unless-stopped
-          environment:
-            USER: Anonymous
-            TEAM: "0"
-            ENABLE_GPU: "true"
-            ENABLE_SMP: "true"
-          volumes:
-            - ${userHome}/foldingathome-data:/config
       ''
-      + optionalString (effectiveAcceleration == "rocm") ''
+      + (if effectiveAcceleration == "rocm" then ''
           devices:
-            - /dev/kfd:/dev/kfd
-            - /dev/dri:/dev/dri
-      ''
-      + optionalString (effectiveAcceleration == "cuda") ''
+            - "/dev/kfd:/dev/kfd"
+            - "/dev/dri:/dev/dri"
+      '' else if effectiveAcceleration == "cuda" then ''
           deploy:
             resources:
               reservations:
@@ -176,6 +169,15 @@ let
                   - driver: nvidia
                     count: all
                     capabilities: [gpu]
+      '' else "")
+      + ''
+          environment:
+            USER: Anonymous
+            TEAM: "0"
+            ENABLE_GPU: "true"
+            ENABLE_SMP: "true"
+          volumes:
+            - ${userHome}/foldingathome-data:/config
       ''
     )
   );
