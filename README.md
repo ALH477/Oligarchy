@@ -26,6 +26,8 @@ You’re now wielding the machine that burned the proprietary DSP empire to the 
 | Recovery time                    | 180–350 ms via kexec (laughs at $80 000 Merging/RME/Avid failures)                   |
 | Host impact                      | None. Blast DOOM 2016 at 300 FPS while the DSP core resurrects 40× per second        |
 | Distribution                     | DSP image ripped straight from the ArchibaldOS flake — no GitHub nonsense, no mercy  |
+| Containerized AI Stack                     | A sandboxed complete stack for local AI Agents with presets for hardware needs.  |
+
 
 You now wield **Abbey Road monitoring latency** on a laptop that also annihilates Doom Eternal at max settings. Bow down.
 
