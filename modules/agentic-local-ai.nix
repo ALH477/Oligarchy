@@ -211,7 +211,12 @@ let
 
     cd "$COMPOSE_DIR"
 
-    case "${1:-start}" in
+    COMMAND=$1
+    if [ -z "$COMMAND" ]; then
+      COMMAND="start"
+    fi
+
+    case "$COMMAND" in
       start|up)
         docker compose pull
         docker compose up -d
@@ -224,7 +229,8 @@ let
         docker compose down
         ;;
       logs)
-        docker compose logs -f "${@:2}"
+        shift
+        docker compose logs -f "$@"
         ;;
       pull)
         if [ -z "${2:-}" ]; then
