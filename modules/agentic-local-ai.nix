@@ -1,11 +1,4 @@
-# modules/agentic-local-ai.nix
-#
-# BSD-style license (full text in LICENSE)
-# Copyright (c) 2025 DeMoD LLC
-# All rights reserved.
-#
-# Production-grade declarative NixOS module for minimal, tiered local agentic AI stack
-# Aligned with ArchibaldOS "Minimal Oligarchy" philosophy
+# /etc/nixos/agentic-local-ai.nix
 
 { config, pkgs, lib, ... }:
 
@@ -19,13 +12,13 @@ let
   
   # Centralized paths for consistency
   paths = {
-    base = "${userHome}/.config/archibaldos/ai-stack";
+    base = "${userHome}/.config/ollama-agentic/ai-stack";
     ollama = "${userHome}/.ollama";
     openWebui = "${userHome}/open-webui-data";
     foldingAtHome = "${userHome}/foldingathome-data";
     prometheus = "${userHome}/ai-metrics";
     backups = "${userHome}/.local/share/ai-backups";
-    state = "${userHome}/.config/archibaldos/ai-stack/.state";
+    state = "${userHome}/.config/ollama-agentic/ai-stack/.state";
   };
 
   presetConfigs = {
@@ -83,6 +76,42 @@ let
       ];
     };
 
+    rocm-multi = {
+      description = "Multi-GPU ROCm tier: uses both iGPU (780M) and dGPU (7700S) for maximum performance.";
+      numParallel = 12;
+      maxLoadedModels = 8;
+      keepAlive = "72h";
+      maxQueue = 2048;
+      shmSize = "48gb";
+      memoryPressure = "0.75";
+      acceleration = "rocm";
+      minVramGB = 16;
+      recommendedModels = [
+        "llama3.1:70b-instruct-q6_K"
+        "qwen2.5:72b-instruct-q5_K_M"
+        "deepseek-coder-v2:236b-lite-instruct-q4_K_M"
+        "gemma2:27b-instruct-q8_0"
+      ];
+    };
+
+    cuda = {
+      description = "Optimized for NVIDIA CUDA GPUs (8–48GB VRAM). Supports larger models and higher parallelism.";
+      numParallel = 12;
+      maxLoadedModels = 8;
+      keepAlive = "72h";
+      maxQueue = 2048;
+      shmSize = "48gb";
+      memoryPressure = "0.75";
+      acceleration = "cuda";
+      minVramGB = 24;
+      recommendedModels = [
+        "llama3.1:70b-instruct-q6_K"
+        "qwen2.5:72b-instruct-q5_K_M"
+        "mixtral:8x22b-instruct-q4_K_M"
+        "gemma2:27b-instruct-q8_0"
+      ];
+    };
+
     pewdiepie = {
       description = "Extreme tier for multi-GPU monster rigs (requires CUDA, 8+ GPUs, 320GB+ total VRAM)";
       numParallel = 16;
@@ -106,6 +135,8 @@ let
   effectiveAcceleration =
     if cfg.preset == "cpu-fallback" then null
     else if cfg.acceleration != null then cfg.acceleration
+    else if cfg.preset == "rocm-multi" then "rocm"
+    else if cfg.preset == "cuda" then "cuda"
     else currentPreset.acceleration;
 
   ollamaImage =
@@ -342,7 +373,7 @@ let
         -C "${userHome}" \
         .ollama \
         open-webui-data \
-        .config/archibaldos/ai-stack \
+        .config/ollama-agentic/ai-stack \
         ${optionalString cfg.advanced.foldingAtHome.enable "foldingathome-data"} \
         2>&1 | tee /tmp/backup.log; then
         error "Backup failed. See /tmp/backup.log for details"
@@ -501,7 +532,7 @@ let
         
         if [ "$SUGGESTED" != "$CURRENT" ]; then
           warn "Consider changing to '$SUGGESTED' preset in your NixOS configuration"
-          info "Edit: archibaldos.profiles.ai.agenticLocalAi.preset = \"$SUGGESTED\";"
+          info "Edit: services.ollamaAgentic.preset = \"$SUGGESTED\";"
         else
           success "Current preset is optimal for your hardware"
         fi
@@ -602,15 +633,16 @@ EOF
 
 in
 {
-  options.archibaldos.profiles.ai.agenticLocalAi = {
-    enable = mkEnableOption "Minimal tiered agentic local AI stack (Ollama + Open WebUI)";
+  options.services.ollamaAgentic = {
+    enable = mkEnableOption "Tiered local AI stack (Ollama + Open WebUI)";
 
     preset = mkOption {
-      type = types.enum [ "cpu-fallback" "default" "high-vram" "pewdiepie" ];
+      type = types.enum [ "cpu-fallback" "default" "high-vram" "rocm-multi" "cuda" "pewdiepie" ];
       default = "default";
       description = mdDoc ''
         Performance tier preset — adjusts parallelism, model capacity, and resource limits.
         
+        Use 'rocm-multi' for AMD iGPU + dGPU setups, 'cuda' for NVIDIA GPUs.
         Run `ai-stack suggest-preset` to get a recommendation based on detected hardware.
       '';
     };
@@ -669,7 +701,7 @@ in
 
         title = mkOption {
           type = types.str;
-          default = "ArchibaldOS AI";
+          default = "Agentic Local AI";
           description = "Custom title for the web interface";
         };
       };
@@ -719,6 +751,13 @@ in
   config = mkIf cfg.enable {
     # Comprehensive validation
     assertions = [
+        assertion = cfg.preset != "rocm-multi" || effectiveAcceleration == "rocm";
+        message = "rocm-multi requires ROCm acceleration.";
+      }
+      {
+        assertion = cfg.preset != "cuda" || effectiveAcceleration == "cuda";
+        message = "cuda preset requires NVIDIA GPU and CUDA support.";
+      }
       {
         assertion = cfg.preset != "pewdiepie" || effectiveAcceleration == "cuda";
         message = "pewdiepie preset requires CUDA acceleration (multi-GPU NVIDIA setup).";
@@ -848,7 +887,7 @@ in
     # Documentation generation
     system.extraSystemBuilderCmds = ''
       cat > $out/ai-stack-info.txt <<'EOF'
-ArchibaldOS Agentic AI Stack Configuration
+Agentic Local AI Stack Configuration
 ==========================================
 
 Preset: ${cfg.preset}
