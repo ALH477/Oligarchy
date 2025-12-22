@@ -1,4 +1,4 @@
-# /etc/nixos/modules/agentic-local-ai.nix
+# /etc/nixos/agentic-local-ai.nix
 
 { config, pkgs, lib, ... }:
 
@@ -121,8 +121,8 @@ let
           OLLAMA_SCHED_SPREAD: "1"
           OLLAMA_KV_CACHE_TYPE: "q8_0"
           ${optionalString (effectiveAcceleration == "rocm") ''
-          ROCR_VISIBLE_DEVICES: "0,1"  # 0 = dGPU (7700S, gfx1102), 1 = iGPU (780M, gfx1103) – exposes both for multi-GPU usage
-          HSA_OVERRIDE_GFX_VERSION: "11.0.0"  # Primary override (applies to first visible device); reliable for gfx1102
+          ROCR_VISIBLE_DEVICES: "0,1"
+          HSA_OVERRIDE_GFX_VERSION: "11.0.0"
           ''}
         ${optionalString (effectiveAcceleration == "rocm") ''
         devices:
@@ -178,74 +178,83 @@ let
 
   recommendedModelsArray = builtins.concatStringsSep "\n        " currentPreset.recommendedModels;
 
-  aiStackScript = pkgs.writeShellScriptBin "ai-stack" ''
-    #!/usr/bin/env bash
-    set -euo pipefail
+  aiStackScript = pkgs.stdenv.mkDerivation {
+    name = "ai-stack";
+    src = pkgs.writeShellScript "ai-stack-raw" ''
+      #!/usr/bin/env bash
+      set -euo pipefail
 
-    if ! groups | grep -q docker; then
-      echo "Error: User must be in 'docker' group."
-      exit 1
-    fi
+      if ! groups | grep -q docker; then
+        echo "Error: User must be in 'docker' group."
+        exit 1
+      fi
 
-    COMPOSE_DIR="${userHome}/.config/ollama-agentic/ai-stack"
-    mkdir -p "$COMPOSE_DIR" "${userHome}/.ollama" "${userHome}/open-webui-data"
-    ${optionalString cfg.advanced.foldingAtHome.enable ''mkdir -p "${userHome}/foldingathome-data"''}
-    chmod 700 "${userHome}/.ollama" "${userHome}/open-webui-data"
+      COMPOSE_DIR="${userHome}/.config/ollama-agentic/ai-stack"
+      mkdir -p "$COMPOSE_DIR" "${userHome}/.ollama" "${userHome}/open-webui-data"
+      ${optionalString cfg.advanced.foldingAtHome.enable ''mkdir -p "${userHome}/foldingathome-data"''}
+      chmod 700 "${userHome}/.ollama" "${userHome}/open-webui-data"
 
-    COMPOSE_FILE="$COMPOSE_DIR/docker-compose.yml"
+      COMPOSE_FILE="$COMPOSE_DIR/docker-compose.yml"
 
-    if [ ! -f "$COMPOSE_FILE" ]; then
-      echo "Deploying Agentic Local AI stack (${cfg.preset} preset)..."
-      echo "${currentPreset.description}"
-      ${optionalString cfg.advanced.foldingAtHome.enable "echo 'Folding@Home container enabled'"}
-      cp ${dockerComposeYml} "$COMPOSE_FILE"
-    fi
+      if [ ! -f "$COMPOSE_FILE" ]; then
+        echo "Deploying Agentic Local AI stack (${cfg.preset} preset)..."
+        echo "${currentPreset.description}"
+        ${optionalString cfg.advanced.foldingAtHome.enable "echo 'Folding@Home container enabled'"}
+        cp ${dockerComposeYml} "$COMPOSE_FILE"
+      fi
 
-    if command -v rocminfo >/dev/null 2>&1 && [[ "${cfg.preset}" != "cuda" ]]; then
-      echo "ROCm multi-GPU mode: Both RX 7700S (dGPU) and Radeon 780M (iGPU) visible to Ollama"
-    fi
+      if command -v rocminfo >/dev/null 2>&1 && [[ "${cfg.preset}" != "cuda" ]]; then
+        echo "ROCm multi-GPU mode: Both RX 7700S (dGPU) and Radeon 780M (iGPU) visible to Ollama"
+      fi
 
-    cd "$COMPOSE_DIR"
+      cd "$COMPOSE_DIR"
 
-    case "''${1:-start}" in
-      start|up)
-        docker compose pull
-        docker compose up -d
-        echo "Agentic Local AI (${cfg.preset}) active → http://localhost:8080"
-        ${optionalString cfg.advanced.foldingAtHome.enable "echo 'Folding@Home running in background'"}
-        echo "Recommended models:"
-        echo "${recommendedModelsArray}"
-        ;;
-      stop|down)
-        docker compose down
-        ;;
-      logs)
-        docker compose logs -f "''${@:2}"
-        ;;
-      pull)
-        if [ -z "''${2:-}" ]; then
-          echo "Usage: ai-stack pull <model>"
-          exit 1
-        fi
-        docker exec -it ollama ollama pull "$2"
-        ;;
-      tune)
-        if [[ "${cfg.preset}" == "cuda" ]]; then
-          nvidia-smi || echo "nvidia-smi not available"
-        else
-          rocm-smi --showmeminfo vram 2>/dev/null || echo "ROCm not active"
-        fi
-        ;;
-      backup)
-        TIMESTAMP=$(date +%Y%m%d_%H%M)
-        tar -czf "${userHome}/ai-backup-''${TIMESTAMP}.tar.gz" "${userHome}/.ollama" "${userHome}/open-webui-data" ${optionalString cfg.advanced.foldingAtHome.enable "\"${userHome}/foldingathome-data\""}
-        echo "Backup written to ${userHome}/ai-backup-''${TIMESTAMP}.tar.gz"
-        ;;
-      *)
-        echo "Usage: ai-stack [start|stop|logs|pull <model>|tune|backup]"
-        ;;
-    esac
-  '';
+      case "${1:-start}" in
+        start|up)
+          docker compose pull
+          docker compose up -d
+          echo "Agentic Local AI (${cfg.preset}) active → http://localhost:8080"
+          ${optionalString cfg.advanced.foldingAtHome.enable "echo 'Folding@Home running in background'"}
+          echo "Recommended models:"
+          echo "${recommendedModelsArray}"
+          ;;
+        stop|down)
+          docker compose down
+          ;;
+        logs)
+          docker compose logs -f "${@:2}"
+          ;;
+        pull)
+          if [ -z "${2:-}" ]; then
+            echo "Usage: ai-stack pull <model>"
+            exit 1
+          fi
+          docker exec -it ollama ollama pull "$2"
+          ;;
+        tune)
+          if [[ "${cfg.preset}" == "cuda" ]]; then
+            nvidia-smi || echo "nvidia-smi not available"
+          else
+            rocm-smi --showmeminfo vram 2>/dev/null || echo "ROCm not active"
+          fi
+          ;;
+        backup)
+          TIMESTAMP=$(date +%Y%m%d_%H%M)
+          tar -czf "${userHome}/ai-backup-${TIMESTAMP}.tar.gz" "${userHome}/.ollama" "${userHome}/open-webui-data" ${optionalString cfg.advanced.foldingAtHome.enable "\"${userHome}/foldingathome-data\""}
+          echo "Backup written to ${userHome}/ai-backup-${TIMESTAMP}.tar.gz"
+          ;;
+        *)
+          echo "Usage: ai-stack [start|stop|logs|pull <model>|tune|backup]"
+          ;;
+      esac
+    '';
+
+    installPhase = ''
+      mkdir -p $out/bin
+      cp $src $out/bin/ai-stack
+      chmod +x $out/bin/ai-stack
+    '';
+  };
 in
 {
   options.services.ollamaAgentic = {
@@ -277,7 +286,7 @@ in
 
     users.users.${userName}.extraGroups = [ "docker" "video" "render" ] ++ optional (effectiveAcceleration == "cuda") "nvidia";
 
-    environment.systemPackages = with pkgs; [ docker rocmPackages.rocm-smi rocmPackages.rocminfo ] ++ optionals (effectiveAcceleration == "cuda") [ cudaPackages.nvidia-smi ];
+    environment.systemPackages = with pkgs; [ docker rocmPackages.rocm-smi rocmPackages.rocminfo ] ++ optionals (effectiveAcceleration == "cuda") [ cudaPackages.cudatoolkit ] ++ [ aiStackScript ];
 
     system.activationScripts.aiAgentSetup = ''
       mkdir -p ${userHome}/.ollama ${userHome}/open-webui-data ${userHome}/.config/ollama-agentic/ai-stack ${optionalString cfg.advanced.foldingAtHome.enable "${userHome}/foldingathome-data"}
