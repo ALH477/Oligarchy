@@ -152,7 +152,7 @@ let
 
   rocmEnvVars =
     if effectiveAcceleration == "rocm"
-    then "      ROCR_VISIBLE_DEVICES: \"0,1\"\n${gfxVersionOverride}"
+    then "      ROCR_VISIBLE_DEVICES: \"0\"\n${gfxVersionOverride}"
     else "";
 
   # Prometheus configuration
