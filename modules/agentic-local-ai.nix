@@ -91,7 +91,8 @@ let
           OLLAMA_SCHED_SPREAD: "1"
           OLLAMA_KV_CACHE_TYPE: "q8_0"
           ${optionalString (effectiveAcceleration == "rocm") ''
-          HSA_OVERRIDE_GFX_VERSION: "11.0.2"
+          ROCR_VISIBLE_DEVICES: "1"
+          HSA_OVERRIDE_GFX_VERSION: "11.0.0"
           ''}
         ${optionalString (effectiveAcceleration == "rocm") ''
         devices:
@@ -173,7 +174,7 @@ let
     if command -v rocminfo >/dev/null 2>&1; then
       GFX=$(rocminfo | grep -oP 'gfx\K\d{3,}' | head -1 || true)
       if [ -n "$GFX" ]; then
-        echo "Detected gfx$GFX → Using HSA_OVERRIDE_GFX_VERSION=11.0.2 (safe for 780M/gfx1103)"
+        echo "Detected primary gfx$GFX → Using RX 7700S (dGPU) via ROCR_VISIBLE_DEVICES=1"
       fi
     fi
 
