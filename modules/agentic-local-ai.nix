@@ -211,12 +211,7 @@ let
 
     cd "$COMPOSE_DIR"
 
-    COMMAND=$1
-    if [ -z "$COMMAND" ]; then
-      COMMAND="start"
-    fi
-
-    case "$COMMAND" in
+    case "''${1:-start}" in
       start|up)
         docker compose pull
         docker compose up -d
@@ -229,11 +224,10 @@ let
         docker compose down
         ;;
       logs)
-        shift
-        docker compose logs -f "$@"
+        docker compose logs -f "''${@:2}"
         ;;
       pull)
-        if [ -z "${2:-}" ]; then
+        if [ -z "''${2:-}" ]; then
           echo "Usage: ai-stack pull <model>"
           exit 1
         fi
@@ -248,8 +242,8 @@ let
         ;;
       backup)
         TIMESTAMP=$(date +%Y%m%d_%H%M)
-        tar -czf "$USER_HOME/ai-backup-${TIMESTAMP}.tar.gz" "$USER_HOME/.ollama" "$USER_HOME/open-webui-data" ${optionalString cfg.advanced.foldingAtHome.enable "\"$USER_HOME/foldingathome-data\""}
-        echo "Backup written to $USER_HOME/ai-backup-${TIMESTAMP}.tar.gz"
+        tar -czf "$USER_HOME/ai-backup-''${TIMESTAMP}.tar.gz" "$USER_HOME/.ollama" "$USER_HOME/open-webui-data" ${optionalString cfg.advanced.foldingAtHome.enable "\"$USER_HOME/foldingathome-data\""}
+        echo "Backup written to $USER_HOME/ai-backup-''${TIMESTAMP}.tar.gz"
         ;;
       *)
         echo "Usage: ai-stack [start|stop|logs|pull <model>|tune|backup]"
