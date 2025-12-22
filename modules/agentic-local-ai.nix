@@ -38,6 +38,15 @@ let
       recommendedModels = [ "llama3.1:70b-instruct-q6_K" "qwen2.5:72b-instruct-q5_K_M" ];
     };
 
+    rocm-multi = {
+      description = "Multi-GPU ROCm tier: uses both iGPU (780M) and dGPU (7700S) for maximum performance.";
+      numParallel = 12;
+      maxLoadedModels = 8;
+      keepAlive = "72h";
+      shmSize = "48gb";
+      recommendedModels = [ "llama3.1:70b-instruct-q6_K" "qwen2.5:72b-instruct-q5_K_M" "deepseek-coder-v2:236b-lite-instruct-q4_K_M" "gemma2:27b-instruct-q8_0" ];
+    };
+
     cuda = {
       description = "Optimized for NVIDIA CUDA GPUs (8–48GB VRAM). Supports larger models and higher parallelism.";
       numParallel = 12;
@@ -112,8 +121,8 @@ let
           OLLAMA_SCHED_SPREAD: "1"
           OLLAMA_KV_CACHE_TYPE: "q8_0"
           ${optionalString (effectiveAcceleration == "rocm") ''
-          ROCR_VISIBLE_DEVICES: "1"
-          HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+          ROCR_VISIBLE_DEVICES: "0,1"  # 0 = dGPU (7700S, gfx1102), 1 = iGPU (780M, gfx1103) – exposes both for multi-GPU usage
+          HSA_OVERRIDE_GFX_VERSION: "11.0.0"  # Primary override (applies to first visible device); reliable for gfx1102
           ''}
         ${optionalString (effectiveAcceleration == "rocm") ''
         devices:
@@ -193,10 +202,7 @@ let
     fi
 
     if command -v rocminfo >/dev/null 2>&1 && [[ "${cfg.preset}" != "cuda" ]]; then
-      GFX=$(rocminfo | grep -oP 'gfx\K\d{3,}' | head -1 || true)
-      if [ -n "$GFX" ]; then
-        echo "Detected primary gfx$GFX → Using RX 7700S (dGPU) via ROCR_VISIBLE_DEVICES=1"
-      fi
+      echo "ROCm multi-GPU mode: Both RX 7700S (dGPU) and Radeon 780M (iGPU) visible to Ollama"
     fi
 
     cd "$COMPOSE_DIR"
@@ -246,9 +252,9 @@ in
     enable = mkEnableOption "Tiered local AI stack (Ollama + Open WebUI)";
 
     preset = mkOption {
-      type = types.enum [ "cpu-fallback" "default" "high-vram" "cuda" "pewdiepie" ];
+      type = types.enum [ "cpu-fallback" "default" "high-vram" "rocm-multi" "cuda" "pewdiepie" ];
       default = "default";
-      description = "Performance tier preset. Use 'cuda' for NVIDIA GPU acceleration.";
+      description = "Performance tier preset. Use 'rocm-multi' for both iGPU + dGPU acceleration.";
     };
 
     acceleration = mkOption {
@@ -264,6 +270,7 @@ in
     assertions = [
       { assertion = cfg.preset != "pewdiepie" || effectiveAcceleration == "cuda"; message = "pewdiepie requires CUDA."; }
       { assertion = cfg.preset != "cuda" || effectiveAcceleration == "cuda"; message = "cuda preset requires NVIDIA GPU and CUDA support."; }
+      { assertion = cfg.preset != "rocm-multi" || effectiveAcceleration == "rocm"; message = "rocm-multi requires ROCm."; }
     ];
 
     virtualisation.docker.enable = true;
