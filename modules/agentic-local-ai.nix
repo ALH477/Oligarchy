@@ -196,7 +196,7 @@ let
     else "")
   );
 
-  # Comprehensive management script (preserved from original)
+  # Comprehensive management script
   aiStackScript = pkgs.writeShellScriptBin "ai-stack" ''
     #!/usr/bin/env bash
     set -euo pipefail
@@ -339,7 +339,9 @@ let
       '') cfg.preloadModels}
       
       rm -f "$LOCK_FILE"
-      '' else "# No models configured for preload"}
+      '' else ''
+      info "No models configured for preloading"
+      ''}
     }
 
     # Health check
@@ -749,8 +751,8 @@ in
   };
 
   config = mkIf cfg.enable {
-    # Comprehensive validation
     assertions = [
+      {
         assertion = cfg.preset != "rocm-multi" || effectiveAcceleration == "rocm";
         message = "rocm-multi requires ROCm acceleration.";
       }
@@ -784,7 +786,6 @@ in
     ] ++ optional (cfg.preset == "pewdiepie") 
       "pewdiepie preset requires 320GB+ total VRAM across multiple GPUs. Verify your hardware capabilities.";
 
-    # Docker configuration
     virtualisation.docker = {
       enable = true;
       autoPrune = {
@@ -801,12 +802,9 @@ in
       };
     };
 
-    # User configuration
-    users.users.${userName}.extraGroups = [ "docker" ] 
-      ++ optional (effectiveAcceleration == "rocm") "video"
-      ++ optional (effectiveAcceleration == "rocm") "render";
+	users.users.${userName}.extraGroups = [ "docker" ]
+      ++ optionals (effectiveAcceleration == "rocm") [ "video" "render" ];
 
-    # System packages
     environment.systemPackages = with pkgs; [
       docker
       docker-compose
@@ -818,8 +816,7 @@ in
       cudaPackages.nvidia_x11
     ];
 
-    # Systemd service for automatic startup (optional)
-    systemd.services.agentic-ai-stack = mkIf (cfg.advanced.autoStart or false) {
+    systemd.services.agentic-ai-stack = mkIf cfg.advanced.autoStart {
       description = "Agentic Local AI Stack";
       after = [ "docker.service" "network-online.target" ];
       wants = [ "network-online.target" ];
@@ -838,7 +835,6 @@ in
       };
     };
 
-    # Directory setup with proper permissions
     system.activationScripts.aiAgentSetup = stringAfter [ "users" ] ''
       for dir in \
         "${paths.base}" \
@@ -870,21 +866,18 @@ in
       chmod 600 "${paths.state}"/*
     '';
 
-    # Firewall configuration
     networking.firewall.allowedTCPPorts = mkIf (cfg.network.webUIBindAddress != "127.0.0.1" || cfg.network.ollamaBindAddress != "127.0.0.1") (
       optional (cfg.network.webUIBindAddress != "127.0.0.1") 8080
       ++ optional (cfg.network.ollamaBindAddress != "127.0.0.1") 11434
       ++ optional (cfg.advanced.monitoring.enable && cfg.network.ollamaBindAddress != "127.0.0.1") 9090
     );
 
-    # Environment hints
     environment.shellAliases = {
       ai = "ai-stack";
       ollama-logs = "ai-stack logs ollama";
       webui-logs = "ai-stack logs open-webui";
     };
 
-    # Documentation generation
     system.extraSystemBuilderCmds = ''
       cat > $out/ai-stack-info.txt <<'EOF'
 Agentic Local AI Stack Configuration
@@ -922,7 +915,7 @@ Data Paths:
 Features:
   Monitoring: ${if cfg.advanced.monitoring.enable then "enabled" else "disabled"}
   Folding@Home: ${if cfg.advanced.foldingAtHome.enable then "enabled" else "disabled"}
-  Auto-start: ${if cfg.advanced.autoStart or false then "enabled" else "disabled"}
+  Auto-start: ${if cfg.advanced.autoStart then "enabled" else "disabled"}
   Preload Models: ${toString (length cfg.preloadModels)}
 
 Security:
