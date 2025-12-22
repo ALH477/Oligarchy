@@ -168,11 +168,11 @@ let
         metrics_path: '/metrics'
   '';
 
-  # Main docker-compose configuration with proper YAML indentation
+  # Main docker-compose configuration (version key removed to avoid warning)
   dockerComposeYml = pkgs.writeText "docker-compose-agentic-ai.yml" (
-    "version: \"3.9\"\n\nservices:\n  ollama:\n    image: ${ollamaImage}\n    container_name: ollama\n    restart: unless-stopped\n    ipc: host\n    shm_size: \"${currentPreset.shmSize}\"\n    security_opt:\n      - no-new-privileges:true\n"
+    "services:\n  ollama:\n    image: ${ollamaImage}\n    container_name: ollama\n    restart: unless-stopped\n    ipc: host\n    shm_size: \"${currentPreset.shmSize}\"\n    security_opt:\n      - no-new-privileges:true\n"
     + (if effectiveAcceleration == "rocm" then
-      "    devices:\n      - \"/dev/kfd:/dev/kfd\"\n      - \"/dev/dri:/dev/dri\"\n    group_add:\n      - video\n      - render\n"
+      "    devices:\n      - \"/dev/kfd:/dev/kfd\"\n      - \"/dev/dri:/dev/dri\"\n    group_add:\n      - video\n"
     else if effectiveAcceleration == "cuda" then
       "    deploy:\n      resources:\n        reservations:\n          devices:\n            - driver: nvidia\n              count: all\n              capabilities: [gpu]\n        limits:\n          memory: ${currentPreset.shmSize}\n"
     else "")
@@ -185,7 +185,7 @@ let
     + (if cfg.advanced.foldingAtHome.enable then
       "\n  foldingathome:\n    image: ghcr.io/linuxserver/foldingathome:latest\n    container_name: foldingathome\n    restart: unless-stopped\n    security_opt:\n      - no-new-privileges:true\n    cap_drop:\n      - ALL\n    environment:\n      USER: ${cfg.advanced.foldingAtHome.user}\n      TEAM: \"${toString cfg.advanced.foldingAtHome.team}\"\n      ENABLE_GPU: \"true\"\n      ENABLE_SMP: \"true\"\n    volumes:\n      - ${paths.foldingAtHome}:/config\n"
       + (if effectiveAcceleration == "rocm" then
-        "    devices:\n      - \"/dev/kfd:/dev/kfd\"\n      - \"/dev/dri:/dev/dri\"\n    group_add:\n      - video\n      - render\n"
+        "    devices:\n      - \"/dev/kfd:/dev/kfd\"\n      - \"/dev/dri:/dev/dri\"\n    group_add:\n      - video\n"
       else if effectiveAcceleration == "cuda" then
         "    deploy:\n      resources:\n        reservations:\n          devices:\n            - driver: nvidia\n              count: all\n              capabilities: [gpu]\n"
       else "")
@@ -712,7 +712,7 @@ in
         gfxVersionOverride = mkOption {
           type = types.nullOr types.str;
           default = null;
-          example = "11.0.0";
+          example = "11.0.2";
           description = mdDoc ''
             Override HSA_OVERRIDE_GFX_VERSION for ROCm compatibility.
             Use `ai-stack tune` to detect your GPU's gfx version.
@@ -802,8 +802,8 @@ in
       };
     };
 
-	users.users.${userName}.extraGroups = [ "docker" ]
-      ++ optionals (effectiveAcceleration == "rocm") [ "video" "render" ];
+    users.users.${userName}.extraGroups = [ "docker" ]
+      ++ optionals (effectiveAcceleration == "rocm") [ "video" ];
 
     environment.systemPackages = with pkgs; [
       docker
