@@ -4,7 +4,7 @@
 {
   imports = [
     ./hardware-configuration.nix
-    ./agentic-local-ai.nix   # This likely defines the custom services.ollamaAgentic module
+    ./modules/agentic-local-ai.nix   # This defines the custom services.ollamaAgentic module
     ./modules/archibaldos-dsp-vm.nix  # Already included via flake, but safe to keep
   ];
 
