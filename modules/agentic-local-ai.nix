@@ -38,8 +38,18 @@ let
       recommendedModels = [ "llama3.1:70b-instruct-q6_K" "qwen2.5:72b-instruct-q5_K_M" ];
     };
 
+    cuda = {
+      description = "Optimized for NVIDIA CUDA GPUs (8–48GB VRAM). Supports larger models and higher parallelism.";
+      numParallel = 12;
+      maxLoadedModels = 8;
+      keepAlive = "72h";
+      shmSize = "48gb";
+      acceleration = "cuda";
+      recommendedModels = [ "llama3.1:70b-instruct-q6_K" "qwen2.5:72b-instruct-q5_K_M" "mixtral:8x22b-instruct-q4_K_M" "gemma2:27b-instruct-q8_0" ];
+    };
+
     pewdiepie = {
-      description = "Extreme tier (CUDA only).";
+      description = "Extreme tier (multi-GPU NVIDIA CUDA only).";
       numParallel = 16;
       maxLoadedModels = 10;
       keepAlive = "72h";
@@ -53,7 +63,9 @@ let
 
   effectiveAcceleration = if cfg.acceleration != null then cfg.acceleration else currentPreset.acceleration or null;
 
-  ollamaImage = if effectiveAcceleration == "rocm" then "ollama/ollama:rocm" else "ollama/ollama:latest";
+  ollamaImage = if effectiveAcceleration == "rocm" then "ollama/ollama:rocm"
+                else if effectiveAcceleration == "cuda" then "ollama/ollama:cuda"
+                else "ollama/ollama:latest";
 
   foldingAtHomeService = optionalString cfg.advanced.foldingAtHome.enable ''
       foldingathome:
@@ -71,6 +83,15 @@ let
         devices:
           - /dev/kfd:/dev/kfd
           - /dev/dri:/dev/dri
+        ''}
+        ${optionalString (effectiveAcceleration == "cuda") ''
+        deploy:
+          resources:
+            reservations:
+              devices:
+                - driver: nvidia
+                  count: all
+                  capabilities: [gpu]
         ''}
   '';
 
@@ -171,7 +192,7 @@ let
       cp ${dockerComposeYml} "$COMPOSE_FILE"
     fi
 
-    if command -v rocminfo >/dev/null 2>&1; then
+    if command -v rocminfo >/dev/null 2>&1 && [[ "${cfg.preset}" != "cuda" ]]; then
       GFX=$(rocminfo | grep -oP 'gfx\K\d{3,}' | head -1 || true)
       if [ -n "$GFX" ]; then
         echo "Detected primary gfx$GFX → Using RX 7700S (dGPU) via ROCR_VISIBLE_DEVICES=1"
@@ -203,7 +224,11 @@ let
         docker exec -it ollama ollama pull "$2"
         ;;
       tune)
-        rocm-smi --showmeminfo vram 2>/dev/null || echo "ROCm not active"
+        if [[ "${cfg.preset}" == "cuda" ]]; then
+          nvidia-smi || echo "nvidia-smi not available"
+        else
+          rocm-smi --showmeminfo vram 2>/dev/null || echo "ROCm not active"
+        fi
         ;;
       backup)
         TIMESTAMP=$(date +%Y%m%d_%H%M)
@@ -221,13 +246,15 @@ in
     enable = mkEnableOption "Tiered local AI stack (Ollama + Open WebUI)";
 
     preset = mkOption {
-      type = types.enum [ "cpu-fallback" "default" "high-vram" "pewdiepie" ];
+      type = types.enum [ "cpu-fallback" "default" "high-vram" "cuda" "pewdiepie" ];
       default = "default";
+      description = "Performance tier preset. Use 'cuda' for NVIDIA GPU acceleration.";
     };
 
     acceleration = mkOption {
       type = types.nullOr (types.enum [ "cuda" "rocm" ]);
       default = null;
+      description = "Force acceleration backend (overrides preset).";
     };
 
     advanced.foldingAtHome.enable = mkEnableOption "Folding@Home container";
@@ -236,13 +263,14 @@ in
   config = mkIf cfg.enable {
     assertions = [
       { assertion = cfg.preset != "pewdiepie" || effectiveAcceleration == "cuda"; message = "pewdiepie requires CUDA."; }
+      { assertion = cfg.preset != "cuda" || effectiveAcceleration == "cuda"; message = "cuda preset requires NVIDIA GPU and CUDA support."; }
     ];
 
     virtualisation.docker.enable = true;
 
-    users.users.${userName}.extraGroups = [ "docker" "video" "render" ];
+    users.users.${userName}.extraGroups = [ "docker" "video" "render" ] ++ optional (effectiveAcceleration == "cuda") "nvidia";
 
-    environment.systemPackages = with pkgs; [ docker rocmPackages.rocm-smi rocmPackages.rocminfo aiStackScript ];
+    environment.systemPackages = with pkgs; [ docker rocmPackages.rocm-smi rocmPackages.rocminfo ] ++ optionals (effectiveAcceleration == "cuda") [ cudaPackages.nvidia-smi ];
 
     system.activationScripts.aiAgentSetup = ''
       mkdir -p ${userHome}/.ollama ${userHome}/open-webui-data ${userHome}/.config/ollama-agentic/ai-stack ${optionalString cfg.advanced.foldingAtHome.enable "${userHome}/foldingathome-data"}
