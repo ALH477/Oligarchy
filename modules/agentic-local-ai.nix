@@ -76,105 +76,109 @@ let
                 else if effectiveAcceleration == "cuda" then "ollama/ollama:cuda"
                 else "ollama/ollama:latest";
 
-  foldingAtHomeService = optionalString cfg.advanced.foldingAtHome.enable ''
-      foldingathome:
-        image: ghcr.io/linuxserver/foldingathome:latest
-        container_name: foldingathome
-        restart: unless-stopped
-        environment:
-          USER: Anonymous
-          TEAM: "0"
-          ENABLE_GPU: "true"
-          ENABLE_SMP: "true"
-        volumes:
-          - ${userHome}/foldingathome-data:/config
-        ${optionalString (effectiveAcceleration == "rocm") ''
-        devices:
-          - /dev/kfd:/dev/kfd
-          - /dev/dri:/dev/dri
-        ''}
-        ${optionalString (effectiveAcceleration == "cuda") ''
-        deploy:
-          resources:
-            reservations:
-              devices:
-                - driver: nvidia
-                  count: all
-                  capabilities: [gpu]
-        ''}
-  '';
+  dockerComposeYml = pkgs.writeText "docker-compose-agentic-ai.yml" (
+    ''
+      version: "3.9"
+      services:
+        ollama:
+          image: ${ollamaImage}
+          container_name: ollama
+          restart: unless-stopped
+          ipc: host
+          shm_size: "${currentPreset.shmSize}"
+          environment:
+            OLLAMA_FLASH_ATTENTION: "1"
+            OLLAMA_NUM_PARALLEL: "${toString currentPreset.numParallel}"
+            OLLAMA_MAX_LOADED_MODELS: "${toString currentPreset.maxLoadedModels}"
+            OLLAMA_KEEP_ALIVE: "${currentPreset.keepAlive}"
+            OLLAMA_SCHED_SPREAD: "1"
+            OLLAMA_KV_CACHE_TYPE: "q8_0"
+    ''
+    + optionalString (effectiveAcceleration == "rocm") ''
+            ROCR_VISIBLE_DEVICES: "0,1"
+            HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+    ''
+    + optionalString (effectiveAcceleration == "rocm") ''
+          devices:
+            - /dev/kfd:/dev/kfd
+            - /dev/dri:/dev/dri
+    ''
+    + optionalString (effectiveAcceleration == "cuda") ''
+          deploy:
+            resources:
+              reservations:
+                devices:
+                  - driver: nvidia
+                    count: all
+                    capabilities: [gpu]
+    ''
+    + ''
+          volumes:
+            - ${userHome}/.ollama:/root/.ollama
+          ports:
+            - "127.0.0.1:11434:11434"
+          healthcheck:
+            test: ["CMD", "wget", "-qO-", "http://localhost:11434/api/tags"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
 
-  dockerComposeYml = pkgs.writeText "docker-compose-agentic-ai.yml" ''
-    version: "3.9"
-    services:
-      ollama:
-        image: ${ollamaImage}
-        container_name: ollama
-        restart: unless-stopped
-        ipc: host
-        shm_size: "${currentPreset.shmSize}"
-        environment:
-          OLLAMA_FLASH_ATTENTION: "1"
-          OLLAMA_NUM_PARALLEL: "${toString currentPreset.numParallel}"
-          OLLAMA_MAX_LOADED_MODELS: "${toString currentPreset.maxLoadedModels}"
-          OLLAMA_KEEP_ALIVE: "${currentPreset.keepAlive}"
-          OLLAMA_SCHED_SPREAD: "1"
-          OLLAMA_KV_CACHE_TYPE: "q8_0"
-          ${optionalString (effectiveAcceleration == "rocm") ''
-          ROCR_VISIBLE_DEVICES: "0,1"
-          HSA_OVERRIDE_GFX_VERSION: "11.0.0"
-          ''}
-        ${optionalString (effectiveAcceleration == "rocm") ''
-        devices:
-          - /dev/kfd:/dev/kfd
-          - /dev/dri:/dev/dri
-        ''}
-        ${optionalString (effectiveAcceleration == "cuda") ''
-        deploy:
-          resources:
-            reservations:
-              devices:
-                - driver: nvidia
-                  count: all
-                  capabilities: [gpu]
-        ''}
-        volumes:
-          - ${userHome}/.ollama:/root/.ollama
-        ports:
-          - "127.0.0.1:11434:11434"
-        healthcheck:
-          test: ["CMD", "wget", "-qO-", "http://localhost:11434/api/tags"]
-          interval: 30s
-          timeout: 10s
-          retries: 3
+        open-webui:
+          image: ghcr.io/open-webui/open-webui:main
+          container_name: open-webui
+          restart: unless-stopped
+          read_only: true
+          tmpfs:
+            - /tmp
+          volumes:
+            - ${userHome}/open-webui-data:/app/backend/data
+          ports:
+            - "127.0.0.1:8080:8080"
+          environment:
+            OLLAMA_BASE_URL: http://ollama:11434
+            ENABLE_SIGNUP: "false"
+            WEBUI_AUTH: "true"
+            DEFAULT_USER_ROLE: admin
+          depends_on:
+            ollama:
+              condition: service_healthy
+          healthcheck:
+            test: ["CMD", "wget", "-qO-", "http://localhost:8080"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+    ''
+    + optionalString cfg.advanced.foldingAtHome.enable (
+      ''
 
-      open-webui:
-        image: ghcr.io/open-webui/open-webui:main
-        container_name: open-webui
-        restart: unless-stopped
-        read_only: true
-        tmpfs:
-          - /tmp
-        volumes:
-          - ${userHome}/open-webui-data:/app/backend/data
-        ports:
-          - "127.0.0.1:8080:8080"
-        environment:
-          OLLAMA_BASE_URL: http://ollama:11434
-          ENABLE_SIGNUP: "false"
-          WEBUI_AUTH: "true"
-          DEFAULT_USER_ROLE: admin
-        depends_on:
-          ollama:
-            condition: service_healthy
-        healthcheck:
-          test: ["CMD", "wget", "-qO-", "http://localhost:8080"]
-          interval: 30s
-          timeout: 10s
-          retries: 3
-
-    ${foldingAtHomeService}
-  '';
+        foldingathome:
+          image: ghcr.io/linuxserver/foldingathome:latest
+          container_name: foldingathome
+          restart: unless-stopped
+          environment:
+            USER: Anonymous
+            TEAM: "0"
+            ENABLE_GPU: "true"
+            ENABLE_SMP: "true"
+          volumes:
+            - ${userHome}/foldingathome-data:/config
+      ''
+      + optionalString (effectiveAcceleration == "rocm") ''
+          devices:
+            - /dev/kfd:/dev/kfd
+            - /dev/dri:/dev/dri
+      ''
+      + optionalString (effectiveAcceleration == "cuda") ''
+          deploy:
+            resources:
+              reservations:
+                devices:
+                  - driver: nvidia
+                    count: all
+                    capabilities: [gpu]
+      ''
+    )
+  );
 
   recommendedModelsArray = builtins.concatStringsSep "\n        " currentPreset.recommendedModels;
 
