@@ -803,6 +803,7 @@ in
 
     environment.systemPackages = with pkgs; [
       docker
+      aichat
       docker-compose
       aiStackScript
     ] ++ optionals (effectiveAcceleration == "rocm") [
