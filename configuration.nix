@@ -34,6 +34,9 @@
       preset = "default";
       acceleration = "rocm";
       advanced.rocm.gfxVersionOverride = "11.0.2";
+        extraEnv = {
+      WEBUI_SECRET_KEY = "your-super-secret-key-here-keep-it-long-and-random";
+    };
     };
 
     # Alternatively, if using standard Ollama module:
