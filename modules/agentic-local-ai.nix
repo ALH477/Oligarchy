@@ -549,24 +549,30 @@ in
       # Enable Docker
       virtualisation.docker.enable = true;
 
-      # Create system user if needed
-      users.users = optionalAttrs (cfg.user == null) {
-        ollama = {
-          isSystemUser = true;
-          group = "ollama";
-          home = dataDir;
-          createHome = true;
-          description = "Ollama AI service user";
-        };
-      };
+      # User configuration
+      users.users = mkMerge [
+        # Create system user if needed
+        (mkIf (cfg.user == null) {
+          ollama = {
+            isSystemUser = true;
+            group = "ollama";
+            home = dataDir;
+            createHome = true;
+            description = "Ollama AI service user";
+            extraGroups = [ "docker" ]
+              ++ optionals (effectiveAcceleration == "rocm") [ "video" "render" ];
+          };
+        })
+        # Add groups to existing user
+        (mkIf (cfg.user != null) {
+          ${cfg.user}.extraGroups = [ "docker" ]
+            ++ optionals (effectiveAcceleration == "rocm") [ "video" "render" ];
+        })
+      ];
 
-      users.groups = optionalAttrs (cfg.user == null) {
+      users.groups = mkIf (cfg.user == null) {
         ollama = {};
       };
-
-      # Add user to required groups
-      users.users.${serviceUser}.extraGroups = [ "docker" ]
-        ++ optionals (effectiveAcceleration == "rocm") [ "video" "render" ];
 
       # Install packages
       environment.systemPackages = with pkgs; [
