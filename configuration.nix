@@ -3,17 +3,11 @@
 {
   imports = [
     ./hardware-configuration.nix
-    ./agentic-local-ai.nix  # Assuming this defines the custom services.ollamaAgentic module
-    # Recommended for Framework 16 (Ryzen 7040 series) quirks:
-    # (import <nixos-hardware/framework/16-inch/7040-amd>)
+	./agentic-local-ai.nix
   ];
 
   options = {
     custom.steam.enable = lib.mkEnableOption "Steam and gaming support";
-    custom.snap.enable = lib.mkEnableOption "Snap package support";
-    hardware.framework.enable = lib.mkEnableOption "Framework 16-inch 7040 AMD support";  # Placeholder if needed
-    hardware.fw-fanctrl.enable = lib.mkEnableOption "Framework fan control";
-    custom.nvidia.enable = lib.mkEnableOption "NVIDIA GPU support";
   };
 
   config = {
@@ -28,41 +22,29 @@
 
     nixpkgs.config.allowUnfree = true;
 
-    # Custom Ollama service with ROCm and gfx override for Framework 7040/780M (gfx1103 -> treat as gfx1102)
-    services.ollamaAgentic = {
-      enable = true;
-      preset = "default";
-      acceleration = "rocm";
-      advanced.rocm.gfxVersionOverride = "11.0.2";
-        extraEnv = {
-      WEBUI_SECRET_KEY = "your-super-secret-key-here-keep-it-long-and-random";
-    };
-    };
 
-    # Alternatively, if using standard Ollama module:
-    # services.ollama = {
-    #   enable = true;
-    #   acceleration = "rocm";
-    #   rocmOverrideGfx = "11.0.2";
-    # };
+	services.ollamaAgentic = {
+  enable = true;
+  preset = "rocm-multi";
+  acceleration = "rocm";
+  advanced.rocm.gfxVersionOverride = "11.0.2";
+  # network.exposeToLAN = true;
+  # foldingAtHome.enable = false;
+}; 
 
     custom.steam.enable = true;
-    custom.snap.enable = false;
-    hardware.fw-fanctrl.enable = true;  # Enables the official fw-fanctrl service (available since 25.11)
-    custom.nvidia.enable = false;
 
     boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
 
     boot.loader.systemd-boot.enable = true;
     boot.loader.efi.canTouchEfiVariables = true;
-    boot.kernelPackages = pkgs.linuxPackages_latest;  # Stable latest; use cachyos if preferred
-
-    boot.kernelParams = lib.mkIf (!config.custom.nvidia.enable) [
+    boot.kernelPackages = pkgs.linuxPackages_latest;
+    boot.kernelParams = [ 
       "amdgpu.abmlevel=0"
       "amdgpu.sg_display=0"
       "amdgpu.exp_hw_support=1"
     ];
-    boot.initrd.kernelModules = lib.mkIf (!config.custom.nvidia.enable) [ "amdgpu" ];
+    boot.initrd.kernelModules = [ "amdgpu" ];
     boot.kernelModules = [ "amdgpu" "v4l2loopback" ];
     boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
     boot.extraModprobeConfig = ''
@@ -71,17 +53,17 @@
 
     services.displayManager.sddm = {
       enable = true;
-      wayland.enable = false;  # X11 for stability
+      wayland.enable = false;  # Keep X11 for stability
     };
     services.displayManager.defaultSession = "hyprland";
     services.xserver.enable = true;
-    services.xserver.videoDrivers = if config.custom.nvidia.enable then [ "nvidia" ] else [ "amdgpu" ];
+    services.xserver.videoDrivers = [ "amdgpu" ];
     services.xserver.desktopManager.cinnamon.enable = true;
     services.xserver.windowManager.dwm.enable = true;
     programs.hyprland = {
       enable = true;
       xwayland.enable = true;
-      package = pkgs.hyprland;
+      package = pkgs.hyprland;  # Use stable Hyprland to match Mesa
     };
     systemd.defaultUnit = lib.mkForce "graphical.target";
 
@@ -93,41 +75,27 @@
 
     networking.hostName = "nixos";
     networking.networkmanager.enable = true;
-    networking.firewall.enable = true;
 
     hardware.bluetooth.enable = true;
     hardware.bluetooth.powerOnBoot = true;
     hardware.enableRedistributableFirmware = true;
-    powerManagement.cpuFreqGovernor = "performance";
+    powerManagement.cpuFreqGovernor = "performance"; # Default governor, overridden by power-profiles-daemon
 
-    hardware.graphics = lib.mkMerge [
-      {
-        enable = true;
-        enable32Bit = true;
-        package = pkgs.mesa;
-      }
-      (lib.mkIf config.custom.nvidia.enable {
-        extraPackages = with pkgs; [ vaapiVdpau libvdpau-va-gl nvidia-vaapi-driver ];
-      })
-      (lib.mkIf (!config.custom.nvidia.enable) {
-        extraPackages = with pkgs; [
-          amdvlk
-          vaapiVdpau
-          libvdpau-va-gl
-          rocmPackages.clr
-          rocmPackages.clr.icd
-        ];
-        extraPackages32 = with pkgs.pkgsi686Linux; [ amdvlk ];
-      })
-    ];
-
-    hardware.nvidia = lib.mkIf config.custom.nvidia.enable {
-      modesetting.enable = true;
-      powerManagement.enable = false;
-      powerManagement.finegrained = false;
-      open = false;
-      nvidiaSettings = true;
-      package = config.boot.kernelPackages.nvidiaPackages.stable;
+    # Graphics drivers and ROCm support
+    hardware.graphics = {
+      enable = true;
+      enable32Bit = true;
+      package = pkgs.mesa;  # Stable Mesa
+      extraPackages = with pkgs; [
+        amdvlk                  # AMD Vulkan driver
+        vaapiVdpau              # Video acceleration
+        libvdpau-va-gl          # VDPAU driver
+        rocmPackages.clr
+        rocmPackages.clr.icd    # OpenCL + ROCm runtime loader for Ollama
+      ];
+      extraPackages32 = with pkgs.pkgsi686Linux; [
+        amdvlk                  # 32-bit AMD Vulkan for compatibility
+      ];
     };
 
     time.timeZone = "America/Los_Angeles";
@@ -155,10 +123,12 @@
       alsa.support32Bit = true;
       pulse.enable = true;
       jack.enable = true;
-      extraConfig.pipewire."90-custom" = {
-        "default.clock.quantum" = 1024;
-        "default.clock.min-quantum" = 512;
-        "default.clock.max-quantum" = 2048;
+      extraConfig = {
+        pipewire."90-custom" = {
+          "default.clock.quantum" = 1024;
+          "default.clock.min-quantum" = 512;
+          "default.clock.max-quantum" = 2048;
+        };
       };
     };
 
@@ -178,8 +148,6 @@
       sudo.fprintAuth = true;
     };
 
-    security.apparmor.enable = true;
-
     virtualisation.docker.enable = true;
 
     programs.wireshark.enable = true;
@@ -197,34 +165,101 @@
       ];
     };
 
+    systemd.user.services.quicklisp-install = {
+      description = "Install Quicklisp for D-LISP";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = "${pkgs.writeShellScriptBin "install-quicklisp" ''
+          curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
+          ${pkgs.sbcl}/bin/sbcl --load /tmp/quicklisp.lisp --eval '(quicklisp-quickstart:install)' --quit
+        ''}/bin/install-quicklisp";
+      };
+      wantedBy = [ "default.target" ];
+    };
+
+    systemd.timers.nix-gc-generations = {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "weekly";
+        Persistent = true;
+      };
+    };
+
+    systemd.services.nix-gc-generations = {
+      script = ''
+        generations_to_delete=$(${pkgs.nix}/bin/nix-env -p /nix/var/nix/profiles/system --list-generations | ${pkgs.gawk}/bin/awk '{print $1}' | ${pkgs.coreutils}/bin/head -n -5 | ${pkgs.coreutils}/bin/tr '\n' ' ')
+        if [ -n "$generations_to_delete" ]; then
+          ${pkgs.nix}/bin/nix-env -p /nix/var/nix/profiles/system --delete-generations $generations_to_delete
+        fi
+        ${pkgs.nix}/bin/nix-collect-garbage
+      '';
+      serviceConfig.Type = "oneshot";
+    };
+
     environment.systemPackages = with pkgs; [
-      vim neovim-unwrapped neovim-qt emacs docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress dmidecode util-linux gparted usbutils
+      # Core tools
+      vim docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress dmidecode util-linux gparted usbutils
+      # Python and libs
       (python3Full.withPackages (ps: with ps; [
-        pip virtualenv cryptography pycryptodome grpcio grpcio-tools protobuf numpy matplotlib python-snappy skidl
+        pip
+        virtualenv
+        cryptography
+        pycryptodome
+        grpcio
+        grpcio-tools
+        protobuf
+        numpy
+        matplotlib
+        python-snappy
+        skidl
       ]))
+      # Networking and security
       wireshark tcpdump nmap netcat
+      # Build and dev tools
       cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy
-      ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio pkgsi686Linux.libpulseaudio pavucontrol guitarix faust faustlive
+      # Multimedia and audio
+      ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio pkgsi686Linux.libpulseaudio pavucontrol guitarix faust faustlive 
+      # Virtualization and emulation
       qemu virt-manager docker-compose docker-buildx
+      # Vulkan and graphics tools
       vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
-      dhewm3 darkradiant r2modman slade srb2 protonup-qt beyond-all-reason doomseeker chocolate-doom rbdoom quakespasm vkquake TrenchBroom godot Quake3e retroarch-free
+      # Doom 3 source port
+      dhewm3 darkradiant r2modman
+      # Browsers and apps
       brave vlc pandoc kdePackages.okular obs-studio firefox thunderbird
-      blueberry legcord vesktop font-awesome fastfetch gnugrep kitty wofi waybar hyprpaper brightnessctl zip unzip obsidian
+      # Desktop utilities
+      blueberry legcord font-awesome fastfetch gnugrep kitty wofi waybar hyprpaper brightnessctl zip unzip obsidian
+      # Creative tools
       gimp kdePackages.kdenlive inkscape blender libreoffice krita synfigstudio
+      # File management
       xfce.thunar xfce.thunar-volman gvfs udiskie polkit_gnome framework-tool
+      # Screen capture and clipboard
       wl-clipboard grim slurp v4l-utils
-      mininet ollama opencode open-webui
-      unstable.openvscode-server
+      # Networking simulation
+      mininet
+      # AI
+      ollama opencode open-webui alpaca aichat oterm
+      # Editors and servers
+      
+      # Language-specific packages
       (perl.withPackages (ps: with ps; [ JSON GetoptLong CursesUI ModulePluggable Appcpanminus ]))
       (sbcl.withPackages (ps: with ps; [
         cffi cl-ppcre cl-json cl-csv usocket bordeaux-threads log4cl trivial-backtrace cl-store hunchensocket fiveam cl-dot cserial-port
-        cl-lorawan cl-lsquic cl-can cl-sctp cl-zigbee
       ]))
+      # Hardware and protocol libs
       libserialport can-utils lksctp-tools cjson ncurses libuuid kicad graphviz mako openscad freecad
-      nextflow emboss blast lammps gromacs snakemake librecad qcad sweethome3d sdrpp natron xnec2c eliza systemctl-tui
-      xorg.xinit unetbootin popsicle gnome-disk-utility zenity
+      # Xorg fallback
+      xorg.xinit
+      # USB flashing tools
+      unetbootin
+      popsicle
+      gnome-disk-utility
     ] ++ lib.optionals config.custom.steam.enable [
-      steam steam-run linuxConsoleTools lutris wineWowPackages.stable
+      steam
+      steam-run
+      linuxConsoleTools
+      lutris
+      wineWowPackages.stable
     ];
 
     programs.steam = lib.mkIf config.custom.steam.enable {
@@ -304,9 +339,6 @@
       '';
       mode = "0755";
     };
-
-    # Optional: Quicklisp installer service and GC timer from first config
-    # (Omitted here for brevity; add if needed)
 
     system.stateVersion = "25.11";
   };
