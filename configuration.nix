@@ -3,7 +3,7 @@
 {
   imports = [
     ./hardware-configuration.nix
-	./agentic-local-ai.nix
+    ./agentic-local-ai.nix
   ];
 
   options = {
@@ -11,60 +11,78 @@
   };
 
   config = {
-    nixpkgs.overlays = [
-      (final: prev: {
-        unstable = import nixpkgs-unstable {
-          system = prev.system;
-          config.allowUnfree = true;
-        };
-      })
-    ];
+    # Package management
+    nixpkgs = {
+      overlays = [
+        (final: prev: {
+          unstable = import nixpkgs-unstable {
+            system = prev.system;
+            config.allowUnfree = true;
+          };
+        })
+      ];
+      config.allowUnfree = true;
+    };
 
-    nixpkgs.config.allowUnfree = true;
+    # Local AI service
+    services.ollamaAgentic = {
+      enable = true;
+      preset = "rocm-multi";
+      acceleration = "rocm";
+      advanced.rocm.gfxVersionOverride = "11.0.2";
+    };
 
-
-	services.ollamaAgentic = {
-  enable = true;
-  preset = "rocm-multi";
-  acceleration = "rocm";
-  advanced.rocm.gfxVersionOverride = "11.0.2";
-  # network.exposeToLAN = true;
-  # foldingAtHome.enable = false;
-}; 
-
+    # Gaming
     custom.steam.enable = true;
 
-    boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
-
-    boot.loader.systemd-boot.enable = true;
-    boot.loader.efi.canTouchEfiVariables = true;
-    boot.kernelPackages = pkgs.linuxPackages_latest;
-    boot.kernelParams = [ 
-      "amdgpu.abmlevel=0"
-      "amdgpu.sg_display=0"
-      "amdgpu.exp_hw_support=1"
-    ];
-    boot.initrd.kernelModules = [ "amdgpu" ];
-    boot.kernelModules = [ "amdgpu" "v4l2loopback" ];
-    boot.extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
-    boot.extraModprobeConfig = ''
-      options v4l2loopback devices=1 video_nr=10 card_label="Virtual Cam" exclusive_caps=1
-    '';
-
-    services.displayManager.sddm = {
-      enable = true;
-      wayland.enable = false;  # Keep X11 for stability
+    # Boot configuration
+    boot = {
+      binfmt.emulatedSystems = [ "aarch64-linux" ];
+      
+      loader = {
+        systemd-boot.enable = true;
+        efi.canTouchEfiVariables = true;
+      };
+      
+      kernelPackages = pkgs.linuxPackages_latest;
+      
+      kernelParams = [ 
+        "amdgpu.abmlevel=0"
+        "amdgpu.sg_display=0"
+        "amdgpu.exp_hw_support=1"
+      ];
+      
+      initrd.kernelModules = [ "amdgpu" ];
+      kernelModules = [ "amdgpu" "v4l2loopback" ];
+      extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
+      
+      extraModprobeConfig = ''
+        options v4l2loopback devices=1 video_nr=10 card_label="Virtual Cam" exclusive_caps=1
+      '';
     };
-    services.displayManager.defaultSession = "hyprland";
-    services.xserver.enable = true;
-    services.xserver.videoDrivers = [ "amdgpu" ];
-    services.xserver.desktopManager.cinnamon.enable = true;
-    services.xserver.windowManager.dwm.enable = true;
+
+    # Display and window management
+    services.displayManager = {
+      sddm = {
+        enable = true;
+        wayland.enable = false;
+      };
+      defaultSession = "hyprland";
+    };
+
+    services.xserver = {
+      enable = true;
+      videoDrivers = [ "amdgpu" ];
+      desktopManager.cinnamon.enable = true;
+      windowManager.dwm.enable = true;
+    };
+
     programs.hyprland = {
       enable = true;
       xwayland.enable = true;
-      package = pkgs.hyprland;  # Use stable Hyprland to match Mesa
+      package = pkgs.hyprland;
     };
+
     systemd.defaultUnit = lib.mkForce "graphical.target";
 
     xdg.portal = {
@@ -73,110 +91,119 @@
       config.common.default = "*";
     };
 
-    networking.hostName = "nixos";
-    networking.networkmanager.enable = true;
-
-    hardware.bluetooth.enable = true;
-    hardware.bluetooth.powerOnBoot = true;
-    hardware.enableRedistributableFirmware = true;
-    powerManagement.cpuFreqGovernor = "performance"; # Default governor, overridden by power-profiles-daemon
-
-    # Graphics drivers and ROCm support
-    hardware.graphics = {
-      enable = true;
-      enable32Bit = true;
-      package = pkgs.mesa;  # Stable Mesa
-      extraPackages = with pkgs; [
-        amdvlk                  # AMD Vulkan driver
-        vaapiVdpau              # Video acceleration
-        libvdpau-va-gl          # VDPAU driver
-        rocmPackages.clr
-        rocmPackages.clr.icd    # OpenCL + ROCm runtime loader for Ollama
-      ];
-      extraPackages32 = with pkgs.pkgsi686Linux; [
-        amdvlk                  # 32-bit AMD Vulkan for compatibility
-      ];
+    # Networking
+    networking = {
+      hostName = "nixos";
+      networkmanager.enable = true;
     };
 
+    # Hardware
+    hardware = {
+      bluetooth = {
+        enable = true;
+        powerOnBoot = true;
+      };
+      
+      enableRedistributableFirmware = true;
+      
+      graphics = {
+        enable = true;
+        enable32Bit = true;
+        package = pkgs.mesa;
+        
+        extraPackages = with pkgs; [
+          amdvlk
+          vaapiVdpau
+          libvdpau-va-gl
+          rocmPackages.clr
+          rocmPackages.clr.icd
+        ];
+        
+        extraPackages32 = with pkgs.pkgsi686Linux; [ amdvlk ];
+      };
+    };
+
+    powerManagement.cpuFreqGovernor = "performance";
+
+    # Localization
     time.timeZone = "America/Los_Angeles";
-    i18n.defaultLocale = "en_US.UTF-8";
-    i18n.extraLocaleSettings = {
-      LC_ADDRESS = "en_US.UTF-8";
-      LC_IDENTIFICATION = "en_US.UTF-8";
-      LC_MEASUREMENT = "en_US.UTF-8";
-      LC_MONETARY = "en_US.UTF-8";
-      LC_NAME = "en_US.UTF-8";
-      LC_NUMERIC = "en_US.UTF-8";
-      LC_PAPER = "en_US.UTF-8";
-      LC_TELEPHONE = "en_US.UTF-8";
-      LC_TIME = "en_US.UTF-8";
+    
+    i18n = {
+      defaultLocale = "en_US.UTF-8";
+      extraLocaleSettings = {
+        LC_ADDRESS = "en_US.UTF-8";
+        LC_IDENTIFICATION = "en_US.UTF-8";
+        LC_MEASUREMENT = "en_US.UTF-8";
+        LC_MONETARY = "en_US.UTF-8";
+        LC_NAME = "en_US.UTF-8";
+        LC_NUMERIC = "en_US.UTF-8";
+        LC_PAPER = "en_US.UTF-8";
+        LC_TELEPHONE = "en_US.UTF-8";
+        LC_TIME = "en_US.UTF-8";
+      };
     };
 
-    services.libinput.enable = true;
-    services.acpid.enable = true;
-    services.printing.enable = true;
-
-    security.rtkit.enable = true;
-    services.pipewire = {
-      enable = true;
-      alsa.enable = true;
-      alsa.support32Bit = true;
-      pulse.enable = true;
-      jack.enable = true;
-      extraConfig = {
-        pipewire."90-custom" = {
+    # Services
+    services = {
+      libinput.enable = true;
+      acpid.enable = true;
+      printing.enable = true;
+      udisks2.enable = true;
+      gvfs.enable = true;
+      power-profiles-daemon.enable = true;
+      fwupd.enable = true;
+      fprintd.enable = true;
+      
+      pipewire = {
+        enable = true;
+        alsa.enable = true;
+        alsa.support32Bit = true;
+        pulse.enable = true;
+        jack.enable = true;
+        
+        extraConfig.pipewire."90-custom" = {
           "default.clock.quantum" = 1024;
           "default.clock.min-quantum" = 512;
           "default.clock.max-quantum" = 2048;
         };
       };
+      
+      logind.extraConfig = ''
+        HandleLidSwitch=ignore
+        HandleLidSwitchExternalPower=ignore
+        HandleLidSwitchDocked=ignore
+      '';
     };
 
-    services.udisks2.enable = true;
-    services.gvfs.enable = true;
-    security.polkit.enable = true;
-    services.power-profiles-daemon.enable = true;
-    services.fwupd.enable = true;
+    # Security
+    security = {
+      rtkit.enable = true;
+      polkit.enable = true;
+      
+      pam.services = {
+        login.fprintAuth = true;
+        sudo.fprintAuth = true;
+      };
+    };
+
     environment.etc."fwupd/fwupd.conf".text = lib.mkForce ''
       [fwupd]
       UpdateOnBoot=true
     '';
 
-    services.fprintd.enable = true;
-    security.pam.services = {
-      login.fprintAuth = true;
-      sudo.fprintAuth = true;
-    };
-
+    # Virtualization
     virtualisation.docker.enable = true;
-
     programs.wireshark.enable = true;
 
+    # User configuration
     users.users.asher = {
       isNormalUser = true;
       description = "Asher";
       extraGroups = [ "networkmanager" "wheel" "docker" "wireshark" "disk" ];
       shell = pkgs.bash;
-      packages = with pkgs; [
-        (writeShellScriptBin "install-quicklisp" ''
-          curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
-          ${pkgs.sbcl}/bin/sbcl --load /tmp/quicklisp.lisp --eval '(quicklisp-quickstart:install)' --quit
-        '')
-      ];
     };
 
-    systemd.user.services.quicklisp-install = {
-      description = "Install Quicklisp for D-LISP";
-      serviceConfig = {
-        Type = "oneshot";
-        ExecStart = "${pkgs.writeShellScriptBin "install-quicklisp" ''
-          curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
-          ${pkgs.sbcl}/bin/sbcl --load /tmp/quicklisp.lisp --eval '(quicklisp-quickstart:install)' --quit
-        ''}/bin/install-quicklisp";
-      };
-      wantedBy = [ "default.target" ];
-    };
-
+    # System maintenance
     systemd.timers.nix-gc-generations = {
       wantedBy = [ "timers.target" ];
       timerConfig = {
@@ -187,81 +214,97 @@
 
     systemd.services.nix-gc-generations = {
       script = ''
-        generations_to_delete=$(${pkgs.nix}/bin/nix-env -p /nix/var/nix/profiles/system --list-generations | ${pkgs.gawk}/bin/awk '{print $1}' | ${pkgs.coreutils}/bin/head -n -5 | ${pkgs.coreutils}/bin/tr '\n' ' ')
+        generations_to_delete=$(${pkgs.nix}/bin/nix-env -p /nix/var/nix/profiles/system --list-generations | \
+          ${pkgs.gawk}/bin/awk '{print $1}' | \
+          ${pkgs.coreutils}/bin/head -n -5 | \
+          ${pkgs.coreutils}/bin/tr '\n' ' ')
+        
         if [ -n "$generations_to_delete" ]; then
           ${pkgs.nix}/bin/nix-env -p /nix/var/nix/profiles/system --delete-generations $generations_to_delete
         fi
+        
         ${pkgs.nix}/bin/nix-collect-garbage
       '';
       serviceConfig.Type = "oneshot";
     };
 
+    # System packages organized by category
     environment.systemPackages = with pkgs; [
-      # Core tools
-      vim docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress dmidecode util-linux gparted usbutils
-      # Python and libs
+      # Core system tools
+      vim docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress 
+      dmidecode util-linux gparted usbutils
+
+      # Python environment
       (python3Full.withPackages (ps: with ps; [
-        pip
-        virtualenv
-        cryptography
-        pycryptodome
-        grpcio
-        grpcio-tools
-        protobuf
-        numpy
-        matplotlib
-        python-snappy
-        skidl
+        pip virtualenv cryptography pycryptodome grpcio grpcio-tools
+        protobuf numpy matplotlib python-snappy skidl
       ]))
+
       # Networking and security
       wireshark tcpdump nmap netcat
-      # Build and dev tools
+
+      # Development tools
       cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy
+
       # Multimedia and audio
-      ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio pkgsi686Linux.libpulseaudio pavucontrol guitarix faust faustlive 
-      # Virtualization and emulation
+      ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio 
+      pkgsi686Linux.libpulseaudio pavucontrol guitarix faust faustlive
+
+      # Virtualization
       qemu virt-manager docker-compose docker-buildx
-      # Vulkan and graphics tools
+
+      # Graphics tools
       vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
-      # Doom 3 source port
+
+      # Gaming (Doom 3, etc)
       dhewm3 darkradiant r2modman
-      # Browsers and apps
+
+      # Desktop applications
       brave vlc pandoc kdePackages.okular obs-studio firefox thunderbird
+      
       # Desktop utilities
-      blueberry legcord font-awesome fastfetch gnugrep kitty wofi waybar hyprpaper brightnessctl zip unzip obsidian
+      blueberry legcord font-awesome fastfetch gnugrep kitty wofi waybar 
+      hyprpaper brightnessctl zip unzip obsidian
+
       # Creative tools
       gimp kdePackages.kdenlive inkscape blender libreoffice krita synfigstudio
+
       # File management
       xfce.thunar xfce.thunar-volman gvfs udiskie polkit_gnome framework-tool
-      # Screen capture and clipboard
+
+      # Screen utilities
       wl-clipboard grim slurp v4l-utils
-      # Networking simulation
+
+      # Network simulation
       mininet
-      # AI
+
+      # AI tools
       ollama opencode open-webui alpaca aichat oterm
-      # Editors and servers
-      
-      # Language-specific packages
-      (perl.withPackages (ps: with ps; [ JSON GetoptLong CursesUI ModulePluggable Appcpanminus ]))
-      (sbcl.withPackages (ps: with ps; [
-        cffi cl-ppcre cl-json cl-csv usocket bordeaux-threads log4cl trivial-backtrace cl-store hunchensocket fiveam cl-dot cserial-port
+
+      # Language environments
+      (perl.withPackages (ps: with ps; [ 
+        JSON GetoptLong CursesUI ModulePluggable Appcpanminus 
       ]))
-      # Hardware and protocol libs
-      libserialport can-utils lksctp-tools cjson ncurses libuuid kicad graphviz mako openscad freecad
+      
+      (sbcl.withPackages (ps: with ps; [
+        cffi cl-ppcre cl-json cl-csv usocket bordeaux-threads log4cl 
+        trivial-backtrace cl-store hunchensocket fiveam cl-dot cserial-port
+      ]))
+
+      # Hardware tools
+      libserialport can-utils lksctp-tools cjson ncurses libuuid 
+      kicad graphviz mako openscad freecad
+
       # Xorg fallback
       xorg.xinit
-      # USB flashing tools
-      unetbootin
-      popsicle
-      gnome-disk-utility
+
+      # USB tools
+      unetbootin popsicle gnome-disk-utility
     ] ++ lib.optionals config.custom.steam.enable [
-      steam
-      steam-run
-      linuxConsoleTools
-      lutris
-      wineWowPackages.stable
+      steam steam-run linuxConsoleTools lutris wineWowPackages.stable
     ];
 
+    # Steam configuration
     programs.steam = lib.mkIf config.custom.steam.enable {
       enable = true;
       extraCompatPackages = [ pkgs.proton-ge-bin ];
@@ -275,69 +318,68 @@
       enable = true;
     };
 
-    environment.etc."jack/conf.xml".text = ''
-      <?xml version="1.0"?>
-      <jack>
-        <engine>
-          <param name="driver" value="alsa"/>
-          <param name="realtime" value="true"/>
-        </engine>
-      </jack>
-    '';
+    # Configuration files
+    environment.etc = {
+      "jack/conf.xml".text = ''
+        <?xml version="1.0"?>
+        <jack>
+          <engine>
+            <param name="driver" value="alsa"/>
+            <param name="realtime" value="true"/>
+          </engine>
+        </jack>
+      '';
 
-    environment.etc."hypr/hyprland.conf".text = ''
-      monitor=,preferred,auto,1
-      exec-once=waybar
-      exec-once=hyprpaper
-      exec-once=mako &
-      exec-once=udiskie &
-      exec-once=${pkgs.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1
-      bind=SUPER,Return,exec,kitty
-      bind=SUPER,Q,killactive
-      bind=SUPER,M,exit
-      bind=SUPER,E,exec,thunar
-      bind=SUPER,Space,exec,wofi --show drun
-    '';
+      "hypr/hyprland.conf".text = ''
+        monitor=,preferred,auto,1
+        exec-once=waybar
+        exec-once=hyprpaper
+        exec-once=mako &
+        exec-once=udiskie &
+        exec-once=${pkgs.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1
+        bind=SUPER,Return,exec,kitty
+        bind=SUPER,Q,killactive
+        bind=SUPER,M,exit
+        bind=SUPER,E,exec,thunar
+        bind=SUPER,Space,exec,wofi --show drun
+      '';
+
+      "hypr/lid.sh" = {
+        text = ''
+          #!/usr/bin/env bash
+          hyprctl keyword monitor "eDP-2,disable"
+          if [[ $1 == "open" ]]; then
+            hyprctl keyword monitor "eDP-2,2560x1600@165,auto,1"
+          fi
+        '';
+        mode = "0755";
+      };
+
+      "hypr/toggle_clamshell.sh" = {
+        text = ''
+          #!/usr/bin/env bash
+          INTERNAL="eDP-2"
+          
+          if [[ "$(hyprctl monitors)" =~ DP- ]]; then
+            if hyprctl monitors | grep -q "$INTERNAL" && \
+               ! hyprctl monitors | grep -q "$INTERNAL.*(disabled)"; then
+              hyprctl keyword monitor "$INTERNAL,disable"
+              notify-send "Clamshell Mode" "Laptop screen disabled"
+            else
+              hyprctl keyword monitor "$INTERNAL,2560x1600@165,auto,1"
+              notify-send "Clamshell Mode" "Laptop screen enabled"
+            fi
+          else
+            notify-send "Clamshell Mode" "No external monitor connected"
+          fi
+        '';
+        mode = "0755";
+      };
+    };
 
     environment.sessionVariables = {
       QT_QPA_PLATFORM = "wayland;xcb";
       NIXOS_OZONE_WL = "1";
-    };
-
-    services.logind.extraConfig = ''
-      HandleLidSwitch=ignore
-      HandleLidSwitchExternalPower=ignore
-      HandleLidSwitchDocked=ignore
-    '';
-
-    environment.etc."hypr/lid.sh" = {
-      text = ''
-        #!/usr/bin/env bash
-        hyprctl keyword monitor "eDP-2,disable"  # Always disable laptop screen on lid close
-        if [[ $1 == "open" ]]; then
-          hyprctl keyword monitor "eDP-2,2560x1600@165,auto,1"
-        fi
-      '';
-      mode = "0755";
-    };
-
-    environment.etc."hypr/toggle_clamshell.sh" = {
-      text = ''
-        #!/usr/bin/env bash
-        INTERNAL="eDP-2"
-        if [[ "$(hyprctl monitors)" =~ DP- ]]; then
-          if hyprctl monitors | grep -q "$INTERNAL" && ! hyprctl monitors | grep -q "$INTERNAL.*(disabled)"; then
-            hyprctl keyword monitor "$INTERNAL,disable"
-            notify-send "Clamshell Mode" "Laptop screen disabled"
-          else
-            hyprctl keyword monitor "$INTERNAL,2560x1600@165,auto,1"
-            notify-send "Clamshell Mode" "Laptop screen enabled"
-          fi
-        else
-          notify-send "Clamshell Mode" "No external monitor connected"
-        fi
-      '';
-      mode = "0755";
     };
 
     system.stateVersion = "25.11";
