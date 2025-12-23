@@ -180,7 +180,11 @@ let
     else "")
   + "    volumes:\n      - ${paths.ollama}:/root/.ollama\n    ports:\n      - \"${cfg.network.ollamaBindAddress}:11434:11434\"\n    environment:\n      OLLAMA_FLASH_ATTENTION: \"1\"\n      OLLAMA_NUM_PARALLEL: \"${toString currentPreset.numParallel}\"\n      OLLAMA_MAX_LOADED_MODELS: \"${toString currentPreset.maxLoadedModels}\"\n      OLLAMA_KEEP_ALIVE: \"${currentPreset.keepAlive}\"\n      OLLAMA_SCHED_SPREAD: \"1\"\n      OLLAMA_KV_CACHE_TYPE: \"q8_0\"\n      OLLAMA_MAX_QUEUE: \"${toString currentPreset.maxQueue}\"\n      OLLAMA_MEMORY_PRESSURE_THRESHOLD: \"${currentPreset.memoryPressure}\"\n"
   + rocmEnvVars
-  + "\n\n  open-webui:\n    image: ghcr.io/open-webui/open-webui:${cfg.advanced.openWebUI.version}\n    container_name: open-webui\n    restart: unless-stopped\n    read_only: true\n    security_opt:\n      - no-new-privileges:true\n    cap_drop:\n      - ALL\n    tmpfs:\n      - /tmp\n      - /var/tmp\n      - /run\n    volumes:\n      - ${paths.openWebui}:/app/backend/data\n    ports:\n      - \"${cfg.network.webUIBindAddress}:8080:8080\"\n    environment:\n      OLLAMA_BASE_URL: http://ollama:11434\n      ENABLE_SIGNUP: \"${if cfg.advanced.openWebUI.enableSignup then "true" else "false"}\"\n      WEBUI_AUTH: \"true\"\n      DEFAULT_USER_ROLE: ${cfg.advanced.openWebUI.defaultUserRole}\n      WEBUI_NAME: \"${cfg.advanced.openWebUI.title}\"\n    depends_on:\n      ollama:\n        condition: service_started\n"
+  + "\n\n  open-webui:\n    image: ghcr.io/open-webui/open-webui:${cfg.advanced.openWebUI.version}\n    container_name: open-webui\n    restart: unless-stopped\n    read_only: true\n    security_opt:\n      - no-new-privileges:true\n    cap_drop:\n      - ALL\n    tmpfs:\n      - /tmp\n      - /var/tmp\n      - /run\n    volumes:\n      - ${paths.openWebui}:/app/backend/data\n    ports:\n      - \"${cfg.network.webUIBindAddress}:8080:8080\"\n    environment:\n      OLLAMA_BASE_URL: http://ollama:11434\n      ENABLE_SIGNUP: \"${if cfg.advanced.openWebUI.enableSignup then "true" else "false"}\"\n      WEBUI_AUTH: \"true\"\n      DEFAULT_USER_ROLE: ${cfg.advanced.openWebUI.defaultUserRole}\n      WEBUI_NAME: \"${cfg.advanced.openWebUI.title}\"\n"
+  + (if cfg.advanced.openWebUI.webuiSecretKey != null then
+      "      WEBUI_SECRET_KEY: \"${cfg.advanced.openWebUI.webuiSecretKey}\"\n"
+     else "")
+  + "    depends_on:\n      ollama:\n        condition: service_started\n"
   + (if cfg.advanced.foldingAtHome.enable then
       "\n  foldingathome:\n    image: ghcr.io/linuxserver/foldingathome:latest\n    container_name: foldingathome\n    restart: unless-stopped\n    security_opt:\n      - no-new-privileges:true\n    cap_drop:\n      - ALL\n    environment:\n      USER: ${cfg.advanced.foldingAtHome.user}\n      TEAM: \"${toString cfg.advanced.foldingAtHome.team}\"\n      ENABLE_GPU: \"true\"\n      ENABLE_SMP: \"true\"\n    volumes:\n      - ${paths.foldingAtHome}:/config\n"
       + (if effectiveAcceleration == "rocm" then
@@ -702,6 +706,17 @@ in
           default = "Agentic Local AI";
           description = "Custom title for the web interface";
         };
+
+        webuiSecretKey = mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = mdDoc ''
+            The WEBUI_SECRET_KEY environment variable for Open WebUI.
+            Required in recent versions when running with read_only: true.
+            Generate a strong random key (e.g., via `openssl rand -hex 32`).
+            If null, no key is passed (may cause startup failure on newer images).
+          '';
+        };
       };
 
       rocm = {
@@ -779,6 +794,8 @@ in
         "Ollama API is exposed to network (${cfg.network.ollamaBindAddress}). Ensure firewall is configured.")
       (mkIf (cfg.network.webUIBindAddress != "127.0.0.1")
         "Open WebUI is exposed to network (${cfg.network.webUIBindAddress}). This may pose security risks.")
+      (mkIf (cfg.advanced.openWebUI.webuiSecretKey == null)
+        "No WEBUI_SECRET_KEY configured. Recent Open WebUI versions require this environment variable when running read-only. Set services.ollamaAgentic.advanced.openWebUI.webuiSecretKey to a strong random value.")
     ] ++ optional (cfg.preset == "pewdiepie") 
       "pewdiepie preset requires 320GB+ total VRAM across multiple GPUs. Verify your hardware capabilities.";
 
