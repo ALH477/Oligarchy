@@ -330,7 +330,6 @@ in
       aichat        # Advanced CLI
       oterm         # TUI
       alpaca        # GTK desktop client
-      dalai         # Simple web UI
     ] ++ optionals (effectiveAcceleration == "rocm") [
       rocmPackages.rocm-smi rocmPackages.rocminfo
     ];
