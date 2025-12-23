@@ -600,6 +600,7 @@ in
 
       # Convenient aliases
       environment.shellAliases = {
+        ai-stack = "ollama-stack";  # Backward compatibility
         ollama = "ollama-stack";
         ollama-logs = "ollama-stack logs";
       };
