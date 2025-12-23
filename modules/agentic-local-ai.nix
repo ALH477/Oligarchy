@@ -54,7 +54,6 @@ let
     then "      NVIDIA_VISIBLE_DEVICES: all\n      NVIDIA_DRIVER_CAPABILITIES: compute,utility\n"
     else "";
 
-  # Choose bind address: LAN if enabled, otherwise localhost
   ollamaBind = if cfg.network.exposeToLAN then "0.0.0.0" else "127.0.0.1";
 
   dockerComposeYml = pkgs.writeText "docker-compose-agentic-ai.yml" (
@@ -147,13 +146,13 @@ let
         fi
         echo ""
         success "Ollama running on port 11434"
-        ${if cfg.network.exposeToLAN then ''
+${if cfg.network.exposeToLAN then ''
         success "→ Exposed to LAN (accessible from other devices on your network)"
-        '' else ''
+'' else ''
         info "→ Bound to localhost only (secure default)"
         info "   To expose to LAN, set services.ollamaAgentic.network.exposeToLAN = true;"
-        ''}
-        ${if cfg.advanced.foldingAtHome.enable then ''
+''}
+${if cfg.advanced.foldingAtHome.enable then ''
         if is_running foldingathome; then
           success "Folding@Home is running (contributing when idle)"
         else
@@ -161,7 +160,7 @@ let
           docker compose up -d foldingathome
           success "Folding@Home started"
         fi
-        '' else ''}
+'' else ""}
         echo "User-friendly interfaces installed:"
         echo "  • aichat     - Advanced CLI REPL (run 'aichat')"
         echo "  • oterm      - Beautiful TUI (run 'oterm')"
@@ -174,12 +173,12 @@ let
           info "Stopping Ollama..."
           docker compose down ollama
         fi
-        ${if cfg.advanced.foldingAtHome.enable then ''
+${if cfg.advanced.foldingAtHome.enable then ''
         if is_running foldingathome; then
           info "Stopping Folding@Home..."
           docker compose down foldingathome
         fi
-        '' else ''}
+'' else ""}
         success "Services stopped"
         ;;
 
@@ -206,13 +205,13 @@ let
         else
           warn "Ollama container is not running"
         fi
-        ${if cfg.advanced.foldingAtHome.enable then ''
+${if cfg.advanced.foldingAtHome.enable then ''
         if is_running foldingathome; then
           success "Folding@Home is running"
         else
           warn "Folding@Home is not running"
         fi
-        '' else ''}
+'' else ""}
         echo ""
         info "=== Resource Usage ==="
         docker stats --no-stream 2>/dev/null || echo "No containers running"
@@ -342,7 +341,6 @@ in
       chmod 700 "${paths.ollama}" "${paths.state}"
     '';
 
-    # Firewall: only open port if exposeToLAN is true
     networking.firewall.allowedTCPPorts = mkIf cfg.network.exposeToLAN [ 11434 ];
 
     environment.shellAliases = {
