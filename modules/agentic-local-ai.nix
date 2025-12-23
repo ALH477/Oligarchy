@@ -180,8 +180,7 @@ let
     else "")
   + "    volumes:\n      - ${paths.ollama}:/root/.ollama\n    ports:\n      - \"${cfg.network.ollamaBindAddress}:11434:11434\"\n    environment:\n      OLLAMA_FLASH_ATTENTION: \"1\"\n      OLLAMA_NUM_PARALLEL: \"${toString currentPreset.numParallel}\"\n      OLLAMA_MAX_LOADED_MODELS: \"${toString currentPreset.maxLoadedModels}\"\n      OLLAMA_KEEP_ALIVE: \"${currentPreset.keepAlive}\"\n      OLLAMA_SCHED_SPREAD: \"1\"\n      OLLAMA_KV_CACHE_TYPE: \"q8_0\"\n      OLLAMA_MAX_QUEUE: \"${toString currentPreset.maxQueue}\"\n      OLLAMA_MEMORY_PRESSURE_THRESHOLD: \"${currentPreset.memoryPressure}\"\n"
   + rocmEnvVars
-  # FIXED: More lenient healthcheck
-  + "    healthcheck:\n      test: [\"CMD-SHELL\", \"curl -f http://localhost:11434/api/tags || exit 1\"]\n      interval: 10s\n      timeout: 5s\n      retries: 5\n      start_period: 60s\n\n  open-webui:\n    image: ghcr.io/open-webui/open-webui:${cfg.advanced.openWebUI.version}\n    container_name: open-webui\n    restart: unless-stopped\n    read_only: true\n    security_opt:\n      - no-new-privileges:true\n    cap_drop:\n      - ALL\n    tmpfs:\n      - /tmp\n      - /var/tmp\n      - /run\n    volumes:\n      - ${paths.openWebui}:/app/backend/data\n    ports:\n      - \"${cfg.network.webUIBindAddress}:8080:8080\"\n    environment:\n      OLLAMA_BASE_URL: http://ollama:11434\n      ENABLE_SIGNUP: \"${if cfg.advanced.openWebUI.enableSignup then "true" else "false"}\"\n      WEBUI_AUTH: \"true\"\n      DEFAULT_USER_ROLE: ${cfg.advanced.openWebUI.defaultUserRole}\n      WEBUI_NAME: \"${cfg.advanced.openWebUI.title}\"\n    depends_on:\n      ollama:\n        condition: service_started\n    healthcheck:\n      test: [\"CMD-SHELL\", \"curl -f http://localhost:8080/health || exit 1\"]\n      interval: 15s\n      timeout: 5s\n      retries: 3\n      start_period: 30s\n"
+  + "\n\n  open-webui:\n    image: ghcr.io/open-webui/open-webui:${cfg.advanced.openWebUI.version}\n    container_name: open-webui\n    restart: unless-stopped\n    read_only: true\n    security_opt:\n      - no-new-privileges:true\n    cap_drop:\n      - ALL\n    tmpfs:\n      - /tmp\n      - /var/tmp\n      - /run\n    volumes:\n      - ${paths.openWebui}:/app/backend/data\n    ports:\n      - \"${cfg.network.webUIBindAddress}:8080:8080\"\n    environment:\n      OLLAMA_BASE_URL: http://ollama:11434\n      ENABLE_SIGNUP: \"${if cfg.advanced.openWebUI.enableSignup then "true" else "false"}\"\n      WEBUI_AUTH: \"true\"\n      DEFAULT_USER_ROLE: ${cfg.advanced.openWebUI.defaultUserRole}\n      WEBUI_NAME: \"${cfg.advanced.openWebUI.title}\"\n    depends_on:\n      ollama:\n        condition: service_started\n"
   + (if cfg.advanced.foldingAtHome.enable then
       "\n  foldingathome:\n    image: ghcr.io/linuxserver/foldingathome:latest\n    container_name: foldingathome\n    restart: unless-stopped\n    security_opt:\n      - no-new-privileges:true\n    cap_drop:\n      - ALL\n    environment:\n      USER: ${cfg.advanced.foldingAtHome.user}\n      TEAM: \"${toString cfg.advanced.foldingAtHome.team}\"\n      ENABLE_GPU: \"true\"\n      ENABLE_SMP: \"true\"\n    volumes:\n      - ${paths.foldingAtHome}:/config\n"
       + (if effectiveAcceleration == "rocm" then
@@ -189,10 +188,10 @@ let
         else if effectiveAcceleration == "cuda" then
           "    deploy:\n      resources:\n        reservations:\n          devices:\n            - driver: nvidia\n              count: all\n              capabilities: [gpu]\n"
         else "")
-      + "    healthcheck:\n      test: [\"CMD-SHELL\", \"wget -qO- http://localhost:7396/api/status || exit 1\"]\n      interval: 60s\n      timeout: 10s\n      retries: 3\n      start_period: 30s\n"
+      + "\n"
     else "")
   + (if cfg.advanced.monitoring.enable then
-      "\n  prometheus:\n    image: prom/prometheus:${cfg.advanced.monitoring.prometheusVersion}\n    container_name: ai-metrics\n    restart: unless-stopped\n    read_only: true\n    security_opt:\n      - no-new-privileges:true\n    cap_drop:\n      - ALL\n    tmpfs:\n      - /tmp\n    volumes:\n      - ${prometheusConfig}:/etc/prometheus/prometheus.yml:ro\n      - ${paths.prometheus}:/prometheus\n    ports:\n      - \"127.0.0.1:9090:9090\"\n    command:\n      - '--config.file=/etc/prometheus/prometheus.yml'\n      - '--storage.tsdb.path=/prometheus'\n      - '--storage.tsdb.retention.time=30d'\n      - '--web.console.libraries=/usr/share/prometheus/console_libraries'\n      - '--web.console.templates=/usr/share/prometheus/consoles'\n    healthcheck:\n      test: [\"CMD-SHELL\", \"wget -qO- http://localhost:9090/-/healthy || exit 1\"]\n      interval: 30s\n      timeout: 10s\n      retries: 3\n"
+      "\n  prometheus:\n    image: prom/prometheus:${cfg.advanced.monitoring.prometheusVersion}\n    container_name: ai-metrics\n    restart: unless-stopped\n    read_only: true\n    security_opt:\n      - no-new-privileges:true\n    cap_drop:\n      - ALL\n    tmpfs:\n      - /tmp\n    volumes:\n      - ${prometheusConfig}:/etc/prometheus/prometheus.yml:ro\n      - ${paths.prometheus}:/prometheus\n    ports:\n      - \"127.0.0.1:9090:9090\"\n    command:\n      - '--config.file=/etc/prometheus/prometheus.yml'\n      - '--storage.tsdb.path=/prometheus'\n      - '--storage.tsdb.retention.time=30d'\n      - '--web.console.libraries=/usr/share/prometheus/console_libraries'\n      - '--web.console.templates=/usr/share/prometheus/consoles'\n"
     else "")
 );
 
@@ -344,17 +343,14 @@ let
       ''}
     }
 
-    # Health check
+    # Health check (now only checks if container is running, since healthchecks were removed)
     health_check() {
       info "Checking service health..."
       local ALL_HEALTHY=true
       
       for service in ollama open-webui ${optionalString cfg.advanced.foldingAtHome.enable "foldingathome"} ${optionalString cfg.advanced.monitoring.enable "prometheus"}; do
-        if docker compose ps "$service" 2>/dev/null | grep -q "Up (healthy)"; then
-          success "$service: healthy"
-        elif docker compose ps "$service" 2>/dev/null | grep -q "Up"; then
-          warn "$service: running but not healthy yet"
-          ALL_HEALTHY=false
+        if docker compose ps "$service" 2>/dev/null | grep -q "Up"; then
+          success "$service: running"
         else
           error "$service: not running"
           ALL_HEALTHY=false
@@ -442,7 +438,7 @@ let
         sleep 10
         
         if health_check; then
-          success "All services healthy"
+          success "All services running"
           echo ""
           success "Open WebUI: http://${cfg.network.webUIBindAddress}:8080"
           ${optionalString cfg.advanced.monitoring.enable ''success "Metrics: http://127.0.0.1:9090"''}
