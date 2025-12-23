@@ -268,7 +268,7 @@ EOF
         exit 1
         ;;
     esac
-  '';  # ← THIS WAS MISSING! Fixed now
+  '';
 
 in
 {
