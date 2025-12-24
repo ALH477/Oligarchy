@@ -68,6 +68,7 @@ let
       keepAlive = "72h";
       maxQueue = 2048;
       memoryPressure = "0.75";
+};
 
     pewdiepie = {
       shmSize = "128gb";
