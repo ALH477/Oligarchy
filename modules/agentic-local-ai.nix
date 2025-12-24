@@ -60,12 +60,20 @@ let
       maxQueue = 2048;
       memoryPressure = "0.75";
     };
-    
-    pewdiepie = {
+
+        researcher = {
       shmSize = "64gb";
       numParallel = 16;
       maxLoadedModels = 10;
       keepAlive = "72h";
+      maxQueue = 2048;
+      memoryPressure = "0.75";
+
+    pewdiepie = {
+      shmSize = "128gb";
+      numParallel = 32;
+      maxLoadedModels = 20;
+      keepAlive = "144h";
       maxQueue = 2048;
       memoryPressure = "0.75";
     };
