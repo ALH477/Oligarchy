@@ -5,7 +5,7 @@ let
   kernelDir = let parts = builtins.splitVersion kernelVersion; in "${builtins.elemAt parts 0}.${builtins.elemAt parts 1}";
   linux_src = pkgs.fetchurl {
     url = "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${kernelVersion}.tar.xz";
-    sha256 = "eoh5FnuJxLrgd9bznE8hMHafBdva0qrZFK2rmvt9f5o=";  # Correct hash for linux-6.18.3.tar.xz (computed from actual download as of Jan 2026).
+    sha256 = "eoh5FnuJxLrgd9bznE8hMHafBdva0qrZFK2rmvt9f5o=";
   };
   boreConfig = "${inputs.linux-cachyos}/linux-cachyos-bore/config";
   kernelPatches = [
@@ -27,6 +27,7 @@ let
   customKernel = (pkgs.linuxManualConfig {
     inherit (pkgs) stdenv;
     version = "${kernelVersion}-cachyos-bore";
+    modDirVersion = kernelVersion;  # Critical: matches upstream for external modules.
     src = linux_src;
     configfile = boreConfig;
     allowImportFromDerivation = true;
@@ -34,12 +35,12 @@ let
   }).overrideAttrs (oldAttrs: {
     passthru = oldAttrs.passthru // {
       features = { ia32Emulation = true; efiBootStub = true; };
+      modDirVersion = kernelVersion;  # Propagate for safety.
     };
   });
 in {
   boot.kernelPackages = lib.mkForce (pkgs.linuxPackagesFor customKernel);
 
-  # Ensure kvm-amd module is loaded (common for AMD virtualization; safe to add).
   boot.kernelModules = lib.mkBefore [ "kvm-amd" ];
 
   services.thermald.enable = true;
