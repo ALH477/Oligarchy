@@ -21,7 +21,7 @@ in {
     port = mkOption {
       type = types.port;
       default = 4000;
-      description = "Port to expose the Identity Service.";
+      description = "Port to expose the Identity Service[cite: 29].";
     };
 
     dataDir = mkOption {
@@ -55,8 +55,8 @@ in {
         environment = {
           BASE_URL = "https://${cfg.domain}";
           IDENTITY_PORT = "4000";
-          DATABASE_URL = "sqlite:/data/identity.db"; 
-          RUST_LOG = "dcf_id=info,tower_http=info"; 
+          DATABASE_URL = "sqlite:/data/identity.db"; # [cite: 29]
+          RUST_LOG = "dcf_id=info,tower_http=info"; # [cite: 29]
         };
 
         environmentFiles = [ cfg.secretsFile ];
