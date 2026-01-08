@@ -1,31 +1,3 @@
-# Copyright (c) 2026, DeMoD LLC
-# All rights reserved.
-#
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are met:
-#
-# 1. Redistributions of source code must retain the above copyright notice, this
-#    list of conditions and the following disclaimer.
-#
-# 2. Redistributions in binary form must reproduce the above copyright notice,
-#    this list of conditions and the following disclaimer in the documentation
-#    and/or other materials provided with the distribution.
-#
-# 3. Neither the name of the copyright holder nor the names of its
-#    contributors may be used to endorse or promote products derived from
-#    this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-# DISCLAIMED.
-# IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 { config, pkgs, lib, inputs, nixpkgs-unstable, ... }:
 
 {
@@ -34,8 +6,8 @@
     ./modules/agentic-local-ai.nix
     ./modules/dcf-community-node.nix
     ./modules/dcf-identity.nix
+    ./modules/dcf-tray.nix  # <--- IMPORT NEW MODULE
     ./modules/cachyos-bore-kernel.nix
-    # inputs.demod-ip-blocker.nixosModules.default
   ];
 
   options = {
@@ -43,6 +15,9 @@
   };
 
   config = {
+    # ENABLE THE NEW MODULE
+    services.dcf-tray.enable = true;
+
     # Package management
     nixpkgs = {
       overlays = [
@@ -53,16 +28,14 @@
           };
         })
       ];
-      # config.allowUnfree = true; # Handled by flake.nix pkgs instantiation
     };
 
     custom.dcfCommunityNode.nodeId = "RENAME";
 
-custom.dcfIdentity = {
-  enable = true;
-  # Use a string string so Nix doesn't try to read/copy it during build
-  secretsFile = "/etc/nixos/secrets/dcf-id.env";
-};
+    custom.dcfIdentity = {
+      enable = true;
+      secretsFile = "/etc/nixos/secrets/dcf-id.env";
+    };
 
     # Local AI service
     services.ollamaAgentic = {
@@ -100,35 +73,29 @@ custom.dcfIdentity = {
       '';
     };
 
-    # ────────────────────────────────────────────────────────────
-    # Wayland Display & Desktop Configuration
-    # ────────────────────────────────────────────────────────────
-    
-    # Disable legacy X11 server (Pure Wayland)
+    # Wayland
     services.xserver.enable = false;
 
     services.displayManager = {
       sddm = {
         enable = true;
-        wayland.enable = true; # Run SDDM in Wayland mode
+        wayland.enable = true; 
         enableHidpi = true;
       };
-      defaultSession = "plasma"; # Default to Plasma 6
+      defaultSession = "plasma"; 
     };
 
     services.desktopManager.plasma6.enable = true;
 
-    # Hyprland (Wayland Compositor)
     programs.hyprland = {
       enable = true;
-      xwayland.enable = true; # Needed for Steam/Games compatibility
+      xwayland.enable = true;
       package = pkgs.hyprland;
     };
     
     services.demod-ip-blocker = {
       enable = true;
       updateInterval = "24h";
-      # Background refresh for long uptimes
     };
 
     systemd.defaultUnit = lib.mkForce "graphical.target";
@@ -172,7 +139,6 @@ custom.dcfIdentity = {
 
     powerManagement.cpuFreqGovernor = "performance";
 
-    # Localization
     time.timeZone = "America/Los_Angeles";
     i18n = {
       defaultLocale = "en_US.UTF-8";
@@ -275,61 +241,44 @@ custom.dcfIdentity = {
 
     # System packages organized by category
     environment.systemPackages = with pkgs; [
-      # Core system tools
       vim docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress 
       dmidecode util-linux gparted usbutils
 
-      # Python environment
       (python3Full.withPackages (ps: with ps; [
         pip virtualenv cryptography pycryptodome grpcio grpcio-tools
         protobuf numpy matplotlib python-snappy skidl
       ]))
 
-      # Networking and security
       wireshark tcpdump nmap netcat
 
-      # Development tools
       cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy protobuf
 
-      # Multimedia and audio
       ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio 
       pkgsi686Linux.libpulseaudio pavucontrol guitarix faust faustlive
 
-      # Virtualization
       qemu virt-manager docker-compose docker-buildx
 
-      # Graphics tools
       vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
 
-      # Gaming
       dhewm3 darkradiant zandronum
 
-      # Minecraft
       inputs.minecraft.packages.${pkgs.system}.default
 
-      # Desktop applications
       brave vlc pandoc kdePackages.okular obs-studio firefox thunderbird
       
-      # Desktop utilities
       blueberry legcord font-awesome fastfetch gnugrep kitty wofi waybar 
       hyprpaper brightnessctl zip unzip obsidian
 
-      # Creative tools
       gimp kdePackages.kdenlive inkscape blender libreoffice krita synfigstudio
 
-      # File management
       xfce.thunar xfce.thunar-volman gvfs udiskie polkit_gnome framework-tool
 
-      # Screen utilities
       wl-clipboard grim slurp v4l-utils
 
-      # Network simulation
       mininet
 
-      # AI tools
       ollama opencode open-webui alpaca aichat oterm
 
-      # Language environments
       (perl.withPackages (ps: with ps; [ 
         JSON GetoptLong CursesUI ModulePluggable Appcpanminus 
       ]))
@@ -339,12 +288,10 @@ custom.dcfIdentity = {
         trivial-backtrace cl-store hunchensocket fiveam cl-dot cserial-port
       ]))
 
-      # Hardware tools
       libserialport can-utils lksctp-tools cjson ncurses libuuid 
       kicad graphviz mako openscad freecad
 
-      # USB tools
-      unetbootin popsicle gnome-disk-utility 
+      unetbootin popsicle gnome-disk-utility
     ] ++ lib.optionals config.custom.steam.enable [
       steam steam-run linuxConsoleTools lutris wineWowPackages.stable
     ];
@@ -382,6 +329,8 @@ custom.dcfIdentity = {
         exec-once=mako &
         exec-once=udiskie &
         exec-once=${pkgs.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1
+        # exec-once=dcf-tray  # Handled automatically by module XDG autostart now
+        
         bind=SUPER,Return,exec,kitty
         bind=SUPER,Q,killactive
         bind=SUPER,M,exit
