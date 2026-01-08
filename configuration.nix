@@ -1,9 +1,40 @@
-{ config, pkgs, lib, nixpkgs-unstable, ... }:
+# Copyright (c) 2026, DeMoD LLC
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+#
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# 3. Neither the name of the copyright holder nor the names of its
+#    contributors may be used to endorse or promote products derived from
+#    this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+{ config, pkgs, lib, inputs, nixpkgs-unstable, ... }:
 
 {
   imports = [
     ./hardware-configuration.nix
     ./agentic-local-ai.nix
+    ./dcf-community-node.nix
+    ./dcf-identity.nix
+    inputs.demod-ip-blocker.nixosModules.default
   ];
 
   options = {
@@ -24,10 +55,17 @@
       config.allowUnfree = true;
     };
 
+    custom.dcfCommunityNode.nodeId = "zSK0KNzNgerIjBHuSv01bqEgnz1XG6uj";
+
+    custom.dcfIdentity = {
+      enable = true;
+      secretsFile = "/etc/nixos/secrets/dcf-id.env";
+    };
+
     # Local AI service
     services.ollamaAgentic = {
       enable = true;
-      preset = "rocm-multi";
+      preset = "pewdiepie";
       acceleration = "rocm";
       advanced.rocm.gfxVersionOverride = "11.0.2";
     };
@@ -38,24 +76,20 @@
     # Boot configuration
     boot = {
       binfmt.emulatedSystems = [ "aarch64-linux" ];
-      
       loader = {
         systemd-boot.enable = true;
         efi.canTouchEfiVariables = true;
       };
       
       kernelPackages = pkgs.linuxPackages_latest;
-      
       kernelParams = [ 
         "amdgpu.abmlevel=0"
         "amdgpu.sg_display=0"
         "amdgpu.exp_hw_support=1"
       ];
-      
       initrd.kernelModules = [ "amdgpu" ];
       kernelModules = [ "amdgpu" "v4l2loopback" ];
       extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
-      
       extraModprobeConfig = ''
         options v4l2loopback devices=1 video_nr=10 card_label="Virtual Cam" exclusive_caps=1
       '';
@@ -75,6 +109,11 @@
       videoDrivers = [ "amdgpu" ];
       desktopManager.cinnamon.enable = true;
       windowManager.dwm.enable = true;
+    };
+
+    services.demod-ip-blocker = {
+      enable = true;
+      updateInterval = "24h"; # Background refresh for long uptimes
     };
 
     programs.hyprland = {
@@ -118,7 +157,6 @@
           rocmPackages.clr
           rocmPackages.clr.icd
         ];
-        
         extraPackages32 = with pkgs.pkgsi686Linux; [ amdvlk ];
       };
     };
@@ -127,7 +165,6 @@
 
     # Localization
     time.timeZone = "America/Los_Angeles";
-    
     i18n = {
       defaultLocale = "en_US.UTF-8";
       extraLocaleSettings = {
@@ -153,7 +190,6 @@
       power-profiles-daemon.enable = true;
       fwupd.enable = true;
       fprintd.enable = true;
-      
       pipewire = {
         enable = true;
         alsa.enable = true;
@@ -179,7 +215,6 @@
     security = {
       rtkit.enable = true;
       polkit.enable = true;
-      
       pam.services = {
         login.fprintAuth = true;
         sudo.fprintAuth = true;
@@ -244,7 +279,7 @@
       wireshark tcpdump nmap netcat
 
       # Development tools
-      cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy
+      cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy protobuf
 
       # Multimedia and audio
       ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio 
@@ -257,7 +292,7 @@
       vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
 
       # Gaming (Doom 3, etc)
-      dhewm3 darkradiant r2modman
+      dhewm3 darkradiant zandronum
 
       # Desktop applications
       brave vlc pandoc kdePackages.okular obs-studio firefox thunderbird
@@ -299,7 +334,7 @@
       xorg.xinit
 
       # USB tools
-      unetbootin popsicle gnome-disk-utility
+      unetbootin popsicle gnome-disk-utility 
     ] ++ lib.optionals config.custom.steam.enable [
       steam steam-run linuxConsoleTools lutris wineWowPackages.stable
     ];
