@@ -64,7 +64,7 @@
             nixpkgs.config.allowUnfree = true;
 
             # --- DCF (DeMoD Communication Framework) Setup [Restored] ---
-            custom.dcfCommunityNode.nodeId = "zSK0KNzNgerIjBHuSv01bqEgnz1XG6uj";
+            custom.dcfCommunityNode.nodeId = "RENAME";
             custom.dcfIdentity = {
               enable = true;
               secretsFile = "/etc/nixos/secrets/dcf-id.env";
