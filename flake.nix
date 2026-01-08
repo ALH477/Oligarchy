@@ -23,9 +23,15 @@
         nixos-hardware.nixosModules.framework-16-7040-amd
         fw-fanctrl.nixosModules.default
         demod-ip-blocker.nixosModules.default
+        
+        # Local Module Imports
         ./hardware-configuration.nix
         ./modules/agentic-local-ai.nix
         ./modules/archibaldos-dsp-vm.nix
+        ./modules/dcf-community-node.nix   # [Restored from old config]
+        ./modules/dcf-identity.nix         # [Restored from old config]
+
+        # Inline Hardware Configuration Overlay
         ({ config, pkgs, lib, nixpkgs-unstable, ... }: {
           nixpkgs.overlays = [
             (final: prev: {
@@ -38,6 +44,8 @@
           hardware.framework.enable = true;
           hardware.fw-fanctrl.enable = true;
         })
+
+        # Main System Configuration
         ({ config, pkgs, lib, inputs, nixpkgs-unstable, ... }: {
           options = {
             custom.steam.enable = lib.mkEnableOption "Steam and gaming support";
@@ -55,6 +63,14 @@
 
             nixpkgs.config.allowUnfree = true;
 
+            # --- DCF (DeMoD Communication Framework) Setup [Restored] ---
+            custom.dcfCommunityNode.nodeId = "zSK0KNzNgerIjBHuSv01bqEgnz1XG6uj";
+            custom.dcfIdentity = {
+              enable = true;
+              secretsFile = "/etc/nixos/secrets/dcf-id.env";
+            };
+            # ------------------------------------------------------------
+
             # Custom Ollama service
             services.ollamaAgentic = {
               enable = true;
@@ -65,7 +81,7 @@
             # DeMoD IP Blocker Configuration
             services.demod-ip-blocker = {
               enable = true;
-              updateInterval = "24h"; # Background refresh for long uptimes
+              updateInterval = "24h"; 
             };
 
             custom.steam.enable = true;
@@ -98,13 +114,13 @@
             services.xserver.videoDrivers = [ "amdgpu" ];
             services.xserver.desktopManager.cinnamon.enable = true;
             services.xserver.windowManager.dwm.enable = true;
-            
+             
             programs.hyprland = {
               enable = true;
               xwayland.enable = true;
               package = pkgs.hyprland;
             };
-            
+             
             systemd.defaultUnit = lib.mkForce "graphical.target";
 
             xdg.portal = {
@@ -218,11 +234,11 @@
                   ${pkgs.gawk}/bin/awk '{print $1}' | \
                   ${pkgs.coreutils}/bin/head -n -5 | \
                   ${pkgs.coreutils}/bin/tr '\n' ' ')
-                
+                 
                 if [ -n "$generations_to_delete" ]; then
                   ${pkgs.nix}/bin/nix-env -p /nix/var/nix/profiles/system --delete-generations $generations_to_delete
                 fi
-                
+                 
                 ${pkgs.nix}/bin/nix-collect-garbage
               '';
               serviceConfig.Type = "oneshot";
@@ -357,7 +373,7 @@
                 text = ''
                   #!/usr/bin/env bash
                   INTERNAL="eDP-2"
-                  
+                   
                   if [[ "$(hyprctl monitors)" =~ DP- ]]; then
                     if hyprctl monitors | grep -q "$INTERNAL" && \
                        ! hyprctl monitors | grep -q "$INTERNAL.*(disabled)"; then
