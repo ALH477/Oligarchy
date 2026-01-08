@@ -8,7 +8,11 @@
     nixos-hardware.url = "github:NixOS/nixos-hardware";
     fw-fanctrl.url = "github:TamtamHero/fw-fanctrl/packaging/nix";
     demod-ip-blocker.url = "git+https://github.com/ALH477/DeMoD-IP-Blocker.git";
-	minecraft.url = "github:ALH477/NixOS-MineCraft";
+    minecraft.url = "github:ALH477/NixOS-MineCraft";
+    linux-cachyos = {
+      url = "github:CachyOS/linux-cachyos";
+      flake = false;  # Non-flake repo for source access.
+    };
   };
 
   outputs = { self, nixpkgs, nixpkgs-unstable, determinate, nixos-hardware, fw-fanctrl, demod-ip-blocker, minecraft, ... }@inputs:
@@ -26,8 +30,6 @@
         
         # Point to your external configuration file
         ./configuration.nix
-        
-        
       ];
     };
   };

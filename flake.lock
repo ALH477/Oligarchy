@@ -192,6 +192,22 @@
         "url": "https://flakehub.com/f/cachix/git-hooks.nix/0.1.941"
       }
     },
+    "linux-cachyos": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1767632716,
+        "narHash": "sha256-lTRVzn5JIP1+8572Sj/UqW/nlGG6QNFUNpLU6VCOznU=",
+        "owner": "CachyOS",
+        "repo": "linux-cachyos",
+        "rev": "2f380e2b35c4ad9acda98296f638f93af3742533",
+        "type": "github"
+      },
+      "original": {
+        "owner": "CachyOS",
+        "repo": "linux-cachyos",
+        "type": "github"
+      }
+    },
     "minecraft": {
       "inputs": {
         "flake-utils": "flake-utils",
@@ -392,6 +408,7 @@
         "demod-ip-blocker": "demod-ip-blocker",
         "determinate": "determinate",
         "fw-fanctrl": "fw-fanctrl",
+        "linux-cachyos": "linux-cachyos",
         "minecraft": "minecraft",
         "nixos-hardware": "nixos-hardware",
         "nixpkgs": "nixpkgs_6",

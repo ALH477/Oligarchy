@@ -34,6 +34,7 @@
     ./modules/agentic-local-ai.nix
     ./modules/dcf-community-node.nix
     ./modules/dcf-identity.nix
+    ./modules/cachyos-bore-kernel.nix
     # inputs.demod-ip-blocker.nixosModules.default
   ];
 
