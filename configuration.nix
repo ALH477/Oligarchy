@@ -18,14 +18,14 @@
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 # AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# DISCLAIMED.
+# IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
 # FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
 # DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
 # SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 { config, pkgs, lib, inputs, nixpkgs-unstable, ... }:
 
 {
@@ -53,15 +53,16 @@
           };
         })
       ];
-      config.allowUnfree = true;
+      # config.allowUnfree = true; # Handled by flake.nix pkgs instantiation
     };
 
     custom.dcfCommunityNode.nodeId = "RENAME";
 
 custom.dcfIdentity = {
   enable = true;
-  secretsFile = ./secrets/dcf-id.env;  # Relative to flake root → resolves to /etc/nixos/secrets/dcf-id.env
-};;
+  # Use a string string so Nix doesn't try to read/copy it during build
+  secretsFile = "/etc/nixos/secrets/dcf-id.env";
+};
 
     # Local AI service
     services.ollamaAgentic = {
@@ -83,44 +84,51 @@ custom.dcfIdentity = {
       };
       
       kernelPackages = pkgs.linuxPackages_latest;
+
       kernelParams = [ 
         "amdgpu.abmlevel=0"
         "amdgpu.sg_display=0"
         "amdgpu.exp_hw_support=1"
       ];
+
       initrd.kernelModules = [ "amdgpu" ];
       kernelModules = [ "amdgpu" "v4l2loopback" ];
       extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
+      
       extraModprobeConfig = ''
         options v4l2loopback devices=1 video_nr=10 card_label="Virtual Cam" exclusive_caps=1
       '';
     };
 
-    # Display and window management
+    # ────────────────────────────────────────────────────────────
+    # Wayland Display & Desktop Configuration
+    # ────────────────────────────────────────────────────────────
+    
+    # Disable legacy X11 server (Pure Wayland)
+    services.xserver.enable = false;
+
     services.displayManager = {
       sddm = {
         enable = true;
-        wayland.enable = false;
+        wayland.enable = true; # Run SDDM in Wayland mode
+        enableHidpi = true;
       };
-      defaultSession = "hyprland";
+      defaultSession = "plasma"; # Default to Plasma 6
     };
 
-    services.xserver = {
-      enable = true;
-      videoDrivers = [ "amdgpu" ];
-      desktopManager.cinnamon.enable = true;
-      windowManager.dwm.enable = true;
-    };
+    services.desktopManager.plasma6.enable = true;
 
-    services.demod-ip-blocker = {
-      enable = true;
-      updateInterval = "24h"; # Background refresh for long uptimes
-    };
-
+    # Hyprland (Wayland Compositor)
     programs.hyprland = {
       enable = true;
-      xwayland.enable = true;
+      xwayland.enable = true; # Needed for Steam/Games compatibility
       package = pkgs.hyprland;
+    };
+    
+    services.demod-ip-blocker = {
+      enable = true;
+      updateInterval = "24h";
+      # Background refresh for long uptimes
     };
 
     systemd.defaultUnit = lib.mkForce "graphical.target";
@@ -191,6 +199,7 @@ custom.dcfIdentity = {
       power-profiles-daemon.enable = true;
       fwupd.enable = true;
       fprintd.enable = true;
+
       pipewire = {
         enable = true;
         alsa.enable = true;
@@ -292,11 +301,11 @@ custom.dcfIdentity = {
       # Graphics tools
       vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
 
-      # Gaming (Doom 3, etc)
+      # Gaming
       dhewm3 darkradiant zandronum
 
-        # Minecraft
-        inputs.minecraft.packages.${pkgs.system}.default
+      # Minecraft
+      inputs.minecraft.packages.${pkgs.system}.default
 
       # Desktop applications
       brave vlc pandoc kdePackages.okular obs-studio firefox thunderbird
@@ -333,9 +342,6 @@ custom.dcfIdentity = {
       # Hardware tools
       libserialport can-utils lksctp-tools cjson ncurses libuuid 
       kicad graphviz mako openscad freecad
-
-      # Xorg fallback
-      xorg.xinit
 
       # USB tools
       unetbootin popsicle gnome-disk-utility 
