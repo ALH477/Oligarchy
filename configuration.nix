@@ -34,7 +34,7 @@
     ./modules/agentic-local-ai.nix
     ./modules/dcf-community-node.nix
     ./modules/dcf-identity.nix
-    inputs.demod-ip-blocker.nixosModules.default
+    demod-ip-blocker.nixosModules.default
   ];
 
   options = {
