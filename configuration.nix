@@ -55,7 +55,7 @@
       config.allowUnfree = true;
     };
 
-    custom.dcfCommunityNode.nodeId = "zSK0KNzNgerIjBHuSv01bqEgnz1XG6uj";
+    custom.dcfCommunityNode.nodeId = "RENAME";
 
     custom.dcfIdentity = {
       enable = true;
