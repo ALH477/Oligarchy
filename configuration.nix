@@ -294,6 +294,9 @@
       # Gaming (Doom 3, etc)
       dhewm3 darkradiant zandronum
 
+        # Minecraft
+        inputs.minecraft.packages.${pkgs.system}.default
+
       # Desktop applications
       brave vlc pandoc kdePackages.okular obs-studio firefox thunderbird
       
