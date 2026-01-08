@@ -58,10 +58,10 @@
 
     custom.dcfCommunityNode.nodeId = "RENAME";
 
-    custom.dcfIdentity = {
-      enable = true;
-      secretsFile = "/etc/nixos/secrets/dcf-id.env";
-    };
+custom.dcfIdentity = {
+  enable = true;
+  secretsFile = ./secrets/dcf-id.env;  # Relative to flake root → resolves to /etc/nixos/secrets/dcf-id.env
+};;
 
     # Local AI service
     services.ollamaAgentic = {
