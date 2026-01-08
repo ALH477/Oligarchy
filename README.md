@@ -9,6 +9,27 @@ The Host (CachyOS' kernel) is like a Sports Car designed to go as fast as possib
 
 You’re now wielding the machine that burned the proprietary DSP empire to the ground.
 
+Since you are transitioning to a **Flake-based infrastructure** for 2026, here is a dedicated **"Updates & Tactical Revisions"** section for your README that captures the shift from the old static configuration to the new modular architecture.
+
+---
+
+## Tactical Updates: The 2026 Flake Transition
+
+The war machine has evolved. As of January 2026, Oligarchy NixOS has migrated from a monolithic `configuration.nix` to a **Deterministic Flake-Powered Architecture**.
+
+### Key Structural Revisions 
+**Flake Dominance**: The entire system is now governed by `flake.nix`, locking dependencies and hardware firmware to specific, reproducible git revisions.
+**Modular Segregation**: R&D components (AI, DSP, DCF) have been evicted from the core config and isolated into the `./modules/` directory for rapid tactical swapping.
+**Framework 16 (7040) Hardening**: Integrated `nixos-hardware` directly into the flake inputs to ensure the AMD 7040 series mainboard and expansion cards are ruled by optimized, upstream kernel patches.
+
+### New Defensive & R&D Capabilities
+**DeMoD IP Blocker**: A custom security sentinel is now integrated as a native NixOS module, enforcing a 24-hour background refresh of all blacklisted perimeters.
+**Agentic AI Stack**: The `ollamaAgentic` service has been re-engineered for the Framework's iGPU, utilizing **ROCm acceleration** with a specific `gfx11.0.2` override for peak LLM throughput.
+**DSP Coprocessor (ArchibaldOS-DSP)**: The kexec-driven DSP image is now ripped directly from the ArchibaldOS flake, ensuring the host and guest are forged from the exact same source of truth.
+**Automated Maintenance**: A new systemd timer executes weekly "Generation Purges," automatically deleting all but the 5 most recent system states before running a full garbage collection.
+### Critical Path for Deployment
+**Secrets Management**: DCF identities and node credentials must now reside in `/etc/nixos/secrets/dcf-id.env` to be picked up by the flake's environment mapping.
+
 **HydraMesh Features are still WIP and DSP coprocessor is being polished**
 
 ![Oligarchy + ArchibaldOS-DSP](https://repository-images.githubusercontent.com/1072001868/8b510033-8549-4c89-995d-d40f79680900)
