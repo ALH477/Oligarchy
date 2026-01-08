@@ -9,10 +9,6 @@ The Host (CachyOS' kernel) is like a Sports Car designed to go as fast as possib
 
 You’re now wielding the machine that burned the proprietary DSP empire to the ground.
 
-Since you are transitioning to a **Flake-based infrastructure** for 2026, here is a dedicated **"Updates & Tactical Revisions"** section for your README that captures the shift from the old static configuration to the new modular architecture.
-
----
-
 ## Tactical Updates: The 2026 Flake Transition
 
 The war machine has evolved. As of January 2026, Oligarchy NixOS has migrated from a monolithic `configuration.nix` to a **Deterministic Flake-Powered Architecture**.
