@@ -30,10 +30,10 @@
 
 {
   imports = [
-    ./hardware-configuration.nix
-    ./agentic-local-ai.nix
-    ./dcf-community-node.nix
-    ./dcf-identity.nix
+    ./modules/hardware-configuration.nix
+    ./modules/agentic-local-ai.nix
+    ./modules/dcf-community-node.nix
+    ./modules/dcf-identity.nix
     inputs.demod-ip-blocker.nixosModules.default
   ];
 
