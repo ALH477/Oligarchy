@@ -11,26 +11,24 @@ in {
       default = false;
       description = "Enable the DeMoD Identity & Billing Service.";
     };
-
     domain = mkOption {
       type = types.str;
       default = "dcf.demod.ltd";
       description = "Public domain name for the Identity Service.";
     };
-
     port = mkOption {
       type = types.port;
       default = 4000;
-      description = "Port to expose the Identity Service[cite: 29].";
+      [cite_start]description = "Port to expose the Identity Service[cite: 29].";
     };
-
     dataDir = mkOption {
       type = types.str;
       default = "/var/lib/demod-identity";
       description = "Host path for persistent SQLite storage.";
     };
 
-	nodeIdFile = mkOption { type = types.nullOr types.path; default = null; };
+    nodeIdFile = mkOption { type = types.nullOr types.path; default = null;
+    };
 
     secretsFile = mkOption {
       type = types.path;
@@ -49,17 +47,18 @@ in {
       containers.dcf-id = {
         image = "alh477/dcf-id:latest";
         autoStart = true;
-        
         ports = [ "${toString cfg.port}:4000" ];
         
         environment = {
           BASE_URL = "https://${cfg.domain}";
           IDENTITY_PORT = "4000";
-          DATABASE_URL = "sqlite:/data/identity.db"; # [cite: 29]
-          RUST_LOG = "dcf_id=info,tower_http=info"; # [cite: 29]
+          [cite_start]DATABASE_URL = "sqlite:/data/identity.db"; # [cite: 29]
+          RUST_LOG = "dcf_id=info,tower_http=info";
+          [cite_start]# [cite: 29]
         };
 
-        environmentFiles = [ cfg.secretsFile ];
+        # FIX: Interpolate path to ensure context is preserved
+        environmentFiles = [ "${cfg.secretsFile}" ];
 
         volumes = [
           "${cfg.dataDir}:/data" # 
