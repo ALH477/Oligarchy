@@ -6,8 +6,8 @@
     ./modules/agentic-local-ai.nix
     ./modules/dcf-community-node.nix
     ./modules/dcf-identity.nix
-    ./modules/dcf-tray.nix  # <--- IMPORT NEW MODULE
-    ./modules/cachyos-bore-kernel.nix
+    ./modules/dcf-tray.nix
+    ./modules/cachyos-bore-kernel.nix  # Fixed: uses Zen kernel (or CachyOS 6.12 if hashes updated)
   ];
 
   options = {
@@ -16,7 +16,7 @@
 
   config = {
     # ENABLE THE NEW MODULE
-    services.dcf-tray.enable = true;
+    services.dcf-tray.enable = false;
 
     swapDevices = [
       { device = "/swapfile"; size = 71680; }  # 70 * 1024 MiB
@@ -40,7 +40,7 @@
     custom.dcfCommunityNode.nodeId = "RENAME";
 
     custom.dcfIdentity = {
-      enable = true;
+      enable = false;
       secretsFile = "/etc/nixos/modules/secrets/dcf-id.env";
     };
 
@@ -63,20 +63,31 @@
         efi.canTouchEfiVariables = true;
       };
       
-      kernelPackages = pkgs.linuxPackages_latest;
+      # kernelPackages set by cachyos-bore-kernel module via mkForce
 
       kernelParams = [ 
         "amdgpu.abmlevel=0"
         "amdgpu.sg_display=0"
         "amdgpu.exp_hw_support=1"
+        # USB stability fixes for Framework 16
+        "usbcore.autosuspend=-1"           # Disable USB autosuspend globally
+        "usbcore.use_both_schemes=y"       # Try both USB enumeration schemes
+        "xhci_hcd.quirks=0x40"             # USB controller quirks
+        "usb-storage.quirks=:u"            # USB storage quirks
+        "amd_pstate=active"                # Prefer active pstate for stability
+        # Additional USB/PCI stability
+        "pcie_aspm=off"                    # Disable PCIe power management (can cause USB issues)
       ];
 
-      initrd.kernelModules = [ "amdgpu" ];
-      kernelModules = [ "amdgpu" "v4l2loopback" ];
+      initrd.kernelModules = [ "amdgpu" "thunderbolt" ];
+      kernelModules = [ "amdgpu" "v4l2loopback" "thunderbolt" "xhci_pci" ];
       extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
       
       extraModprobeConfig = ''
         options v4l2loopback devices=1 video_nr=10 card_label="Virtual Cam" exclusive_caps=1
+        # Disable USB autosuspend at module level
+        options usbcore autosuspend=-1
+        options xhci_hcd quirks=0x40
       '';
     };
 
@@ -86,8 +97,8 @@
     services.displayManager = {
       sddm = {
         enable = true;
-        wayland.enable = true; 
-        enableHidpi = true;
+        wayland.enable = true;
+        # enableHidpi removed - deprecated in NixOS 24.05+
       };
       defaultSession = "plasma"; 
     };
@@ -100,6 +111,31 @@
       package = pkgs.hyprland;
     };
     
+    # Ensure Hyprland finds the system config
+    # Option 1: Symlink /etc/hypr to user config location
+    system.activationScripts.hyprlandConfig = lib.stringAfter [ "users" ] ''
+      # Create hyprland config symlink for user
+      USER_HOME="/home/asher"
+      if [ -d "$USER_HOME" ]; then
+        mkdir -p "$USER_HOME/.config/hypr"
+        chown asher:users "$USER_HOME/.config/hypr"
+        
+        # Symlink system config if user doesn't have their own
+        if [ ! -f "$USER_HOME/.config/hypr/hyprland.conf" ] || [ -L "$USER_HOME/.config/hypr/hyprland.conf" ]; then
+          ln -sf /etc/hypr/hyprland.conf "$USER_HOME/.config/hypr/hyprland.conf"
+          chown -h asher:users "$USER_HOME/.config/hypr/hyprland.conf"
+        fi
+        
+        # Symlink helper scripts
+        for script in lid.sh toggle_clamshell.sh; do
+          if [ -f "/etc/hypr/$script" ]; then
+            ln -sf "/etc/hypr/$script" "$USER_HOME/.config/hypr/$script"
+            chown -h asher:users "$USER_HOME/.config/hypr/$script"
+          fi
+        done
+      fi
+    '';
+    
     services.demod-ip-blocker = {
       enable = true;
       updateInterval = "24h";
@@ -109,14 +145,28 @@
 
     xdg.portal = {
       enable = true;
-      extraPortals = [ pkgs.xdg-desktop-portal-gtk ];
-      config.common.default = "*";
+      extraPortals = [ 
+        pkgs.xdg-desktop-portal-gtk 
+        pkgs.xdg-desktop-portal-hyprland
+        pkgs.kdePackages.xdg-desktop-portal-kde
+      ];
+      # Portal config per desktop
+      config = {
+        common.default = [ "gtk" ];
+        hyprland.default = [ "hyprland" "gtk" ];
+        kde.default = [ "kde" "gtk" ];
+      };
     };
 
     # Networking
     networking = {
       hostName = "nixos";
-      networkmanager.enable = true;
+      networkmanager = {
+        enable = true;
+        wifi.powersave = false;  # Disable WiFi power saving for stability
+      };
+      # Ensure DNS works during rebuild
+      nameservers = [ "1.1.1.1" "8.8.8.8" ];
     };
 
     # Hardware
@@ -131,20 +181,23 @@
       graphics = {
         enable = true;
         enable32Bit = true;
-        package = pkgs.mesa;
+        # Removed invalid 'package = pkgs.mesa' - Mesa is managed automatically
         
         extraPackages = with pkgs; [
-          amdvlk
-          vaapiVdpau
+          # Package renames for 25.11:
+          # - amdvlk removed (RADV is default)
+          # - vaapiVdpau → libva-vdpau-driver
+          libva-vdpau-driver
           libvdpau-va-gl
           rocmPackages.clr
           rocmPackages.clr.icd
         ];
-        extraPackages32 = with pkgs.pkgsi686Linux; [ amdvlk ];
+        # Removed extraPackages32 amdvlk - RADV handles 32-bit too
       };
     };
 
-    powerManagement.cpuFreqGovernor = "performance";
+    # Removed cpuFreqGovernor - conflicts with power-profiles-daemon
+    # power-profiles-daemon handles governor switching dynamically
 
     time.timeZone = "America/Los_Angeles";
 
@@ -173,6 +226,30 @@
       power-profiles-daemon.enable = true;
       fwupd.enable = true;
       fprintd.enable = true;
+      
+      # USB stability - disable TLP if enabled elsewhere (conflicts with PPD)
+      tlp.enable = lib.mkForce false;
+      
+      # Aggressive USB autosuspend disable via udev for Framework
+      udev.extraRules = ''
+        # Disable USB autosuspend for ALL devices immediately
+        ACTION=="add", SUBSYSTEM=="usb", ATTR{power/autosuspend}="-1"
+        ACTION=="add", SUBSYSTEM=="usb", ATTR{power/control}="on"
+        ACTION=="add", SUBSYSTEM=="usb", ATTR{power/autosuspend_delay_ms}="-1"
+        
+        # HID devices (mice, keyboards) - never suspend
+        ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", ATTR{power/control}="on"
+        ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", ATTR{power/autosuspend}="-1"
+        
+        # USB hubs - never suspend (Framework uses internal hubs)
+        ACTION=="add", SUBSYSTEM=="usb", ATTR{bDeviceClass}=="09", ATTR{power/control}="on"
+        
+        # Framework-specific USB-C/Thunderbolt stability
+        ACTION=="add", SUBSYSTEM=="thunderbolt", ATTR{authorized}=="0", ATTR{authorized}="1"
+        
+        # Disable runtime PM for USB HID devices
+        ACTION=="add", SUBSYSTEM=="hid", ATTR{power/control}="on"
+      '';
 
       pipewire = {
         enable = true;
@@ -188,12 +265,16 @@
         };
       };
       
-      logind.extraConfig = ''
-        HandleLidSwitch=ignore
-        HandleLidSwitchExternalPower=ignore
-        HandleLidSwitchDocked=ignore
-      '';
+      # Lid switch handling - use new settings format
+      logind.settings.Login = {
+        HandleLidSwitch = "ignore";
+        HandleLidSwitchExternalPower = "ignore";
+        HandleLidSwitchDocked = "ignore";
+      };
     };
+    
+    # Thunderbolt device management (outside services block)
+    services.hardware.bolt.enable = true;
 
     # Security
     security = {
@@ -253,9 +334,10 @@
       vim docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress 
       dmidecode util-linux gparted usbutils
 
-      (python3Full.withPackages (ps: with ps; [
+      (python3.withPackages (ps: with ps; [
         pip virtualenv cryptography pycryptodome grpcio grpcio-tools
-        protobuf numpy matplotlib python-snappy skidl
+        protobuf numpy matplotlib python-snappy tkinter
+        # skidl removed - incompatible with Python 3.13 (depends on 'future')
       ]))
 
       wireshark tcpdump nmap netcat
@@ -271,22 +353,41 @@
 
       dhewm3 darkradiant zandronum
 
-      inputs.minecraft.packages.${pkgs.system}.default
+      inputs.minecraft.packages.${pkgs.stdenv.hostPlatform.system}.default
 
       brave vlc pandoc kdePackages.okular obs-studio firefox thunderbird
+      
+      # OBS Wayland/Plasma 6 compatibility
+      obs-studio-plugins.wlrobs              # Wayland screen capture
+      obs-studio-plugins.obs-pipewire-audio-capture  # PipeWire audio
+      obs-studio-plugins.obs-vaapi           # Hardware encoding
+      obs-studio-plugins.obs-vkcapture       # Vulkan/OpenGL game capture
+      obs-studio-plugins.input-overlay       # Input overlay for streaming
+      kdePackages.xdg-desktop-portal-kde     # KDE screen sharing portal
       
       blueberry legcord font-awesome fastfetch gnugrep kitty wofi waybar 
       hyprpaper brightnessctl zip unzip obsidian
 
       gimp kdePackages.kdenlive inkscape blender libreoffice krita synfigstudio
 
-      xfce.thunar xfce.thunar-volman gvfs udiskie polkit_gnome framework-tool
+      thunar thunar-volman gvfs udiskie polkit_gnome framework-tool
 
       wl-clipboard grim slurp v4l-utils
+      
+      # Hyprland screenshot stack
+      swappy           # Screenshot annotation/editing
+      hyprshot         # Hyprland screenshot wrapper
+      satty            # Modern screenshot annotation tool
+      
+      # KDE/Plasma screenshot + recording
+      kdePackages.spectacle       # KDE screenshot tool
+      gpu-screen-recorder         # Low-overhead GPU recording
+      gpu-screen-recorder-gtk     # GTK frontend for gpu-screen-recorder
 
       mininet
 
-      ollama opencode open-webui alpaca aichat oterm
+      ollama opencode open-webui alpaca aichat
+      # oterm removed - broken dependency (fastmcp requires mcp<1.17.0)
 
       (perl.withPackages (ps: with ps; [ 
         JSON GetoptLong CursesUI ModulePluggable Appcpanminus 
@@ -345,6 +446,13 @@
         bind=SUPER,M,exit
         bind=SUPER,E,exec,thunar
         bind=SUPER,Space,exec,wofi --show drun
+        
+        # Screenshot bindings
+        bind=,Print,exec,hyprshot -m output                    # Full screen
+        bind=SUPER,Print,exec,hyprshot -m window               # Active window
+        bind=SUPER SHIFT,Print,exec,hyprshot -m region         # Select region
+        bind=SUPER ALT,Print,exec,hyprshot -m region --clipboard-only  # Region to clipboard
+        bind=SUPER CTRL,S,exec,grim -g "$(slurp)" - | swappy -f -      # Region with editor
       '';
 
       "hypr/lid.sh" = {
@@ -383,8 +491,12 @@
     environment.sessionVariables = {
       QT_QPA_PLATFORM = "wayland;xcb";
       NIXOS_OZONE_WL = "1";
+      # OBS Wayland support
+      OBS_USE_EGL = "1";
+      QT_QPA_PLATFORMTHEME = "kde";
     };
 
+    # User confirmed running 25.11 (unstable)
     system.stateVersion = "25.11";
   };
 }
