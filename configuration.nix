@@ -18,6 +18,13 @@
     # ENABLE THE NEW MODULE
     services.dcf-tray.enable = true;
 
+    swapDevices = [
+      { device = "/swapfile"; size = 71680; }  # 70 * 1024 MiB
+    ];
+
+    # Reduce swappiness to prevent latency
+    boot.kernel.sysctl."vm.swappiness" = 10;
+
     # Package management
     nixpkgs = {
       overlays = [
@@ -34,7 +41,7 @@
 
     custom.dcfIdentity = {
       enable = true;
-      secretsFile = "/etc/nixos/secrets/dcf-id.env";
+      secretsFile = "/etc/nixos/modules/secrets/dcf-id.env";
     };
 
     # Local AI service
@@ -140,6 +147,7 @@
     powerManagement.cpuFreqGovernor = "performance";
 
     time.timeZone = "America/Los_Angeles";
+
     i18n = {
       defaultLocale = "en_US.UTF-8";
       extraLocaleSettings = {
@@ -204,6 +212,7 @@
 
     # Virtualization
     virtualisation.docker.enable = true;
+
     programs.wireshark.enable = true;
 
     # User configuration
