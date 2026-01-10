@@ -54,7 +54,7 @@
     };
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Package Overlays — Fixed deprecation warning by using stdenv.hostPlatform.system
+    # Package Overlays
     # ──────────────────────────────────────────────────────────────────────────
     nixpkgs.overlays = [
       (final: prev: {
@@ -151,14 +151,14 @@
         pkgs.kdePackages.xdg-desktop-portal-kde
       ];
       config = {
-        common.default = [ "kde" "gtk" ];
+        common.default = [ "kde" "gtk" ];  # Strong KDE preference for OBS/Plasma compatibility
         hyprland.default = [ "hyprland" "gtk" ];
         kde.default = [ "kde" "gtk" ];
       };
     };
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Networking
+    # Networking — iwd backend
     # ──────────────────────────────────────────────────────────────────────────
     networking = {
       hostName = "nixos";
@@ -167,7 +167,7 @@
         enable = true;
         
         wifi = {
-          backend = "wpa_supplicant";
+          backend = "iwd";
           powersave = false;
           scanRandMacAddress = false;
         };
@@ -199,9 +199,10 @@
       };
 
       useDHCP = lib.mkDefault false;
-      wireless.enable = lib.mkForce false;
     };
     
+    wireless.iwd.enable = true;
+
     services.resolved = {
       enable = true;
       dnssec = "allow-downgrade";
@@ -572,10 +573,10 @@
       dhewm3 darkradiant zandronum
       inputs.minecraft.packages.${pkgs.stdenv.hostPlatform.system}.default
 
-      # Desktop applications — Brave forced to use GNOME Keyring (avoids KDE Wallet prompt), Floorp via floorp-bin (source build deprecated)
+      # Brave: Force basic password store — eliminates KDE Wallet prompt entirely (plain-text storage, no encryption)
       ((brave.overrideAttrs (old: {
         postFixup = (old.postFixup or "") + ''
-          sed -i '/Exec=/ s|$| --password-store=gnome|' $out/share/applications/*.desktop
+          sed -i '/Exec=/ s|$| --password-store=basic|' $out/share/applications/*.desktop
         '';
       })))
       vlc pandoc kdePackages.okular obs-studio unstable.floorp-bin thunderbird
@@ -625,7 +626,7 @@
     ];
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Environment
+    # Environment — Added XDG_CURRENT_DESKTOP for better portal/wallet detection on Plasma
     # ──────────────────────────────────────────────────────────────────────────
     environment.etc."jack/conf.xml".text = ''
       <?xml version="1.0"?>
@@ -642,6 +643,7 @@
       NIXOS_OZONE_WL = "1";
       OBS_USE_EGL = "1";
       QT_QPA_PLATFORMTHEME = "kde";
+      XDG_CURRENT_DESKTOP = "KDE";  # Critical for proper KDE portal usage in OBS and other apps
     };
 
     # ──────────────────────────────────────────────────────────────────────────
