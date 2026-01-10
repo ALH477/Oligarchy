@@ -33,7 +33,7 @@ The war machine has evolved. As of January 2026, Oligarchy NixOS is fully govern
 
 **DeMoD IP Blocker still active · DCF tray auto-starts · DSP now optional but unstoppable when armed**
 
-![Oligarchy + ArchibaldOS-DSP](https://repository-images.githubusercontent.com/1072001868/8b510033-8549-4c89-995d-d40f79680900)
+![Oligarchy + ArchibaldOS-DSP](/assets/wallpaper.jpg)
 
 [ISO download](https://archive.org/details/oligarchy) · [Live demo (YouTube)](https://youtube.com/@demodllc) ·
 
