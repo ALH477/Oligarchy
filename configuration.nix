@@ -14,14 +14,12 @@
     # DCF Stack Configuration
     # ──────────────────────────────────────────────────────────────────────────
     
-    # Community Node - Set your actual node ID
     custom.dcfCommunityNode = {
       enable = true;
-      nodeId = "alh477";  # Your actual node ID
+      nodeId = "alh477";
       openFirewall = true;
     };
     
-    # Identity Service - Enable for production
     custom.dcfIdentity = {
       enable = true;
       domain = "dcf.demod.ltd";
@@ -30,7 +28,6 @@
       secretsFile = "/etc/nixos/secrets/dcf-id.env";
     };
     
-    # System Tray Controller
     services.dcf-tray.enable = true;
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -38,16 +35,16 @@
     # ──────────────────────────────────────────────────────────────────────────
     services.ollamaAgentic = {
       enable = true;
-      preset = "pewdiepie";  # High-performance preset
+      preset = "pewdiepie";
       acceleration = "rocm";
-      advanced.rocm.gfxVersionOverride = "11.0.2";  # RDNA3
+      advanced.rocm.gfxVersionOverride = "11.0.2";
     };
 
     # ──────────────────────────────────────────────────────────────────────────
     # Memory Configuration
     # ──────────────────────────────────────────────────────────────────────────
     swapDevices = [
-      { device = "/swapfile"; size = 71680; }  # 70 GiB
+      { device = "/swapfile"; size = 71680; }
     ];
     
     boot.kernel.sysctl = {
@@ -57,12 +54,12 @@
     };
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Package Overlays
+    # Package Overlays — Fixed deprecation warning by using stdenv.hostPlatform.system
     # ──────────────────────────────────────────────────────────────────────────
     nixpkgs.overlays = [
       (final: prev: {
         unstable = import nixpkgs-unstable {
-          system = prev.system;
+          system = prev.stdenv.hostPlatform.system;
           config.allowUnfree = true;
         };
       })
@@ -85,7 +82,6 @@
     # Boot Configuration
     # ──────────────────────────────────────────────────────────────────────────
     boot = {
-      # Cross-compilation support
       binfmt.emulatedSystems = [ "aarch64-linux" ];
       
       loader = {
@@ -94,21 +90,14 @@
       };
       
       kernelParams = [
-        # AMD GPU
         "amdgpu.abmlevel=0"
         "amdgpu.sg_display=0"
         "amdgpu.exp_hw_support=1"
-        
-        # USB stability for Framework 16
         "usbcore.autosuspend=-1"
         "usbcore.use_both_schemes=y"
         "xhci_hcd.quirks=0x40"
         "usb-storage.quirks=:u"
-        
-        # CPU power management
         "amd_pstate=active"
-        
-        # PCIe stability
         "pcie_aspm=off"
       ];
       
@@ -134,7 +123,7 @@
     # ──────────────────────────────────────────────────────────────────────────
     # Display & Desktop Environment
     # ──────────────────────────────────────────────────────────────────────────
-    services.xserver.enable = false;  # Wayland only
+    services.xserver.enable = false;
     
     services.displayManager = {
       sddm = {
@@ -154,7 +143,6 @@
     
     systemd.defaultUnit = lib.mkForce "graphical.target";
     
-    # XDG Portals — Prefer KDE portal for better OBS/Plasma 6 Wayland compatibility
     xdg.portal = {
       enable = true;
       extraPortals = [
@@ -163,7 +151,7 @@
         pkgs.kdePackages.xdg-desktop-portal-kde
       ];
       config = {
-        common.default = [ "kde" "gtk" ];  # Prefer KDE portal globally (fixes OBS screen/window capture on Plasma)
+        common.default = [ "kde" "gtk" ];
         hyprland.default = [ "hyprland" "gtk" ];
         kde.default = [ "kde" "gtk" ];
       };
@@ -201,13 +189,8 @@
         enable = true;
         allowPing = true;
         
-        allowedTCPPorts = [ 
-          22
-          443
-        ];
-        allowedUDPPorts = [
-          5353
-        ];
+        allowedTCPPorts = [ 22 443 ];
+        allowedUDPPorts = [ 5353 ];
         
         trustedInterfaces = [ "docker0" "br-+" ];
         
@@ -312,10 +295,7 @@
     services = {
       dbus = {
         enable = true;
-        packages = with pkgs; [ 
-          dconf 
-          gcr
-        ];
+        packages = with pkgs; [ dconf gcr ];
       };
       
       libinput.enable = true;
@@ -327,12 +307,7 @@
       
       printing = {
         enable = true;
-        drivers = with pkgs; [ 
-          gutenprint 
-          gutenprintBin 
-          hplip 
-          brlaser 
-        ];
+        drivers = with pkgs; [ gutenprint gutenprintBin hplip brlaser ];
       };
       
       avahi = {
@@ -399,9 +374,7 @@
           extraConfig = {
             "10-disable-camera" = {
               "wireplumber.profiles" = {
-                main = {
-                  "monitor.libcamera" = "disabled";
-                };
+                main = { "monitor.libcamera" = "disabled"; };
               };
             };
           };
@@ -460,20 +433,10 @@
       
       pam = {
         services = {
-          login = {
-            fprintAuth = true;
-            enableGnomeKeyring = true;
-          };
-          sudo = {
-            fprintAuth = true;
-          };
-          sddm = {
-            enableGnomeKeyring = true;
-          };
-          hyprlock = {
-            fprintAuth = true;
-            enableGnomeKeyring = true;
-          };
+          login = { fprintAuth = true; enableGnomeKeyring = true; };
+          sudo = { fprintAuth = true; };
+          sddm = { enableGnomeKeyring = true; };
+          hyprlock = { fprintAuth = true; enableGnomeKeyring = true; };
         };
         
         loginLimits = [
@@ -595,14 +558,7 @@
       ]))
 
       wireshark tcpdump nmap netcat
-      inetutils
-      dnsutils
-      whois
-      iperf3
-      mtr
-      ethtool
-      wavemon
-      networkmanagerapplet
+      inetutils dnsutils whois iperf3 mtr ethtool wavemon networkmanagerapplet
 
       cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy protobuf
 
@@ -616,7 +572,7 @@
       dhewm3 darkradiant zandronum
       inputs.minecraft.packages.${pkgs.stdenv.hostPlatform.system}.default
 
-      # Desktop applications — Brave forced to use GNOME Keyring, Firefox replaced with Floorp-bin (floorp source build is deprecated)
+      # Desktop applications — Brave forced to use GNOME Keyring (avoids KDE Wallet prompt), Floorp via floorp-bin (source build deprecated)
       ((brave.overrideAttrs (old: {
         postFixup = (old.postFixup or "") + ''
           sed -i '/Exec=/ s|$| --password-store=gnome|' $out/share/applications/*.desktop
@@ -639,14 +595,7 @@
       thunar thunar-volman gvfs udiskie polkit_gnome framework-tool
 
       wl-clipboard grim slurp v4l-utils
-      cliphist
-      hyprpicker
-      wlogout
-      playerctl
-      jq
-      hyprlock
-      hypridle
-      libnotify
+      cliphist hyprpicker wlogout playerctl jq hyprlock hypridle libnotify
 
       swappy hyprshot satty
 
