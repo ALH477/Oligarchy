@@ -167,7 +167,7 @@
         enable = true;
         
         wifi = {
-          backend = "iwd";
+          backend = "wpa_supplicant";
           powersave = false;
           scanRandMacAddress = false;
         };
@@ -201,7 +201,7 @@
       useDHCP = lib.mkDefault false;
 
       # Correct path for iwd enablement (required for NetworkManager iwd backend)
-      wireless.iwd.enable = true;
+      wireless.enable = true;
     };
 
     services.resolved = {
