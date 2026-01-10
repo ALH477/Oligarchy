@@ -151,14 +151,14 @@
         pkgs.kdePackages.xdg-desktop-portal-kde
       ];
       config = {
-        common.default = [ "kde" "gtk" ];  # Strong KDE preference for OBS/Plasma compatibility
+        common.default = [ "kde" "gtk" ];
         hyprland.default = [ "hyprland" "gtk" ];
         kde.default = [ "kde" "gtk" ];
       };
     };
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Networking — iwd backend
+    # Networking — iwd backend (corrected wireless option path)
     # ──────────────────────────────────────────────────────────────────────────
     networking = {
       hostName = "nixos";
@@ -199,9 +199,10 @@
       };
 
       useDHCP = lib.mkDefault false;
+
+      # Correct path for iwd enablement (required for NetworkManager iwd backend)
+      wireless.iwd.enable = true;
     };
-    
-    wireless.iwd.enable = true;
 
     services.resolved = {
       enable = true;
@@ -573,7 +574,6 @@
       dhewm3 darkradiant zandronum
       inputs.minecraft.packages.${pkgs.stdenv.hostPlatform.system}.default
 
-      # Brave: Force basic password store — eliminates KDE Wallet prompt entirely (plain-text storage, no encryption)
       ((brave.overrideAttrs (old: {
         postFixup = (old.postFixup or "") + ''
           sed -i '/Exec=/ s|$| --password-store=basic|' $out/share/applications/*.desktop
@@ -626,7 +626,7 @@
     ];
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Environment — Added XDG_CURRENT_DESKTOP for better portal/wallet detection on Plasma
+    # Environment
     # ──────────────────────────────────────────────────────────────────────────
     environment.etc."jack/conf.xml".text = ''
       <?xml version="1.0"?>
@@ -643,7 +643,7 @@
       NIXOS_OZONE_WL = "1";
       OBS_USE_EGL = "1";
       QT_QPA_PLATFORMTHEME = "kde";
-      XDG_CURRENT_DESKTOP = "KDE";  # Critical for proper KDE portal usage in OBS and other apps
+      XDG_CURRENT_DESKTOP = "KDE";
     };
 
     # ──────────────────────────────────────────────────────────────────────────
