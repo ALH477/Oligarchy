@@ -2,7 +2,7 @@
 
 {
   # ============================================================================
-  # NixOS Production Configuration — Framework 16 AMD
+  # NixOS Production Configuration — Framework 16 AMD - Oligarchy
   # ============================================================================
 
   options = {
