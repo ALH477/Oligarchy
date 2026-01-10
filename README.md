@@ -2,7 +2,7 @@
 
 **Framework 16 Optimized · AMD 7040 · NVIDIA · Hyprland · Plasma 6 · Cinnamon · CachyOS kernel · ~5–7 W idle · Nuclear-grade DSP coprocessor · Calamares Install · DeMoD Branded Fortress · DCF Compute Fabric**
 
-![logo](untitled.jpg)
+![logo](Untitled.jpg)
 
 Oligarchy NixOS isn’t some boring distro hack.  
 It’s the **first personal OS in history** to unleash a **self-healing, real-time DSP coprocessor** that obliterates latency with **~0.38–0.58 ms round-trip** — forged straight from the same flake that rules your host.  
