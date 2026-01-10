@@ -156,7 +156,7 @@
     
     systemd.defaultUnit = lib.mkForce "graphical.target";
     
-    # XDG Portals
+    # XDG Portals — Prefer KDE portal for better OBS/Plasma 6 Wayland compatibility
     xdg.portal = {
       enable = true;
       extraPortals = [
@@ -165,7 +165,7 @@
         pkgs.kdePackages.xdg-desktop-portal-kde
       ];
       config = {
-        common.default = [ "gtk" ];
+        common.default = [ "kde" "gtk" ];  # Prefer KDE portal globally (fixes OBS screen/window capture on Plasma)
         hyprland.default = [ "hyprland" "gtk" ];
         kde.default = [ "kde" "gtk" ];
       };
@@ -682,8 +682,14 @@
       dhewm3 darkradiant zandronum
       inputs.minecraft.packages.${pkgs.stdenv.hostPlatform.system}.default
 
-      # Desktop applications
-      brave vlc pandoc kdePackages.okular obs-studio firefox thunderbird
+      # Desktop applications — Brave forced to use GNOME Keyring, Firefox replaced with Floorp
+      # Brave override: appends --password-store=gnome to .desktop files to prevent KDE Wallet prompts
+      ((brave.overrideAttrs (old: {
+        postFixup = (old.postFixup or "") + ''
+          sed -i '/Exec=/ s|$| --password-store=gnome|' $out/share/applications/*.desktop
+        '';
+      })))
+      vlc pandoc kdePackages.okular obs-studio unstable.floorp thunderbird
 
       # OBS plugins for Wayland/Plasma 6
       obs-studio-plugins.wlrobs
