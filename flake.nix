@@ -1,27 +1,41 @@
 {
-  description = "Determinate NixOS Setup for R&D – Framework 16 AMD with CachyOS BORE kernel";
+  description = "Production NixOS – Framework 16 AMD with CachyOS/Zen kernel, DCF Stack, and DSP VM";
 
   inputs = {
-    # Using unstable for 25.11
+    # Core nixpkgs - using unstable for 25.11
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
+    
+    # Determinate Systems enhancements
     determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/*";
+    
+    # Hardware support
     nixos-hardware.url = "github:NixOS/nixos-hardware";
+    
+    # Framework fan control
     fw-fanctrl.url = "github:TamtamHero/fw-fanctrl/packaging/nix";
+    
+    # Custom modules
     demod-ip-blocker.url = "git+https://github.com/ALH477/DeMoD-IP-Blocker.git";
     minecraft.url = "github:ALH477/NixOS-MineCraft";
-    # linux-cachyos input disabled - kernel 6.18.3 build fails with amdgpu
-    # Re-enable when CachyOS patches are updated for 6.18 compatibility
-    # linux-cachyos = {
-    #   url = "github:CachyOS/linux-cachyos";
-    #   flake = false;
-    # };
+    
+    # Home Manager for user-level configuration
+    home-manager = {
+      url = "github:nix-community/home-manager";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    
+    # ISO generation
     nixos-generators = {
       url = "github:nix-community/nixos-generators";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # Add if using archibaldos-dsp-vm module:
-    # archibaldos.url = "github:YOUR_ORG/archibaldos";
+    
+    # ArchibaldOS DSP coprocessor (uncomment when available)
+    # archibaldos = {
+    #   url = "github:YOUR_ORG/archibaldos";
+    #   inputs.nixpkgs.follows = "nixpkgs";
+    # };
   };
 
   outputs = {
@@ -33,108 +47,157 @@
     fw-fanctrl,
     demod-ip-blocker,
     minecraft,
-    # linux-cachyos,  # Disabled
+    home-manager,
     nixos-generators,
+    # archibaldos,
     ...
   } @ inputs:
 
   let
     system = "x86_64-linux";
-    # This pkgs instance is used ONLY for the ISO generator
+    
+    # Shared pkgs configuration
+    pkgsConfig = {
+      allowUnfree = true;
+      allowBroken = true;
+      permittedInsecurePackages = [];
+    };
+    
+    # Evaluation pkgs for ISO generation
     pkgs = import nixpkgs {
       inherit system;
-      config = {
-        allowUnfree = true;
-        allowBroken = true;
-      };
+      config = pkgsConfig;
     };
+    
+    # Common specialArgs passed to all modules
+    specialArgs = { 
+      inherit inputs nixpkgs-unstable; 
+      # Uncomment when archibaldos is available:
+      # inherit archibaldos;
+    };
+    
   in {
-    # ──────────────────────────────────────────────────────────────
-    # Main installed system configuration (nixos-rebuild switch)
-    # ──────────────────────────────────────────────────────────────
+    # ════════════════════════════════════════════════════════════════════════
+    # Main System Configuration
+    # ════════════════════════════════════════════════════════════════════════
     nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
-      inherit system;
-      specialArgs = { inherit inputs nixpkgs-unstable; };
+      inherit system specialArgs;
+      
       modules = [
-        # FIX: Explicitly allow unfree/broken packages for the main system here
-        { 
-          nixpkgs.config = {
-            allowUnfree = true;
-            allowBroken = true;
-          };
-        }
+        # Package configuration
+        { nixpkgs.config = pkgsConfig; }
         
+        # Third-party modules
         determinate.nixosModules.default
         nixos-hardware.nixosModules.framework-16-7040-amd
         fw-fanctrl.nixosModules.default
         demod-ip-blocker.nixosModules.default
+        
+        # Home Manager integration
+        home-manager.nixosModules.home-manager
+        {
+          home-manager = {
+            useGlobalPkgs = true;
+            useUserPackages = true;
+            backupFileExtension = "hm-backup";
+            users.asher = import ./home/asher.nix;
+            extraSpecialArgs = specialArgs;
+          };
+        }
+        
+        # Local modules
         ./configuration.nix
+        ./modules/hardware-configuration.nix
+        ./modules/kernel.nix
+        ./modules/agentic-local-ai.nix
+        ./modules/dcf-community-node.nix
+        ./modules/dcf-identity.nix
+        ./modules/dcf-tray.nix
+        # Uncomment when archibaldos input is available:
+        # ./modules/archibaldos-dsp-vm.nix
       ];
     };
 
-    # ──────────────────────────────────────────────────────────────
-    # Custom bootable installation ISO
-    # ──────────────────────────────────────────────────────────────
-    packages = {
-      ${system} = {
-        iso = (nixos-generators.nixosGenerate {
-          inherit pkgs; # Uses the pre-configured pkgs from above
-          format = "install-iso";
-
-          specialArgs = { 
-            inputs = builtins.removeAttrs inputs [ "self" ]; 
-            inherit nixpkgs-unstable; 
-          };
-
-          modules = [
-            determinate.nixosModules.default
-            nixos-hardware.nixosModules.framework-16-7040-amd
-            fw-fanctrl.nixosModules.default
-            demod-ip-blocker.nixosModules.default
-            ./configuration.nix
+    # ════════════════════════════════════════════════════════════════════════
+    # Installation ISO
+    # ════════════════════════════════════════════════════════════════════════
+    packages.${system} = {
+      iso = nixos-generators.nixosGenerate {
+        inherit pkgs;
+        format = "install-iso";
+        specialArgs = builtins.removeAttrs specialArgs [ "archibaldos" ];
+        
+        modules = [
+          determinate.nixosModules.default
+          nixos-hardware.nixosModules.framework-16-7040-amd
+          fw-fanctrl.nixosModules.default
+          demod-ip-blocker.nixosModules.default
+          ./configuration.nix
+          ./modules/hardware-configuration.nix
+          ./modules/kernel.nix
+          
+          "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-plasma6.nix"
+          
+          ({ lib, ... }: {
+            # ISO-specific overrides
+            services.displayManager.sddm.enable = lib.mkForce true;
+            services.displayManager.sddm.wayland.enable = lib.mkForce true;
+            services.desktopManager.plasma6.enable = lib.mkForce true;
             
-            # Plasma + Calamares installer
-            "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-plasma6.nix"
+            # Disable production services in ISO
+            services.ollamaAgentic.enable = lib.mkForce false;
+            custom.dcfCommunityNode.enable = lib.mkForce false;
+            custom.dcfIdentity.enable = lib.mkForce false;
+            services.dcf-tray.enable = lib.mkForce false;
             
-            {
-              # ISO-specific overrides
-              services.displayManager.sddm.enable = nixpkgs.lib.mkForce true;
-              services.displayManager.sddm.wayland.enable = nixpkgs.lib.mkForce true;
-              services.desktopManager.plasma6.enable = nixpkgs.lib.mkForce true;
-
-              boot.supportedFilesystems = pkgs.lib.mkForce [ "btrfs" "reiserfs" "vfat" "f2fs" "xfs" "ntfs" "cifs" ];
-              
-              users.users.nixos = {
-                isNormalUser = true;
-                extraGroups = [ "wheel" "networkmanager" "video" "audio" ];
-                initialPassword = "nixos";
+            boot.supportedFilesystems = lib.mkForce [ 
+              "btrfs" "reiserfs" "vfat" "f2fs" "xfs" "ntfs" "cifs" 
+            ];
+            
+            users.users.nixos = {
+              isNormalUser = true;
+              extraGroups = [ "wheel" "networkmanager" "video" "audio" ];
+              initialPassword = "nixos";
+            };
+            
+            services.getty.autologinUser = "nixos";
+            services.displayManager.autoLogin = {
+              enable = true;
+              user = "nixos";
+            };
+            
+            services.openssh = {
+              enable = true;
+              settings = {
+                PermitRootLogin = "prohibit-password";
+                PasswordAuthentication = true;
               };
-
-              services.getty.autologinUser = "nixos";
-              services.displayManager.autoLogin = {
-                enable = true;
-                user = "nixos";
-              };
-
-              services.openssh = {
-                enable = true;
-                settings = {
-                  PermitRootLogin = "prohibit-password";
-                  PasswordAuthentication = true;
-                };
-              };
-
-              documentation.enable = false;
-              documentation.nixos.enable = false;
-
-              environment.systemPackages = with pkgs; [
-                git vim curl wget htop nvme-cli usbutils pciutils
-              ];
-            }
-          ];
-        });
-        default = self.packages.${system}.iso;
+            };
+            
+            documentation.enable = false;
+            documentation.nixos.enable = false;
+          })
+        ];
       };
+      
+      default = self.packages.${system}.iso;
+    };
+    
+    # ════════════════════════════════════════════════════════════════════════
+    # Development Shell
+    # ════════════════════════════════════════════════════════════════════════
+    devShells.${system}.default = pkgs.mkShell {
+      buildInputs = with pkgs; [
+        nil  # Nix LSP
+        nixpkgs-fmt
+        nix-tree
+        nvd  # NixOS version diff
+      ];
+      
+      shellHook = ''
+        echo "NixOS Development Shell"
+        echo "Commands: nixos-rebuild, nix flake check, nix build .#iso"
+      '';
     };
   };
 }
