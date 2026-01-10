@@ -2,7 +2,7 @@
 
 {
   # ============================================================================
-  # NixOS Production Configuration — Framework 16 AMD - Oligarchy
+  # NixOS Production Configuration — Framework 16 AMD
   # ============================================================================
 
   options = {
@@ -93,8 +93,6 @@
         efi.canTouchEfiVariables = true;
       };
       
-      # Kernel packages set by kernel.nix module
-      
       kernelParams = [
         # AMD GPU
         "amdgpu.abmlevel=0"
@@ -177,73 +175,57 @@
     networking = {
       hostName = "nixos";
       
-      # NetworkManager configuration
       networkmanager = {
         enable = true;
         
-        # WiFi backend - wpa_supplicant is more stable on Framework
         wifi = {
           backend = "wpa_supplicant";
-          powersave = false;  # Disable power saving for stability
-          scanRandMacAddress = false;  # Some APs don't like random MACs
+          powersave = false;
+          scanRandMacAddress = false;
         };
         
-        # DNS configuration - let NetworkManager handle it
         dns = "systemd-resolved";
         
-        # Connection stability settings
         connectionConfig = {
-          "connection.mdns" = 2;  # Enable mDNS
-          "connection.llmnr" = 2; # Enable LLMNR
-          "ipv6.ip6-privacy" = 2; # Prefer temporary addresses
+          "connection.mdns" = 2;
+          "connection.llmnr" = 2;
+          "ipv6.ip6-privacy" = 2;
         };
         
-        # Ethernet settings
         ethernet.macAddress = "preserve";
         
-        # Ensure NetworkManager starts properly
         logLevel = "INFO";
       };
       
-      # Firewall configuration
       firewall = {
         enable = true;
         allowPing = true;
         
-        # Default allowed ports (services add their own)
         allowedTCPPorts = [ 
-          22    # SSH
-          443   # HTTPS
+          22
+          443
         ];
         allowedUDPPorts = [
-          5353  # mDNS
+          5353
         ];
         
-        # Trust Docker bridge
         trustedInterfaces = [ "docker0" "br-+" ];
         
-        # Logging (disable for performance, enable for debugging)
         logReversePathDrops = false;
         logRefusedConnections = false;
       };
-      
-      # Don't use static nameservers - let NetworkManager/resolved handle it
-      # nameservers = [ "1.1.1.1" "8.8.8.8" ];  # Commented out - conflicts with NM
-      
-      # Disable other network management
-      useDHCP = lib.mkDefault false;  # NetworkManager handles this
-      wireless.enable = lib.mkForce false;  # NetworkManager handles WiFi (force to override hardware module)
+
+      useDHCP = lib.mkDefault false;
+      wireless.enable = lib.mkForce false;
     };
     
-    # systemd-resolved for DNS resolution
     services.resolved = {
       enable = true;
       dnssec = "allow-downgrade";
-      domains = [ "~." ];  # Use resolved for all queries
+      domains = [ "~." ];
       fallbackDns = [ "1.1.1.1" "8.8.8.8" "2606:4700:4700::1111" "2001:4860:4860::8888" ];
       dnsovertls = "opportunistic";
       
-      # Extra settings for stability
       extraConfig = ''
         DNSStubListenerExtra=127.0.0.53
         MulticastDNS=yes
@@ -253,7 +235,6 @@
       '';
     };
     
-    # Disable systemd-networkd-wait-online (conflicts with NetworkManager)
     systemd.services.systemd-networkd-wait-online.enable = lib.mkForce false;
     systemd.services.NetworkManager-wait-online = {
       serviceConfig = {
@@ -262,7 +243,6 @@
       };
     };
 
-    # IP Blocker service
     services.demod-ip-blocker = {
       enable = true;
       updateInterval = "24h";
@@ -276,11 +256,10 @@
         enable = true;
         powerOnBoot = true;
         
-        # Better Bluetooth settings
         settings = {
           General = {
             Enable = "Source,Sink,Media,Socket";
-            Experimental = true;  # Enable battery reporting
+            Experimental = true;
             FastConnectable = true;
             JustWorksRepairing = "always";
             MultiProfile = "multiple";
@@ -305,7 +284,6 @@
       };
     };
     
-    # Blueman for Bluetooth GUI management
     services.blueman.enable = true;
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -332,16 +310,14 @@
     # System Services
     # ──────────────────────────────────────────────────────────────────────────
     services = {
-      # D-Bus message bus
       dbus = {
         enable = true;
         packages = with pkgs; [ 
           dconf 
-          gcr  # For secrets/keyring
+          gcr
         ];
       };
       
-      # Input & Hardware
       libinput.enable = true;
       acpid.enable = true;
       udisks2.enable = true;
@@ -349,7 +325,6 @@
       fwupd.enable = true;
       fprintd.enable = true;
       
-      # Printing with drivers
       printing = {
         enable = true;
         drivers = with pkgs; [ 
@@ -360,7 +335,6 @@
         ];
       };
       
-      # Avahi for service discovery (mDNS/DNS-SD)
       avahi = {
         enable = true;
         nssmdns4 = true;
@@ -374,12 +348,10 @@
         };
       };
       
-      # Power management
       power-profiles-daemon.enable = true;
-      tlp.enable = lib.mkForce false;  # Conflicts with PPD
+      tlp.enable = lib.mkForce false;
       thermald.enable = true;
       
-      # UPower for battery management
       upower = {
         enable = true;
         percentageLow = 20;
@@ -388,43 +360,33 @@
         criticalPowerAction = "Hibernate";
       };
       
-      # Thunderbolt
       hardware.bolt.enable = true;
       
-      # Geoclue2 for location services
       geoclue2 = {
         enable = true;
         enableWifi = true;
       };
       
-      # USB stability via udev
       udev = {
         enable = true;
         extraRules = ''
-          # Disable USB autosuspend globally
           ACTION=="add", SUBSYSTEM=="usb", ATTR{power/autosuspend}="-1"
           ACTION=="add", SUBSYSTEM=="usb", ATTR{power/control}="on"
           ACTION=="add", SUBSYSTEM=="usb", ATTR{power/autosuspend_delay_ms}="-1"
           
-          # HID devices - never suspend
           ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", ATTR{power/control}="on"
           ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", ATTR{power/autosuspend}="-1"
           
-          # USB hubs - never suspend
           ACTION=="add", SUBSYSTEM=="usb", ATTR{bDeviceClass}=="09", ATTR{power/control}="on"
           
-          # Thunderbolt auto-authorize
           ACTION=="add", SUBSYSTEM=="thunderbolt", ATTR{authorized}=="0", ATTR{authorized}="1"
           
-          # HID runtime PM
           ACTION=="add", SUBSYSTEM=="hid", ATTR{power/control}="on"
           
-          # Framework specific - internal USB devices
           ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="32ac", ATTR{power/control}="on"
         '';
       };
       
-      # Audio (PipeWire)
       pipewire = {
         enable = true;
         alsa.enable = true;
@@ -432,7 +394,6 @@
         pulse.enable = true;
         jack.enable = true;
         
-        # WirePlumber session manager
         wireplumber = {
           enable = true;
           extraConfig = {
@@ -477,9 +438,7 @@
         };
       };
       
-      # Lid and power key handling
       logind = {
-        # All settings under settings.Login
         settings.Login = {
           HandleLidSwitch = "ignore";
           HandleLidSwitchExternalPower = "ignore";
@@ -499,7 +458,6 @@
       rtkit.enable = true;
       polkit.enable = true;
       
-      # PAM configuration
       pam = {
         services = {
           login = {
@@ -518,7 +476,6 @@
           };
         };
         
-        # Login limits for audio
         loginLimits = [
           { domain = "@audio"; type = "-"; item = "rtprio"; value = "99"; }
           { domain = "@audio"; type = "-"; item = "memlock"; value = "unlimited"; }
@@ -526,27 +483,22 @@
         ];
       };
       
-      # Sudo configuration
       sudo = {
         enable = true;
         wheelNeedsPassword = true;
         extraConfig = ''
-          # Preserve environment for nix commands
           Defaults env_keep += "EDITOR VISUAL"
           Defaults env_keep += "NIX_PATH"
           Defaults env_keep += "SSH_AUTH_SOCK"
           
-          # Longer password timeout
           Defaults timestamp_timeout=30
         '';
       };
     };
     
-    # GNOME Keyring for secrets management
     services.gnome.gnome-keyring.enable = true;
-    programs.seahorse.enable = true;  # GUI for keyring
+    programs.seahorse.enable = true;
 
-    # Firmware update config
     environment.etc."fwupd/fwupd.conf".text = lib.mkForce ''
       [fwupd]
       UpdateOnBoot=true
@@ -557,34 +509,26 @@
     # ──────────────────────────────────────────────────────────────────────────
     virtualisation.docker = {
       enable = true;
-      # Enable on boot since DCF services depend on it
       enableOnBoot = true;
       
-      # Storage driver - overlay2 is recommended
       storageDriver = "overlay2";
       
-      # Auto cleanup
       autoPrune = {
         enable = true;
         dates = "weekly";
         flags = [ "--all" "--volumes" ];
       };
       
-      # Daemon settings
       daemon.settings = {
-        # DNS servers for containers
         dns = [ "1.1.1.1" "8.8.8.8" ];
         
-        # Default address pools for networks
         default-address-pools = [
           { base = "172.17.0.0/16"; size = 24; }
           { base = "172.18.0.0/16"; size = 24; }
         ];
         
-        # Enable live-restore to keep containers running during daemon restart
         live-restore = true;
         
-        # Logging
         log-driver = "json-file";
         log-opts = {
           max-size = "10m";
@@ -592,11 +536,9 @@
         };
       };
       
-      # Root dir
-      rootless.enable = false;  # Use normal Docker for DCF
+      rootless.enable = false;
     };
     
-    # Ensure Docker socket is available
     systemd.sockets.docker = {
       wantedBy = [ "sockets.target" ];
     };
@@ -644,54 +586,44 @@
     # System Packages
     # ──────────────────────────────────────────────────────────────────────────
     environment.systemPackages = with pkgs; [
-      # System utilities
       vim docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress
       dmidecode util-linux gparted usbutils
 
-      # Python development
       (python3.withPackages (ps: with ps; [
         pip virtualenv cryptography pycryptodome grpcio grpcio-tools
         protobuf numpy matplotlib python-snappy tkinter
       ]))
 
-      # Network tools
       wireshark tcpdump nmap netcat
-      inetutils  # ping, traceroute, etc.
-      dnsutils   # dig, nslookup
+      inetutils
+      dnsutils
       whois
-      iperf3     # Network speed testing
-      mtr        # Network diagnostics
-      ethtool    # Ethernet diagnostics
-      wavemon    # WiFi monitoring
-      networkmanagerapplet  # NM tray icon for non-KDE
+      iperf3
+      mtr
+      ethtool
+      wavemon
+      networkmanagerapplet
 
-      # Development toolchains
       cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy protobuf
 
-      # Audio production
       ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio
       pkgsi686Linux.libpulseaudio pavucontrol guitarix faust faustlive
 
-      # Virtualization
       qemu virt-manager docker-compose docker-buildx
 
-      # Graphics tools
       vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
 
-      # Games (id Software engines)
       dhewm3 darkradiant zandronum
       inputs.minecraft.packages.${pkgs.stdenv.hostPlatform.system}.default
 
-      # Desktop applications — Brave forced to use GNOME Keyring, Firefox replaced with Floorp
-      # Brave override: appends --password-store=gnome to .desktop files to prevent KDE Wallet prompts
+      # Desktop applications — Brave forced to use GNOME Keyring, Firefox replaced with Floorp-bin (floorp source build is deprecated)
       ((brave.overrideAttrs (old: {
         postFixup = (old.postFixup or "") + ''
           sed -i '/Exec=/ s|$| --password-store=gnome|' $out/share/applications/*.desktop
         '';
       })))
-      vlc pandoc kdePackages.okular obs-studio unstable.floorp thunderbird
+      vlc pandoc kdePackages.okular obs-studio unstable.floorp-bin thunderbird
 
-      # OBS plugins for Wayland/Plasma 6
       obs-studio-plugins.wlrobs
       obs-studio-plugins.obs-pipewire-audio-capture
       obs-studio-plugins.obs-vaapi
@@ -699,57 +631,45 @@
       obs-studio-plugins.input-overlay
       kdePackages.xdg-desktop-portal-kde
 
-      # Desktop customization
       blueberry legcord font-awesome fastfetch gnugrep kitty wofi waybar
       hyprpaper brightnessctl zip unzip obsidian
 
-      # Creative apps
       gimp kdePackages.kdenlive inkscape blender libreoffice krita synfigstudio
 
-      # File management
       thunar thunar-volman gvfs udiskie polkit_gnome framework-tool
 
-      # Wayland utilities
       wl-clipboard grim slurp v4l-utils
-      cliphist      # Clipboard history
-      hyprpicker    # Color picker
-      wlogout       # Logout menu
-      playerctl     # Media player control
-      jq            # JSON parsing for scripts
-      hyprlock      # Lock screen
-      hypridle      # Idle management
-      libnotify     # Desktop notifications (for toggle scripts)
+      cliphist
+      hyprpicker
+      wlogout
+      playerctl
+      jq
+      hyprlock
+      hypridle
+      libnotify
 
-      # Screenshots (Hyprland)
       swappy hyprshot satty
 
-      # Screenshots (KDE)
       kdePackages.spectacle
       gpu-screen-recorder
       gpu-screen-recorder-gtk
 
-      # Networking research
       mininet
 
-      # AI tools
       ollama opencode open-webui alpaca aichat
 
-      # Perl development
       (perl.withPackages (ps: with ps; [
         JSON GetoptLong CursesUI ModulePluggable Appcpanminus
       ]))
 
-      # Common Lisp development
       (sbcl.withPackages (ps: with ps; [
         cffi cl-ppcre cl-json cl-csv usocket bordeaux-threads log4cl
         trivial-backtrace cl-store hunchensocket fiveam cl-dot cserial-port
       ]))
 
-      # Hardware/embedded development
       libserialport can-utils lksctp-tools cjson ncurses libuuid
       kicad graphviz mako openscad freecad
 
-      # USB boot tools
       unetbootin popsicle gnome-disk-utility
     ] ++ lib.optionals config.custom.steam.enable [
       steam steam-run linuxConsoleTools lutris wineWowPackages.stable
