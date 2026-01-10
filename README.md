@@ -54,6 +54,8 @@ The war machine has evolved. As of January 2026, Oligarchy NixOS is fully govern
 
 You now wield **Abbey Road monitoring latency**, local agentic AI supremacy, and DCF real-time fabric on a laptop that annihilates games at max settings. Bow down.
 
+<img width="1275" height="945" alt="image" src="https://github.com/user-attachments/assets/d5979fa2-b93a-46b3-8d05-308d898e52ca" />
+
 ## DeMoD Branded Fortress
 
 The entire desktop is now a DeMoD war room:
