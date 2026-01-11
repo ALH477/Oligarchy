@@ -158,7 +158,7 @@
     };
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Networking — iwd backend (corrected wireless option path)
+    # Networking — wpa_supplicant + wireless.enable true
     # ──────────────────────────────────────────────────────────────────────────
     networking = {
       hostName = "nixos";
@@ -199,8 +199,6 @@
       };
 
       useDHCP = lib.mkDefault false;
-
-      # Correct path for iwd enablement (required for NetworkManager iwd backend)
       wireless.enable = true;
     };
 
@@ -231,6 +229,60 @@
     services.demod-ip-blocker = {
       enable = true;
       updateInterval = "24h";
+    };
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Audio — Clean PipeWire with fixed quantum low-latency tweaks
+    # ──────────────────────────────────────────────────────────────────────────
+    hardware.pulseaudio.enable = false;
+
+    services.pipewire = {
+      enable = true;
+      alsa.enable = true;
+      alsa.support32Bit = true;
+      pulse.enable = true;
+      jack.enable = true;
+      
+      wireplumber = {
+        enable = true;
+        extraConfig = {
+          "10-disable-camera" = {
+            "wireplumber.profiles" = {
+              main = { "monitor.libcamera" = "disabled"; };
+            };
+          };
+        };
+      };
+      
+      extraConfig = {
+        pipewire."92-low-latency" = {
+          "context.properties" = {
+            "default.clock.rate" = 48000;
+            "default.clock.quantum" = 1024;
+            "default.clock.min-quantum" = 1024;
+            "default.clock.max-quantum" = 1024;
+          };
+        };
+        
+        pipewire-pulse."92-low-latency" = {
+          "context.modules" = [
+            {
+              name = "libpipewire-module-protocol-pulse";
+              args = {
+                "pulse.min.req" = "1024/48000";
+                "pulse.default.req" = "1024/48000";
+                "pulse.max.req" = "1024/48000";
+                "pulse.min.quantum" = "1024/48000";
+                "pulse.max.quantum" = "1024/48000";
+              };
+            }
+          ];
+          "stream.properties" = {
+            "node.latency" = "1024/48000";
+            "resample.quality" = 4;
+          };
+        };
+      };
     };
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -364,55 +416,6 @@
         '';
       };
       
-      pipewire = {
-        enable = true;
-        alsa.enable = true;
-        alsa.support32Bit = true;
-        pulse.enable = true;
-        jack.enable = true;
-        
-        wireplumber = {
-          enable = true;
-          extraConfig = {
-            "10-disable-camera" = {
-              "wireplumber.profiles" = {
-                main = { "monitor.libcamera" = "disabled"; };
-              };
-            };
-          };
-        };
-        
-        extraConfig = {
-          pipewire."92-low-latency" = {
-            "context.properties" = {
-              "default.clock.rate" = 48000;
-              "default.clock.quantum" = 1024;
-              "default.clock.min-quantum" = 512;
-              "default.clock.max-quantum" = 2048;
-            };
-          };
-          
-          pipewire-pulse."92-low-latency" = {
-            "context.modules" = [
-              {
-                name = "libpipewire-module-protocol-pulse";
-                args = {
-                  "pulse.min.req" = "1024/48000";
-                  "pulse.default.req" = "1024/48000";
-                  "pulse.max.req" = "2048/48000";
-                  "pulse.min.quantum" = "1024/48000";
-                  "pulse.max.quantum" = "2048/48000";
-                };
-              }
-            ];
-            "stream.properties" = {
-              "node.latency" = "1024/48000";
-              "resample.quality" = 4;
-            };
-          };
-        };
-      };
-      
       logind = {
         settings.Login = {
           HandleLidSwitch = "ignore";
@@ -511,7 +514,7 @@
     programs.wireshark.enable = true;
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Users
+    # Users — Fixed syntax error (removed duplicate ", bash")
     # ──────────────────────────────────────────────────────────────────────────
     users.users.asher = {
       isNormalUser = true;
@@ -565,7 +568,7 @@
       cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy protobuf
 
       ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio
-      pkgsi686Linux.libpulseaudio pavucontrol guitarix faust faustlive
+      pkgsi686Linux.libpulseaudio pavucontrol guitarix faust faustlive easyeffects
 
       qemu virt-manager docker-compose docker-buildx
 
