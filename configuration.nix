@@ -66,6 +66,29 @@
           config.allowUnfree = true;
         };
       })
+
+      # ────────────────────────────────────────────────────────────────────────
+      # FIX: Downgrade python mcp to 1.16.0 to satisfy fastmcp-2.12.5 constraint
+      #      (mcp < 1.17.0 required, but nixpkgs has 1.25.0)
+      # ────────────────────────────────────────────────────────────────────────
+      (final: prev: {
+        pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
+          (pythonFinal: pythonPrev: {
+            mcp = pythonPrev.mcp.overridePythonAttrs (oldAttrs: rec {
+              version = "1.16.0";
+
+              src = pythonFinal.fetchPypi {
+                pname = "mcp";
+                inherit version;
+                hash = "sha256-39b8ca25460c578ee2cdad33feeea122694cfdf73eef58bee76c42f6ef0589df";
+              };
+
+              # Optional: disable checks if they fail due to downgraded deps
+              # doCheck = false;
+            });
+          })
+        ];
+      })
     ];
 
     # ──────────────────────────────────────────────────────────────────────────
