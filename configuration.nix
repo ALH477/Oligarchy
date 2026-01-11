@@ -68,22 +68,24 @@
       })
 
       # ────────────────────────────────────────────────────────────────────────
-      # FIX: Downgrade python mcp to 1.16.0 to satisfy fastmcp-2.12.5 constraint
-      #      (mcp < 1.17.0 required, but nixpkgs has 1.25.0)
+      # FIX: Bump fastmcp to 2.14.2 (latest as of Jan 2026) to support current mcp 1.25.0
+      #      This resolves the <1.17.0 constraint violation in old fastmcp 2.12.5
+      #      (nixpkgs issue #476673)
       # ────────────────────────────────────────────────────────────────────────
       (final: prev: {
         pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
           (pythonFinal: pythonPrev: {
-            mcp = pythonPrev.mcp.overridePythonAttrs (oldAttrs: rec {
-              version = "1.16.0";
+            fastmcp = pythonPrev.fastmcp.overridePythonAttrs (oldAttrs: rec {
+              version = "2.14.2";
 
               src = pythonFinal.fetchPypi {
-                pname = "mcp";
+                pname = "fastmcp";
                 inherit version;
-                hash = "sha256-39b8ca25460c578ee2cdad33feeea122694cfdf73eef58bee76c42f6ef0589df";
+                # Placeholder — run rebuild once, copy the "got" hash from error, paste here
+                hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
               };
 
-              # Optional: disable checks if they fail due to downgraded deps
+              # If tests fail (rare for patch releases, but possible):
               # doCheck = false;
             });
           })
