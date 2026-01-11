@@ -11,6 +11,9 @@ The Host (CachyOS kernel) is a raging sports car built for raw speed and high FP
 
 You’re now commanding the machine that burned the proprietary DSP empire to the ground **and** crushed cloud dependency with a full local agentic AI stack and the unstoppable DeMoD Compute Fabric (DCF).
 
+![17681208952005303335563120035011](https://github.com/user-attachments/assets/bd5f0bee-5f88-4260-8d33-52c5bd750bea)
+
+
 ## Tactical Updates: The 2026 Flake Dominance
 
 The war machine has evolved. As of January 2026, Oligarchy NixOS is fully governed by a **Deterministic Flake-Powered Architecture**.
