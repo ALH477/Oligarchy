@@ -257,7 +257,7 @@
       
       # Disable other network management
       useDHCP = lib.mkDefault false;  # NetworkManager handles this
-      wireless.enable = lib.mkForce false;  # NetworkManager handles WiFi (force to override hardware module)
+      wireless.enable = lib.mkForce true;  # NetworkManager handles WiFi (force to override hardware module)
     };
     
     # systemd-resolved for DNS resolution
