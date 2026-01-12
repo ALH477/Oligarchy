@@ -694,7 +694,7 @@
       cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy protobuf
 
       # Audio production
-      ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio
+      ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio musescore
       pkgsi686Linux.libpulseaudio pavucontrol guitarix faust faustlive
 
       # Virtualization
@@ -708,7 +708,7 @@
       inputs.minecraft.packages.${pkgs.stdenv.hostPlatform.system}.default
 
       # Desktop applications
-      brave vlc pandoc kdePackages.okular obs-studio firefox thunderbird
+      brave vlc pandoc kdePackages.okular obs-studio floorp-bin thunderbird
 
       # OBS plugins for Wayland/Plasma 6
       obs-studio-plugins.wlrobs
