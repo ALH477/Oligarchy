@@ -20,7 +20,6 @@
       nodeId = "alh477";  # Your actual node ID
       openFirewall = true;
     };
-    
     # Identity Service - Enable for production
     custom.dcfIdentity = {
       enable = true;
@@ -29,10 +28,8 @@
       dataDir = "/var/lib/demod-identity";
       secretsFile = "/etc/nixos/secrets/dcf-id.env";
     };
-    
     # System Tray Controller
     services.dcf-tray.enable = true;
-
     # ──────────────────────────────────────────────────────────────────────────
     # Local AI Stack (Ollama)
     # ──────────────────────────────────────────────────────────────────────────
@@ -40,22 +37,22 @@
       enable = true;
       preset = "pewdiepie";  # High-performance preset
       acceleration = "rocm";
-      advanced.rocm.gfxVersionOverride = "11.0.2";  # RDNA3
+      advanced.rocm.gfxVersionOverride = "11.0.2";
+      # RDNA3
     };
 
     # ──────────────────────────────────────────────────────────────────────────
     # Memory Configuration
     # ──────────────────────────────────────────────────────────────────────────
     swapDevices = [
-      { device = "/swapfile"; size = 71680; }  # 70 GiB
+      { device = "/swapfile";
+        size = 71680; }  # 70 GiB
     ];
-    
     boot.kernel.sysctl = {
       "vm.swappiness" = 10;
       "vm.dirty_ratio" = 10;
       "vm.dirty_background_ratio" = 5;
     };
-
     # ──────────────────────────────────────────────────────────────────────────
     # Package Overlays
     # ──────────────────────────────────────────────────────────────────────────
@@ -68,7 +65,8 @@
       })
 
       # ────────────────────────────────────────────────────────────────────────
-      # FIX: Bump fastmcp to 2.14.2 (latest as of Jan 2026) to support current mcp 1.25.0
+      # FIX: Bump fastmcp to 2.14.2 (latest as of Jan 2026) 
+      #      to support current mcp 1.25.0
       #      This resolves the <1.17.0 constraint violation in old fastmcp 2.12.5
       #      (nixpkgs issue #476673)
       # ────────────────────────────────────────────────────────────────────────
@@ -76,6 +74,7 @@
         pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
           (pythonFinal: pythonPrev: {
             fastmcp = pythonPrev.fastmcp.overridePythonAttrs (oldAttrs: rec {
+     
               version = "2.14.2";
 
               src = pythonFinal.fetchPypi {
@@ -92,32 +91,26 @@
         ];
       })
     ];
-
     # ──────────────────────────────────────────────────────────────────────────
     # Gaming
     # ──────────────────────────────────────────────────────────────────────────
     custom.steam.enable = true;
-    
     programs.steam = lib.mkIf config.custom.steam.enable {
       enable = true;
       extraCompatPackages = [ pkgs.proton-ge-bin ];
     };
-    
     hardware.steam-hardware.enable = lib.mkIf config.custom.steam.enable true;
     programs.gamemode.enable = lib.mkIf config.custom.steam.enable true;
-
     # ──────────────────────────────────────────────────────────────────────────
     # Boot Configuration
     # ──────────────────────────────────────────────────────────────────────────
     boot = {
       # Cross-compilation support
       binfmt.emulatedSystems = [ "aarch64-linux" ];
-      
       loader = {
         systemd-boot.enable = true;
         efi.canTouchEfiVariables = true;
       };
-      
       # Kernel packages set by kernel.nix module
       
       kernelParams = [
@@ -130,6 +123,7 @@
         "usbcore.autosuspend=-1"
         "usbcore.use_both_schemes=y"
         "xhci_hcd.quirks=0x40"
+ 
         "usb-storage.quirks=:u"
         
         # CPU power management
@@ -138,7 +132,6 @@
         # PCIe stability
         "pcie_aspm=off"
       ];
-      
       initrd.kernelModules = [ "amdgpu" "thunderbolt" ];
       
       kernelModules = [ 
@@ -148,7 +141,6 @@
         "xhci_pci"
         "kvm-amd"
       ];
-      
       extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
       
       extraModprobeConfig = ''
@@ -161,7 +153,8 @@
     # ──────────────────────────────────────────────────────────────────────────
     # Display & Desktop Environment
     # ──────────────────────────────────────────────────────────────────────────
-    services.xserver.enable = false;  # Wayland only
+    services.xserver.enable = false;
+    # Wayland only
     
     services.displayManager = {
       sddm = {
@@ -172,13 +165,11 @@
     };
     
     services.desktopManager.plasma6.enable = true;
-    
     programs.hyprland = {
       enable = true;
       xwayland.enable = true;
       package = pkgs.hyprland;
     };
-    
     systemd.defaultUnit = lib.mkForce "graphical.target";
     
     # XDG Portals
@@ -195,41 +186,37 @@
         kde.default = [ "kde" "gtk" ];
       };
     };
-
     # ──────────────────────────────────────────────────────────────────────────
     # Networking
     # ──────────────────────────────────────────────────────────────────────────
     networking = {
       hostName = "nixos";
-      
       # NetworkManager configuration
       networkmanager = {
         enable = true;
-        
         # WiFi backend - wpa_supplicant is more stable on Framework
         wifi = {
           backend = "wpa_supplicant";
           powersave = false;  # Disable power saving for stability
-          scanRandMacAddress = false;  # Some APs don't like random MACs
+          scanRandMacAddress = false;
+          # Some APs don't like random MACs
         };
-        
         # DNS configuration - let NetworkManager handle it
         dns = "systemd-resolved";
-        
         # Connection stability settings
         connectionConfig = {
-          "connection.mdns" = 2;  # Enable mDNS
-          "connection.llmnr" = 2; # Enable LLMNR
-          "ipv6.ip6-privacy" = 2; # Prefer temporary addresses
+          "connection.mdns" = 2;
+          # Enable mDNS
+          "connection.llmnr" = 2;
+          # Enable LLMNR
+          "ipv6.ip6-privacy" = 2;
+          # Prefer temporary addresses
         };
-        
         # Ethernet settings
         ethernet.macAddress = "preserve";
-        
         # Ensure NetworkManager starts properly
         logLevel = "INFO";
       };
-      
       # Firewall configuration
       firewall = {
         enable = true;
@@ -243,23 +230,23 @@
         allowedUDPPorts = [
           5353  # mDNS
         ];
-        
         # Trust Docker bridge
         trustedInterfaces = [ "docker0" "br-+" ];
-        
         # Logging (disable for performance, enable for debugging)
         logReversePathDrops = false;
         logRefusedConnections = false;
       };
       
       # Don't use static nameservers - let NetworkManager/resolved handle it
-      # nameservers = [ "1.1.1.1" "8.8.8.8" ];  # Commented out - conflicts with NM
+      # nameservers = [ "1.1.1.1" "8.8.8.8" ];
+      # Commented out - conflicts with NM
       
       # Disable other network management
-      useDHCP = lib.mkDefault false;  # NetworkManager handles this
-      wireless.enable = lib.mkForce true;  # NetworkManager handles WiFi (force to override hardware module)
+      useDHCP = lib.mkDefault false;
+      # NetworkManager handles this
+      wireless.enable = lib.mkForce true;
+      # NetworkManager handles WiFi (force to override hardware module)
     };
-    
     # systemd-resolved for DNS resolution
     services.resolved = {
       enable = true;
@@ -332,12 +319,10 @@
     
     # Blueman for Bluetooth GUI management
     services.blueman.enable = true;
-
     # ──────────────────────────────────────────────────────────────────────────
     # Locale & Time
     # ──────────────────────────────────────────────────────────────────────────
     time.timeZone = "America/Los_Angeles";
-    
     i18n = {
       defaultLocale = "en_US.UTF-8";
       extraLocaleSettings = {
@@ -352,7 +337,6 @@
         LC_TIME = "en_US.UTF-8";
       };
     };
-
     # ──────────────────────────────────────────────────────────────────────────
     # System Services
     # ──────────────────────────────────────────────────────────────────────────
@@ -398,12 +382,11 @@
           userServices = true;
         };
       };
-      
       # Power management
       power-profiles-daemon.enable = true;
-      tlp.enable = lib.mkForce false;  # Conflicts with PPD
+      tlp.enable = lib.mkForce false;
+      # Conflicts with PPD
       thermald.enable = true;
-      
       # UPower for battery management
       upower = {
         enable = true;
@@ -412,10 +395,8 @@
         percentageAction = 5;
         criticalPowerAction = "Hibernate";
       };
-      
       # Thunderbolt
       hardware.bolt.enable = true;
-      
       # Geoclue2 for location services
       geoclue2 = {
         enable = true;
@@ -433,6 +414,7 @@
           
           # HID devices - never suspend
           ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", ATTR{power/control}="on"
+          
           ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", ATTR{power/autosuspend}="-1"
           
           # USB hubs - never suspend
@@ -442,6 +424,7 @@
           ACTION=="add", SUBSYSTEM=="thunderbolt", ATTR{authorized}=="0", ATTR{authorized}="1"
           
           # HID runtime PM
+ 
           ACTION=="add", SUBSYSTEM=="hid", ATTR{power/control}="on"
           
           # Framework specific - internal USB devices
@@ -456,7 +439,6 @@
         alsa.support32Bit = true;
         pulse.enable = true;
         jack.enable = true;
-        
         # WirePlumber session manager
         wireplumber = {
           enable = true;
@@ -480,7 +462,6 @@
               "default.clock.max-quantum" = 2048;
             };
           };
-          
           pipewire-pulse."92-low-latency" = {
             "context.modules" = [
               {
@@ -545,12 +526,14 @@
         
         # Login limits for audio
         loginLimits = [
-          { domain = "@audio"; type = "-"; item = "rtprio"; value = "99"; }
-          { domain = "@audio"; type = "-"; item = "memlock"; value = "unlimited"; }
-          { domain = "@audio"; type = "-"; item = "nice"; value = "-19"; }
+          { domain = "@audio";
+            type = "-"; item = "rtprio"; value = "99"; }
+          { domain = "@audio";
+            type = "-"; item = "memlock"; value = "unlimited"; }
+          { domain = "@audio";
+            type = "-"; item = "nice"; value = "-19"; }
         ];
       };
-      
       # Sudo configuration
       sudo = {
         enable = true;
@@ -563,20 +546,21 @@
           
           # Longer password timeout
           Defaults timestamp_timeout=30
+      
         '';
       };
     };
     
     # GNOME Keyring for secrets management
     services.gnome.gnome-keyring.enable = true;
-    programs.seahorse.enable = true;  # GUI for keyring
+    programs.seahorse.enable = true;
+    # GUI for keyring
 
     # Firmware update config
     environment.etc."fwupd/fwupd.conf".text = lib.mkForce ''
       [fwupd]
       UpdateOnBoot=true
     '';
-
     # ──────────────────────────────────────────────────────────────────────────
     # Virtualization
     # ──────────────────────────────────────────────────────────────────────────
@@ -584,31 +568,28 @@
       enable = true;
       # Enable on boot since DCF services depend on it
       enableOnBoot = true;
-      
       # Storage driver - overlay2 is recommended
       storageDriver = "overlay2";
-      
       # Auto cleanup
       autoPrune = {
         enable = true;
         dates = "weekly";
         flags = [ "--all" "--volumes" ];
       };
-      
       # Daemon settings
       daemon.settings = {
         # DNS servers for containers
         dns = [ "1.1.1.1" "8.8.8.8" ];
-        
         # Default address pools for networks
         default-address-pools = [
-          { base = "172.17.0.0/16"; size = 24; }
-          { base = "172.18.0.0/16"; size = 24; }
+          { base = "172.17.0.0/16";
+            size = 24; }
+          { base = "172.18.0.0/16"; size = 24;
+          }
         ];
         
         # Enable live-restore to keep containers running during daemon restart
         live-restore = true;
-        
         # Logging
         log-driver = "json-file";
         log-opts = {
@@ -616,11 +597,10 @@
           max-file = "3";
         };
       };
-      
       # Root dir
-      rootless.enable = false;  # Use normal Docker for DCF
+      rootless.enable = false;
+      # Use normal Docker for DCF
     };
-    
     # Ensure Docker socket is available
     systemd.sockets.docker = {
       wantedBy = [ "sockets.target" ];
@@ -637,7 +617,6 @@
       extraGroups = [ "networkmanager" "wheel" "docker" "wireshark" "disk" "video" "audio" ];
       shell = pkgs.bash;
     };
-
     # ──────────────────────────────────────────────────────────────────────────
     # System Maintenance (Auto GC)
     # ──────────────────────────────────────────────────────────────────────────
@@ -648,7 +627,6 @@
         Persistent = true;
       };
     };
-    
     systemd.services.nix-gc-generations = {
       script = ''
         generations_to_delete=$(${pkgs.nix}/bin/nix-env -p /nix/var/nix/profiles/system --list-generations | \
@@ -656,7 +634,8 @@
           ${pkgs.coreutils}/bin/head -n -5 | \
           ${pkgs.coreutils}/bin/tr '\n' ' ')
         
-        if [ -n "$generations_to_delete" ]; then
+        if [ -n "$generations_to_delete" ];
+        then
           ${pkgs.nix}/bin/nix-env -p /nix/var/nix/profiles/system --delete-generations $generations_to_delete
         fi
         
@@ -668,7 +647,8 @@
     # ──────────────────────────────────────────────────────────────────────────
     # System Packages
     # ──────────────────────────────────────────────────────────────────────────
-    environment.systemPackages = with pkgs; [
+    environment.systemPackages = with pkgs;
+    [
       # System utilities
       vim docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress
       dmidecode util-linux gparted usbutils
@@ -681,6 +661,7 @@
 
       # Network tools
       wireshark tcpdump nmap netcat
+  
       inetutils  # ping, traceroute, etc.
       dnsutils   # dig, nslookup
       whois
@@ -689,7 +670,9 @@
       ethtool    # Ethernet diagnostics
       wavemon    # WiFi monitoring
       networkmanagerapplet  # NM tray icon for non-KDE
+      pasystray             # PulseAudio System Tray (Audio tray for Wayland/PipeWire)
 
+      # 
       # Development toolchains
       cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy protobuf
 
@@ -705,22 +688,30 @@
 
       # Games (id Software engines)
       dhewm3 darkradiant zandronum
+ 
       inputs.minecraft.packages.${pkgs.stdenv.hostPlatform.system}.default
 
       # Desktop applications
-      brave vlc pandoc kdePackages.okular obs-studio floorp-bin thunderbird
+      # Brave configured to use GNOME keyring (stops KDE wallet prompts)
+      (brave.override { commandLineArgs = "--password-store=gnome"; })
+      vlc pandoc kdePackages.okular floorp-bin thunderbird
 
-      # OBS plugins for Wayland/Plasma 6
-      obs-studio-plugins.wlrobs
-      obs-studio-plugins.obs-pipewire-audio-capture
-      obs-studio-plugins.obs-vaapi
-      obs-studio-plugins.obs-vkcapture
-      obs-studio-plugins.input-overlay
+      # OBS with Plugins (Pure Wayland/Plasma 6 + Hyprland optimized)
+      (obs-studio.withPlugins (plugins: with plugins; [
+        wlrobs                 # For Hyprland session
+        obs-pipewire-audio-capture
+        obs-vaapi              # AMD Hardware acceleration
+        obs-vkcapture
+        input-overlay
+      ]))
+      
+      # OBS dependencies
       kdePackages.xdg-desktop-portal-kde
 
       # Desktop customization
       blueberry legcord font-awesome fastfetch gnugrep kitty wofi waybar
-      hyprpaper brightnessctl zip unzip obsidian
+      hyprpaper 
+      brightnessctl zip unzip obsidian
 
       # Creative apps
       gimp kdePackages.kdenlive inkscape blender libreoffice krita synfigstudio
@@ -732,7 +723,8 @@
       wl-clipboard grim slurp v4l-utils
       cliphist      # Clipboard history
       hyprpicker    # Color picker
-      wlogout       # Logout menu
+      wlogout       # Logout 
+      menu
       playerctl     # Media player control
       jq            # JSON parsing for scripts
       hyprlock      # Lock screen
@@ -742,6 +734,7 @@
       # Screenshots (Hyprland)
       swappy hyprshot satty
 
+    
       # Screenshots (KDE)
       kdePackages.spectacle
       gpu-screen-recorder
@@ -754,7 +747,8 @@
       ollama opencode open-webui alpaca aichat
 
       # Perl development
-      (perl.withPackages (ps: with ps; [
+      (perl.withPackages (ps: with ps;
+      [
         JSON GetoptLong CursesUI ModulePluggable Appcpanminus
       ]))
 
@@ -768,12 +762,12 @@
       libserialport can-utils lksctp-tools cjson ncurses libuuid
       kicad graphviz mako openscad freecad
 
+ 
       # USB boot tools
       unetbootin popsicle gnome-disk-utility
     ] ++ lib.optionals config.custom.steam.enable [
       steam steam-run linuxConsoleTools lutris wineWowPackages.stable
     ];
-
     # ──────────────────────────────────────────────────────────────────────────
     # Environment
     # ──────────────────────────────────────────────────────────────────────────
@@ -786,7 +780,6 @@
         </engine>
       </jack>
     '';
-
     environment.sessionVariables = {
       QT_QPA_PLATFORM = "wayland;xcb";
       NIXOS_OZONE_WL = "1";
