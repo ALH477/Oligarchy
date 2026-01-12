@@ -695,7 +695,7 @@
 
       # Audio production
       ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio musescore
-      pkgsi686Linux.libpulseaudio pavucontrol guitarix faust faustlive
+      pkgsi686Linux.libpulseaudio pwvucontrol guitarix faust faustlive
 
       # Virtualization
       qemu virt-manager docker-compose docker-buildx
