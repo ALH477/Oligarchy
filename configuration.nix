@@ -63,42 +63,6 @@
           config.allowUnfree = true;
         };
       })
-
-      # ────────────────────────────────────────────────────────────────────────
-      # FIX: Bump fastmcp to 2.14.2 (latest as of Jan 2026) 
-      #      to support current mcp 1.25.0
-      #      This resolves the <1.17.0 constraint violation in old fastmcp 2.12.5
-      #      (nixpkgs issue #476673)
-      # ────────────────────────────────────────────────────────────────────────
-      (final: prev: {
-        pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
-          (pythonFinal: pythonPrev: {
-            fastmcp = pythonPrev.fastmcp.overridePythonAttrs (oldAttrs: rec {
-     
-              version = "2.14.2";
-
-              src = pythonFinal.fetchPypi {
-                pname = "fastmcp";
-                inherit version;
-                # Updated with the correct hash
-                hash = "sha256-vSPRuAi29EZETxARTaxGixG/uRU+14Yo9WGXY9DPVz4=";
-              };
-
-              # FIX: Add missing build inputs and bypass strict checks
-              # We disable import checks because 'docket' is not yet in nixpkgs
-              propagatedBuildInputs = (oldAttrs.propagatedBuildInputs or []) ++ [
-                pythonFinal.platformdirs
-              ];
-              dontCheckRuntimeDeps = true;     # Bypass runtime dependency check
-              pythonImportsCheck = [];         # Bypass import check
-              doCheck = false;                 # FIX: Bypass tests (pytest) to ignore missing 'docket'
-
-              # If tests fail (rare for patch releases, but possible):
-              # doCheck = false;
-            });
-          })
-        ];
-      })
     ];
     # ──────────────────────────────────────────────────────────────────────────
     # Gaming
@@ -197,9 +161,9 @@
     };
 
     # ──────────────────────────────────────────────────────────────────────────
-    # OBS Studio Configuration (FIXED)
+    # OBS Studio (Robust Module Configuration)
     # ──────────────────────────────────────────────────────────────────────────
-    # Use the dedicated module instead of systemPackages to ensure proper wrapping
+    # This automatically wraps OBS with the correct environment for plugins.
     programs.obs-studio = {
       enable = true;
       enableVirtualCamera = true;
@@ -678,7 +642,6 @@
       # System utilities
       vim docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress
       dmidecode util-linux gparted usbutils
-      oterm # Added by user (causes the fastmcp dependency pull)
 
       # Python development
       (python3.withPackages (ps: with ps; [
@@ -723,8 +686,7 @@
       (brave.override { commandLineArgs = "--password-store=gnome-libsecret"; })
       vlc pandoc kdePackages.okular floorp-bin thunderbird
 
-      # Note: OBS Studio is now configured via 'programs.obs-studio' above!
-      # We removed the manual 'wrapOBS' call here to fix plugin loading.
+      # Note: OBS Studio configuration moved to 'programs.obs-studio' (see above).
       
       # OBS dependencies
       kdePackages.xdg-desktop-portal-kde
