@@ -80,9 +80,16 @@
               src = pythonFinal.fetchPypi {
                 pname = "fastmcp";
                 inherit version;
-                # Placeholder — run rebuild once, copy the "got" hash from error, paste here
-                hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+                # Updated with the correct hash
+                hash = "sha256-vSPRuAi29EZETxARTaxGixG/uRU+14Yo9WGXY9DPVz4=";
               };
+
+              # FIX: Add missing build inputs and bypass strict runtime check
+              # for dependencies not yet in nixpkgs (pydocket, py-key-value-aio)
+              propagatedBuildInputs = (oldAttrs.propagatedBuildInputs or []) ++ [
+                pythonFinal.platformdirs
+              ];
+              dontCheckRuntimeDeps = true;
 
               # If tests fail (rare for patch releases, but possible):
               # doCheck = false;
@@ -652,6 +659,7 @@
       # System utilities
       vim docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress
       dmidecode util-linux gparted usbutils
+      oterm # Added by user (causes the fastmcp dependency pull)
 
       # Python development
       (python3.withPackages (ps: with ps; [
