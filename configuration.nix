@@ -692,11 +692,11 @@
       inputs.minecraft.packages.${pkgs.stdenv.hostPlatform.system}.default
 
       # Desktop applications
-      # Brave configured to use GNOME keyring (stops KDE wallet prompts)
-      (brave.override { commandLineArgs = "--password-store=gnome"; })
+      # Brave configured to use GNOME Libsecret (Correct flag for newer Brave/Chromium)
+      (brave.override { commandLineArgs = "--password-store=gnome-libsecret"; })
       vlc pandoc kdePackages.okular floorp-bin thunderbird
 
-      # OBS with Plugins (FIXED: Using wrapOBS instead of .withPlugins)
+      # OBS with Plugins (FIXED: Using wrapOBS to correctly bundle plugins on NixOS)
       (wrapOBS {
         plugins = with obs-studio-plugins; [
           wlrobs                 # For Hyprland session
