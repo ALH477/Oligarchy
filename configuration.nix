@@ -726,7 +726,6 @@
       cliphist      # Clipboard history
       hyprpicker    # Color picker
       wlogout       # Logout 
-      menu
       playerctl     # Media player control
       jq            # JSON parsing for scripts
       hyprlock      # Lock screen
