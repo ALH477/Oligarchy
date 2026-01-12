@@ -696,14 +696,16 @@
       (brave.override { commandLineArgs = "--password-store=gnome"; })
       vlc pandoc kdePackages.okular floorp-bin thunderbird
 
-      # OBS with Plugins (Pure Wayland/Plasma 6 + Hyprland optimized)
-      (obs-studio.withPlugins (plugins: with plugins; [
-        wlrobs                 # For Hyprland session
-        obs-pipewire-audio-capture
-        obs-vaapi              # AMD Hardware acceleration
-        obs-vkcapture
-        input-overlay
-      ]))
+      # OBS with Plugins (FIXED: Using wrapOBS instead of .withPlugins)
+      (wrapOBS {
+        plugins = with obs-studio-plugins; [
+          wlrobs                 # For Hyprland session
+          obs-pipewire-audio-capture
+          obs-vaapi              # AMD Hardware acceleration
+          obs-vkcapture
+          input-overlay
+        ];
+      })
       
       # OBS dependencies
       kdePackages.xdg-desktop-portal-kde
