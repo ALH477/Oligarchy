@@ -89,70 +89,64 @@ let
 
   # Docker image selection
   ollamaImage =
-    if effectiveAcceleration == "rocm" then "ollama/ollama:rocm"
+    if effectiveAcceleration == "rocm" then "ollama/ollama:0.14.0-rc2-rocm"
     else "ollama/ollama:latest";
 
   # Generate docker-compose.yml
-  dockerComposeContent = ''
-    version: "3.9"
-    
-    services:
-      ollama:
-        image: ${ollamaImage}
-        container_name: ollama
-        restart: unless-stopped
-        ipc: host
-        shm_size: "${currentPreset.shmSize}"
-        security_opt:
-          - no-new-privileges:true
-        
-        ${optionalString (effectiveAcceleration == "rocm") ''
-        devices:
-          - "/dev/kfd:/dev/kfd"
-          - "/dev/dri:/dev/dri"
-        group_add:
-          - video
-        ''}
-        
-        ${optionalString (effectiveAcceleration == "cuda") ''
-        deploy:
-          resources:
-            reservations:
-              devices:
-                - driver: nvidia
-                  count: all
-                  capabilities: [gpu]
-        ''}
-        
-        volumes:
-          - ${paths.ollama}:/root/.ollama
-        
-        ports:
-          - "${cfg.network.bindAddress}:11434:11434"
-        
-        environment:
-          OLLAMA_FLASH_ATTENTION: "1"
-          OLLAMA_NUM_PARALLEL: "${toString currentPreset.numParallel}"
-          OLLAMA_MAX_LOADED_MODELS: "${toString currentPreset.maxLoadedModels}"
-          OLLAMA_KEEP_ALIVE: "${currentPreset.keepAlive}"
-          OLLAMA_SCHED_SPREAD: "1"
-          OLLAMA_KV_CACHE_TYPE: "q8_0"
-          OLLAMA_MAX_QUEUE: "${toString currentPreset.maxQueue}"
-          OLLAMA_MEMORY_PRESSURE_THRESHOLD: "${currentPreset.memoryPressure}"
-          ${optionalString (effectiveAcceleration == "rocm") ''
-          ROCR_VISIBLE_DEVICES: "0"
-          ''}
-          ${optionalString (effectiveAcceleration == "rocm" && cfg.advanced.rocm.gfxVersionOverride != null) ''
-          HSA_OVERRIDE_GFX_VERSION: "${cfg.advanced.rocm.gfxVersionOverride}"
-          ''}
-        
-        healthcheck:
-          test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-          interval: 30s
-          timeout: 10s
-          retries: 3
-          start_period: 30s
-  '';
+   dockerComposeContent = lib.generators.toYAML {} {
+    version = "3.9";
+
+    services.ollama = {
+      image = ollamaImage;
+      container_name = "ollama";
+      restart = "unless-stopped";
+      ipc = "host";
+      shm_size = currentPreset.shmSize;
+      security_opt = [ "no-new-privileges:true" ];
+
+      devices = lib.optionals (effectiveAcceleration == "rocm") [
+        "/dev/kfd:/dev/kfd"
+        "/dev/dri:/dev/dri"
+      ];
+
+      group_add = lib.optionals (effectiveAcceleration == "rocm") [ "video" ];
+
+      deploy = lib.optionalAttrs (effectiveAcceleration == "cuda") {
+        resources.reservations.devices = [{
+          driver = "nvidia";
+          count = "all";
+          capabilities = [ "gpu" ];
+        }];
+      };
+
+      volumes = [ "${paths.ollama}:/root/.ollama" ];
+
+      ports = [ "${cfg.network.bindAddress}:11434:11434" ];
+
+      environment = {
+        OLLAMA_FLASH_ATTENTION = "1";
+        OLLAMA_NUM_PARALLEL = toString currentPreset.numParallel;
+        OLLAMA_MAX_LOADED_MODELS = toString currentPreset.maxLoadedModels;
+        OLLAMA_KEEP_ALIVE = currentPreset.keepAlive;
+        OLLAMA_SCHED_SPREAD = "1";
+        OLLAMA_KV_CACHE_TYPE = "q8_0";
+        OLLAMA_MAX_QUEUE = toString currentPreset.maxQueue;
+        OLLAMA_MEMORY_PRESSURE_THRESHOLD = currentPreset.memoryPressure;
+      } // lib.optionalAttrs (effectiveAcceleration == "rocm") {
+        ROCR_VISIBLE_DEVICES = "0";
+      } // lib.optionalAttrs (effectiveAcceleration == "rocm" && cfg.advanced.rocm.gfxVersionOverride != null) {
+        HSA_OVERRIDE_GFX_VERSION = cfg.advanced.rocm.gfxVersionOverride;
+      };
+
+      healthcheck = {
+        test = [ "CMD" "curl" "-f" "http://localhost:11434/api/tags" ];
+        interval = "30s";
+        timeout = "10s";
+        retries = 3;
+        start_period = "30s";
+      };
+    };
+  };
 
   dockerComposeFile = pkgs.writeText "docker-compose-ollama.yml" dockerComposeContent;
 
