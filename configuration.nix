@@ -163,19 +163,21 @@
     # ──────────────────────────────────────────────────────────────────────────
     # OBS Studio (Robust Module Configuration)
     # ──────────────────────────────────────────────────────────────────────────
-    # This automatically wraps OBS with the correct environment for plugins.
+        # OBS Studio (Optimized for KDE Plasma 6 Wayland)
     programs.obs-studio = {
       enable = true;
       enableVirtualCamera = true;
       plugins = with pkgs.obs-studio-plugins; [
-        wlrobs                 # For Hyprland session
-        obs-pipewire-audio-capture
-        obs-vaapi              # AMD Hardware acceleration
-        obs-vkcapture
-        input-overlay
+        obs-pipewire-audio-capture   # Per-application audio capture
+        obs-vaapi                    # AMD VAAPI hardware encoding
+        obs-vkcapture                # Direct Vulkan game capture (great for gaming)
+        input-overlay                # Keyboard/mouse/gamepad overlays
+
+        # Additional production-focused plugins
+        advanced-scene-switcher      # Auto-switch scenes based on window, time, etc.
+        obs-multi-rtmp               # Simultaneous streaming to multiple platforms (Twitch, YouTube, etc.)
       ];
     };
-
     # ──────────────────────────────────────────────────────────────────────────
     # Networking
     # ──────────────────────────────────────────────────────────────────────────
@@ -422,7 +424,7 @@
         '';
       };
       
-      # Audio (PipeWire)
+            # Audio (PipeWire)
       pipewire = {
         enable = true;
         alsa.enable = true;
@@ -440,9 +442,17 @@
                 };
               };
             };
+            # Improved Bluetooth codec support
+            "20-bluetooth" = {
+              "bluez_monitor.properties" = {
+                "bluez5.enable-sbc-xq" = true;
+                "bluez5.enable-msbc" = true;
+                "bluez5.enable-hw-volume" = true;
+              };
+            };
           };
         };
-        
+
         extraConfig = {
           pipewire."92-low-latency" = {
             "context.properties" = {
@@ -667,8 +677,8 @@
       cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy protobuf
 
       # Audio production
-      ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio musescore
-      pkgsi686Linux.libpulseaudio pwvucontrol guitarix faust faustlive
+      ardour audacity ffmpeg-full jack2 qjackctl libpulseaudio musescore easyeffects
+      pkgsi686Linux.libpulseaudio pavucontrol guitarix faust faustlive qpwgraph rnnoise-plugin
 
       # Virtualization
       qemu virt-manager docker-compose docker-buildx
