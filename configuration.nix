@@ -5,6 +5,10 @@
   # NixOS Production Configuration — Framework 16 AMD
   # ============================================================================
 
+  imports = [
+    ./modules/audio.nix
+  ];
+
   options = {
     custom.steam.enable = lib.mkEnableOption "Steam and gaming support";
   };
@@ -39,6 +43,16 @@
       acceleration = "rocm";
       advanced.rocm.gfxVersionOverride = "11.0.2";
       # RDNA3
+    };
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Audio Configuration (DeMoD Module)
+    # ──────────────────────────────────────────────────────────────────────────
+    custom.audio = {
+      enable = true;
+      lowLatency.enable = true;          # Balanced gaming/streaming latency
+      bluetooth.highQualityCodecs = true; # LDAC HQ, aptX HD, etc.
+      disableLibcameraMonitor = true;     # Saves CPU for OBS/v4l2loopback
     };
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -159,7 +173,6 @@
         kde.default = [ "kde" "gtk" ];
       };
     };
-
     # ──────────────────────────────────────────────────────────────────────────
     # OBS Studio (Robust Module Configuration)
     # ──────────────────────────────────────────────────────────────────────────
@@ -171,7 +184,8 @@
         obs-pipewire-audio-capture   # Per-application audio capture
         obs-vaapi                    # AMD VAAPI hardware encoding
         obs-vkcapture                # Direct Vulkan game capture (great for gaming)
-        input-overlay                # Keyboard/mouse/gamepad overlays
+        input-overlay        
+        # Keyboard/mouse/gamepad overlays
 
         # Additional production-focused plugins
         advanced-scene-switcher      # Auto-switch scenes based on window, time, etc.
@@ -407,6 +421,7 @@
           # HID devices - never suspend
           ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", ATTR{power/control}="on"
           
+ 
           ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", ATTR{power/autosuspend}="-1"
           
           # USB hubs - never suspend
@@ -415,72 +430,14 @@
           # Thunderbolt auto-authorize
           ACTION=="add", SUBSYSTEM=="thunderbolt", ATTR{authorized}=="0", ATTR{authorized}="1"
           
-          # HID runtime PM
+    
+       # HID runtime PM
  
           ACTION=="add", SUBSYSTEM=="hid", ATTR{power/control}="on"
           
           # Framework specific - internal USB devices
           ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="32ac", ATTR{power/control}="on"
         '';
-      };
-      
-            # Audio (PipeWire)
-      pipewire = {
-        enable = true;
-        alsa.enable = true;
-        alsa.support32Bit = true;
-        pulse.enable = true;
-        jack.enable = true;
-        # WirePlumber session manager
-        wireplumber = {
-          enable = true;
-          extraConfig = {
-            "10-disable-camera" = {
-              "wireplumber.profiles" = {
-                main = {
-                  "monitor.libcamera" = "disabled";
-                };
-              };
-            };
-            # Improved Bluetooth codec support
-            "20-bluetooth" = {
-              "bluez_monitor.properties" = {
-                "bluez5.enable-sbc-xq" = true;
-                "bluez5.enable-msbc" = true;
-                "bluez5.enable-hw-volume" = true;
-              };
-            };
-          };
-        };
-
-        extraConfig = {
-          pipewire."92-low-latency" = {
-            "context.properties" = {
-              "default.clock.rate" = 48000;
-              "default.clock.quantum" = 1024;
-              "default.clock.min-quantum" = 512;
-              "default.clock.max-quantum" = 2048;
-            };
-          };
-          pipewire-pulse."92-low-latency" = {
-            "context.modules" = [
-              {
-                name = "libpipewire-module-protocol-pulse";
-                args = {
-                  "pulse.min.req" = "1024/48000";
-                  "pulse.default.req" = "1024/48000";
-                  "pulse.max.req" = "2048/48000";
-                  "pulse.min.quantum" = "1024/48000";
-                  "pulse.max.quantum" = "2048/48000";
-                };
-              }
-            ];
-            "stream.properties" = {
-              "node.latency" = "1024/48000";
-              "resample.quality" = 4;
-            };
-          };
-        };
       };
       
       # Lid and power key handling
@@ -547,10 +504,10 @@
           # Longer password timeout
           Defaults timestamp_timeout=30
       
+ 
         '';
       };
     };
-    
     # GNOME Keyring for secrets management
     services.gnome.gnome-keyring.enable = true;
     programs.seahorse.enable = true;
@@ -662,6 +619,7 @@
       # Network tools
       wireshark tcpdump nmap netcat
   
+ 
       inetutils  # ping, traceroute, etc.
       dnsutils   # dig, nslookup
       whois
@@ -670,7 +628,8 @@
       ethtool    # Ethernet diagnostics
       wavemon    # WiFi monitoring
       networkmanagerapplet  # NM tray icon for non-KDE
-      pasystray             # PulseAudio System Tray (Audio tray for Wayland/PipeWire)
+     
+      # pasystray removed - managed by audio module
 
       # 
       # Development toolchains
@@ -681,7 +640,8 @@
       pkgsi686Linux.libpulseaudio pavucontrol guitarix faust faustlive qpwgraph rnnoise-plugin
 
       # Virtualization
-      qemu virt-manager docker-compose docker-buildx
+      qemu 
+      virt-manager docker-compose docker-buildx
 
       # Graphics tools
       vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
@@ -693,11 +653,11 @@
 
       # Desktop applications
       # Brave configured to use GNOME Libsecret (Correct flag for newer Brave/Chromium)
-      (brave.override { commandLineArgs = "--password-store=gnome-libsecret"; })
+      (brave.override { commandLineArgs = "--password-store=gnome-libsecret";
+      })
       vlc pandoc kdePackages.okular floorp-bin thunderbird
 
       # Note: OBS Studio configuration moved to 'programs.obs-studio' (see above).
-      
       # OBS dependencies
       kdePackages.xdg-desktop-portal-kde
 
@@ -713,14 +673,16 @@
       thunar thunar-volman gvfs udiskie polkit_gnome framework-tool
 
       # Wayland utilities
-      wl-clipboard grim slurp v4l-utils
+      wl-clipboard grim 
+      slurp v4l-utils
       cliphist      # Clipboard history
       hyprpicker    # Color picker
       wlogout       # Logout 
       playerctl     # Media player control
       jq            # JSON parsing for scripts
       hyprlock      # Lock screen
-      hypridle      # Idle management
+      hypridle  
+          # Idle management
       libnotify     # Desktop notifications (for toggle scripts)
 
       # Screenshots (Hyprland)
@@ -736,7 +698,8 @@
       mininet
 
       # AI tools
-      ollama opencode open-webui alpaca aichat
+      ollama opencode open-webui alpaca 
+      aichat
 
       # Perl development
       (perl.withPackages (ps: with ps;
@@ -755,6 +718,7 @@
       kicad graphviz mako openscad freecad
 
  
+ 
       # USB boot tools
       unetbootin popsicle gnome-disk-utility
     ] ++ lib.optionals config.custom.steam.enable [
@@ -763,15 +727,6 @@
     # ──────────────────────────────────────────────────────────────────────────
     # Environment
     # ──────────────────────────────────────────────────────────────────────────
-    environment.etc."jack/conf.xml".text = ''
-      <?xml version="1.0"?>
-      <jack>
-        <engine>
-          <param name="driver" value="alsa"/>
-          <param name="realtime" value="true"/>
-        </engine>
-      </jack>
-    '';
     environment.sessionVariables = {
       QT_QPA_PLATFORM = "wayland;xcb";
       NIXOS_OZONE_WL = "1";
