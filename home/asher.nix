@@ -32,7 +32,6 @@
   # ────────────────────────────────────────────────────────────────────────────
   home.packages = with pkgs; [
     jetbrains-mono
-    (nerdfonts.override { fonts = [ "JetBrainsMono" ]; })
     font-awesome
 
     hyprpaper
@@ -61,14 +60,11 @@
     obsidian
     xfce.thunar
     steam
-    discord
     thunderbird
     vlc
-    okular
-    gwenview
-    gnome.gnome-calculator
+    gnome-calculator
     libreoffice-qt6-fresh
-    onlyoffice-bin
+    onlyoffice-desktopeditors
 
     wireplumber
     brightnessctl
@@ -78,7 +74,6 @@
     gpu-screen-recorder
 
     imagemagick
-    qt5ct
     gnome-keyring
   ];
 
@@ -647,7 +642,7 @@
     '';
   };
 
-  home.file=".config/hypr/scripts/toggle-borders.sh" = {
+  home.file.".config/hypr/scripts/toggle-borders.sh" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
@@ -677,7 +672,7 @@
     '';
   };
 
-  home.file=".config/hypr/scripts/toggle-rounding.sh" = {
+  home.file.".config/hypr/scripts/toggle-rounding.sh" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
@@ -1113,7 +1108,7 @@
     '';
   };
 
-  home.file=".local/bin/dcf-logs" = {
+  home.file.".local/bin/dcf-logs" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
@@ -1126,7 +1121,7 @@
   # ────────────────────────────────────────────────────────────────────────────
   # Network Helper Scripts
   # ────────────────────────────────────────────────────────────────────────────
-  home.file=".local/bin/net-status" = {
+  home.file.".local/bin/net-status" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
@@ -1167,7 +1162,7 @@
     '';
   };
 
-  home.file=".local/bin/net-fix" = {
+  home.file.".local/bin/net-fix" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
@@ -1184,7 +1179,7 @@
   # ────────────────────────────────────────────────────────────────────────────
   # Docker Helper Scripts
   # ────────────────────────────────────────────────────────────────────────────
-  home.file=".local/bin/docker-start" = {
+  home.file.".local/bin/docker-start" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
@@ -1199,7 +1194,7 @@
     '';
   };
 
-  home.file=".local/bin/docker-stop" = {
+  home.file.".local/bin/docker-stop" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
@@ -1329,7 +1324,7 @@
   # ────────────────────────────────────────────────────────────────────────────
   # Hypridle
   # ────────────────────────────────────────────────────────────────────────────
-  home.file=".config/hypr/hypridle.conf".text = ''
+  home.file.".config/hypr/hypridle.conf".text = ''
     general {
       lock_cmd = pidof hyprlock || hyprlock
       before_sleep_cmd = loginctl lock-session
@@ -1362,7 +1357,7 @@
   # ────────────────────────────────────────────────────────────────────────────
   # Wlogout
   # ────────────────────────────────────────────────────────────────────────────
-  home.file=".config/wlogout/layout".text = ''
+  home.file.".config/wlogout/layout".text = ''
     {
       "label" : "lock",
       "action" : "hyprlock",
@@ -1401,7 +1396,7 @@
     }
   '';
 
-  home.file=".config/wlogout/style.css".text = ''
+  home.file.".config/wlogout/style.css".text = ''
     * {
       background-image: none;
     }
