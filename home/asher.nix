@@ -444,7 +444,17 @@ let
   p = palettes.${defaultPalette};
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # Feature Flags
+  # Feature Flags - Toggle hardware/software features based on your setup
+  # ──────────────────────────────────────────────────────────────────────────────
+  # Set these based on your actual hardware capabilities:
+  #   hasBattery    - Laptop with battery (enables power management, lid scripts)
+  #   hasBluetooth  - Bluetooth adapter present (enables blueman)
+  #   hasBacklight  - Screen brightness control (enables brightnessctl)
+  #   hasTouchpad   - Touchpad present (enables gestures, tap-to-click)
+  #   enableDCF     - DeMoD Communication Framework integration
+  #   enableAIStack - Local AI inference tools
+  #   enableGaming  - Gaming packages (Steam, etc.)
+  #   enableDev     - Development tools (VSCode, Git, etc.)
   # ──────────────────────────────────────────────────────────────────────────────
   features = {
     hasBattery = true;
@@ -463,19 +473,20 @@ let
   };
 
   # Waybar modules helper
-  mkWaybarModules = {
-    left = [ "custom/logo" "hyprland/workspaces" "hyprland/submap" "custom/separator-left" "hyprland/window" ];
-    center = [ "custom/separator-dot" "clock" "custom/separator-dot" ];
-    right = lib.flatten [
-      [ "custom/media" ]
-      [ "custom/separator-right" "group/audio" ]
-      [ "custom/separator-right" "group/network" ]
-      [ "custom/separator-right" "group/system" ]
-      (lib.optionals features.hasBattery [ "custom/separator-right" "battery" ])
-      [ "custom/separator-right" "tray" ]
-      [ "custom/power" ]
-    ];
-  };
+   mkWaybarModules = {
+     left = [ "custom/logo" "hyprland/workspaces" "hyprland/submap" "custom/separator-left" "hyprland/window" ];
+     center = [ "custom/separator-dot" "clock" "custom/separator-dot" ];
+     right = lib.flatten [
+       [ "custom/media" ]
+       (lib.optionals features.hasBacklight [ "custom/separator-right" "backlight" ])
+       [ "custom/separator-right" "group/audio" ]
+       [ "custom/separator-right" "group/network" ]
+       [ "custom/separator-right" "group/system" ]
+       (lib.optionals features.hasBattery [ "custom/separator-right" "battery" ])
+       [ "custom/separator-right" "tray" ]
+       [ "custom/power" ]
+     ];
+   };
 
 in {
   home.username = username;
@@ -761,7 +772,7 @@ in {
     dimscreenEnabled=true
     fadeEnabled=true
     glideEnabled=false
-    kwin4_effect_diminavtiveEnabled=true
+    kwin4_effect_diminactiveEnabled=true
     kwin4_effect_squashEnabled=false
     magiclampEnabled=false
     scaleEnabled=true
@@ -805,13 +816,13 @@ in {
     usersWallpapers=
   '';
 
-  # Plasma Desktop Appearance
-  home.file.".config/plasma-org.kde.plasma.desktop-appletsrc".text = lib.mkDefault "";
+  # Note: plasma-org.kde.plasma.desktop-appletsrc is intentionally NOT managed
+  # to allow Plasma to generate its own default configuration on first run
 
   # Kvantum Theme Configuration (Qt theming engine)
   home.file.".config/Kvantum/kvantum.kvconfig".text = ''
     [General]
-    theme=KvArcDark
+    theme=DeMoD
   '';
 
   # Custom Kvantum theme for DeMoD
@@ -1537,9 +1548,10 @@ in {
   wayland.windowManager.hyprland = {
     enable = true;
     settings = {
-      monitor = [ "${monitors.laptop.name}, ${monitors.laptop.resolution}, ${monitors.laptop.position}, ${monitors.laptop.scale}" ", preferred, auto, 1" ];
+      monitor = "${monitors.laptop.name}, ${monitors.laptop.resolution}, ${monitors.laptop.position}, ${monitors.laptop.scale}";
 
       exec-once = lib.flatten [
+        [ "dbus-update-activation-environment --systemd --all" ]
         [ "waybar" "hyprpaper" "hypridle" "mako" ]
         [ "${pkgs.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1" ]
         [ "${pkgs.gnome-keyring}/bin/gnome-keyring-daemon --start --components=secrets" ]
@@ -1555,6 +1567,7 @@ in {
       env = [
         "QT_QPA_PLATFORM,wayland;xcb"
         "QT_QPA_PLATFORMTHEME,qt5ct"
+        "QT_STYLE_OVERRIDE,kvantum"
         "QT_WAYLAND_DISABLE_WINDOWDECORATION,1"
         "GTK_THEME,Adwaita:dark"
         "GDK_BACKEND,wayland,x11,*"
@@ -1577,7 +1590,7 @@ in {
         accel_profile = "flat";
         touchpad = lib.mkIf features.hasTouchpad {
           natural_scroll = true;
-          tap_to_click = true;
+          "tap-to-click" = true;
           drag_lock = true;
           disable_while_typing = true;
           clickfinger_behavior = true;
@@ -1598,16 +1611,32 @@ in {
 
       decoration = {
         rounding = 12;
-        blur = { enabled = true; size = 8; passes = 3; noise = 0.02; vibrancy = 0.2; popups = true; special = true; };
-        shadow = { enabled = true; range = 12; render_power = 3; color = "rgba(00000055)"; color_inactive = "rgba(00000033)"; offset = "0 4"; };
         dim_inactive = true;
         dim_strength = 0.08;
         dim_special = 0.3;
+        
+        blur = {
+          enabled = true;
+          size = 8;
+          passes = 3;
+          noise = 0.02;
+          vibrancy = 0.2;
+          popups = true;
+          special = true;
+        };
+        
+        shadow = {
+          enabled = true;
+          range = 12;
+          render_power = 3;
+          color = "rgba(00000055)";
+          color_inactive = "rgba(00000033)";
+          offset = "0 4";
+        };
       };
 
       animations = {
         enabled = true;
-        first_launch_animation = true;
         bezier = [
           "fluent, 0.05, 0.9, 0.1, 1.05"
           "bounce, 0.68, -0.55, 0.265, 1.55"
@@ -1629,8 +1658,18 @@ in {
         ];
       };
 
-      dwindle = { pseudotile = true; preserve_split = true; force_split = 2; smart_resizing = true; special_scale_factor = 0.92; };
-      master = { new_status = "master"; mfact = 0.55; };
+      dwindle = {
+        pseudotile = true;
+        preserve_split = true;
+        force_split = 2;
+        smart_resizing = true;
+        special_scale_factor = 0.92;
+      };
+      
+      master = {
+        new_status = "master";
+        mfact = 0.55;
+      };
 
       misc = {
         force_default_wallpaper = 0;
@@ -1643,17 +1682,27 @@ in {
         enable_swallow = true;
         swallow_regex = "^(kitty|foot)$";
         focus_on_activate = true;
-        new_window_takes_over_fullscreen = 2;
       };
 
+      # Gestures - Hyprland 0.51+ syntax
+      # Note: workspace_swipe, workspace_swipe_fingers, workspace_swipe_min_fingers are removed
+      # The modifier options below still work for the gesture action
       gestures = lib.mkIf features.hasTouchpad {
-        workspace_swipe = true;
-        workspace_swipe_fingers = 3;
+        workspace_swipe_invert = false;
         workspace_swipe_distance = 250;
+        workspace_swipe_cancel_ratio = 0.5;
+        workspace_swipe_min_speed_to_force = 30;
         workspace_swipe_create_new = true;
+        # New gesture syntax: fingers, direction, action
+        gesture = [
+          "3, horizontal, workspace"
+        ];
       };
 
-      binds = { workspace_back_and_forth = true; allow_workspace_cycles = true; };
+      binds = {
+        workspace_back_and_forth = true;
+        allow_workspace_cycles = true;
+      };
 
       "$mod" = "SUPER";
       "$terminal" = "kitty";
@@ -1775,16 +1824,16 @@ in {
         "maxsize 1 1, class:^(xwaylandvideobridge)$"
       ];
 
+      # Layer rules - Hyprland 0.52+ syntax
+      # Uses: blur true/false, ignore_alpha [value], animation [type], match:namespace [name]
       layerrule = [
-        "blur, waybar"
-        "blur, wofi"
-        "blur, notifications"
-        "blur, logout_dialog"
-        "ignorezero, waybar"
-        "ignorezero, notifications"
-        "animation slide, wofi"
-        "animation slide, notifications"
-        "animation fade, logout_dialog"
+        "blur true, ignore_alpha 0.5, match:namespace waybar"
+        "blur true, ignore_alpha 0.5, match:namespace wofi"
+        "blur true, ignore_alpha 0.5, match:namespace notifications"
+        "blur true, ignore_alpha 0.5, match:namespace logout_dialog"
+        "animation slide, match:namespace wofi"
+        "animation slide, match:namespace notifications"
+        "animation fade, match:namespace logout_dialog"
       ];
     };
 
@@ -1809,7 +1858,7 @@ in {
     settings.mainBar = {
       layer = "top";
       position = "top";
-      height = 42;
+      height = 50;
       margin-top = 6;
       margin-left = 10;
       margin-right = 10;
@@ -1821,8 +1870,10 @@ in {
 
       "custom/logo" = {
         format = "󱄅";
-        tooltip = "DeMoD Workstation";
+        tooltip = true;
+        tooltip-format = "DeMoD Workstation\n\n<b>Quick Actions</b>\n󱓞 Click: App Launcher\n󰍜 Right: System Info";
         on-click = "wofi --show drun -I";
+        on-click-right = "kitty --class floating-term -e btop";
       };
 
       "hyprland/workspaces" = {
@@ -1830,25 +1881,39 @@ in {
         format-icons = {
           "1" = ""; "2" = ""; "3" = "󱓧"; "4" = ""; "5" = "";
           "6" = "󰕧"; "7" = ""; "8" = ""; "9" = "󰓓"; "10" = "";
-          urgent = ""; active = ""; default = ""; special = "";
+          urgent = ""; active = ""; default = ""; special = "󰠱";
         };
         on-click = "activate";
         on-scroll-up = "hyprctl dispatch workspace e+1";
         on-scroll-down = "hyprctl dispatch workspace e-1";
         persistent-workspaces = { "*" = 5; };
+        all-outputs = false;
+        show-special = true;
+        special-visible-only = false;
       };
 
-      "hyprland/submap" = { format = " {}"; };
+      "hyprland/submap" = { 
+        format = "<span color='${p.bg}'> {}</span>"; 
+        tooltip = true;
+        tooltip-format = "Active submap: {}";
+      };
 
       "hyprland/window" = {
         format = "{title}";
-        max-length = 35;
+        max-length = 40;
+        separate-outputs = true;
         rewrite = {
           "(.*) — Mozilla Firefox" = " $1";
           "(.*) - Brave" = "󰖟 $1";
           "(.*) - Visual Studio Code" = "󰨞 $1";
+          "(.*) - Obsidian v(.*)" = "󱓧 $1";
           "(.*)kitty" = " Terminal";
+          "(.*)Kitty" = " Terminal";
           "(.*)thunar(.*)" = "󰉋 Files";
+          "(.*)Thunar(.*)" = "󰉋 Files";
+          "(.*) - Discord" = "󰙯 $1";
+          "(.*) - Spotify" = " $1";
+          "Steam" = "󰓓 Steam";
           "" = " Desktop";
         };
       };
@@ -1857,51 +1922,89 @@ in {
         interval = 1;
         format = "󰥔  {:%H:%M}";
         format-alt = "󰃭  {:%A, %B %d   󰥔  %H:%M:%S}";
-        tooltip-format = "<tt><big>{:%Y %B}</big>\n\n{calendar}</tt>";
+        tooltip = true;
+        tooltip-format = "<big><b>{:%B %Y}</b></big>\n\n<tt>{calendar}</tt>";
         calendar = {
           mode = "month";
           mode-mon-col = 3;
           weeks-pos = "right";
+          on-scroll = 1;
+          on-click-right = "mode";
           format = {
             months = "<span color='${p.accent}'><b>{}</b></span>";
             days = "<span color='${p.text}'>{}</span>";
             weeks = "<span color='${p.accentAlt}'><b>W{}</b></span>";
             weekdays = "<span color='${p.warning}'><b>{}</b></span>";
-            today = "<span color='${p.bg}' bgcolor='${p.accent}'><b>{}</b></span>";
+            today = "<span color='${p.bg}' bgcolor='${p.accent}'><b> {} </b></span>";
           };
+        };
+        actions = {
+          on-click-right = "mode";
+          on-scroll-up = "shift_up";
+          on-scroll-down = "shift_down";
         };
       };
 
       "custom/media" = {
         format = "{icon} {}";
-        format-icons = { Playing = "󰎆"; Paused = "󰏤"; };
-        max-length = 25;
-        exec = "playerctl -a metadata --format '{\"text\": \"{{artist}} - {{title}}\", \"alt\": \"{{status}}\"}' -F 2>/dev/null || echo '{}'";
+        format-icons = { Playing = "󰎆"; Paused = "󰏤"; Stopped = "󰓛"; };
+        max-length = 30;
+        exec = "playerctl -a metadata --format '{\"text\": \"{{artist}} - {{markup_escape(title)}}\", \"alt\": \"{{status}}\", \"tooltip\": \"{{playerName}}: {{artist}} - {{title}} ({{duration(position)}}/{{duration(mpris:length)}})\"}' -F 2>/dev/null || echo '{\"text\": \"\", \"alt\": \"Stopped\"}'";
         return-type = "json";
         on-click = "playerctl play-pause";
         on-click-right = "playerctl next";
+        on-click-middle = "playerctl previous";
+        on-scroll-up = "playerctl volume 0.02+";
+        on-scroll-down = "playerctl volume 0.02-";
+        tooltip = true;
       };
 
       "group/audio" = {
         orientation = "horizontal";
-        modules = [ "pulseaudio" ] ++ (lib.optional features.hasBacklight "backlight");
+        modules = [ "pulseaudio" "pulseaudio#microphone" ];
       };
 
       "pulseaudio" = {
-        format = "{icon}  {volume}%";
-        format-muted = "󰖁  Muted";
-        format-icons = { default = [ "󰕿" "󰖀" "󰕾" ]; headphone = "󰋋"; };
+        format = "{icon} {volume}%";
+        format-muted = "󰖁 Muted";
+        format-icons = { 
+          default = [ "󰕿" "󰖀" "󰕾" ]; 
+          headphone = "󰋋";
+          headset = "󰋎";
+          speaker = "󰓃";
+          hdmi = "󰡁";
+        };
+        tooltip = true;
+        tooltip-format = "Volume: {volume}%\nDevice: {desc}";
         on-click = "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle";
         on-click-right = "pavucontrol";
-        on-scroll-up = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 2%+";
+        on-click-middle = "helvum";
+        on-scroll-up = "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 2%+";
         on-scroll-down = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 2%-";
+        scroll-step = 2;
+      };
+
+      "pulseaudio#microphone" = {
+        format = "{format_source}";
+        format-source = "󰍬 {volume}%";
+        format-source-muted = "󰍭";
+        tooltip = true;
+        tooltip-format = "Microphone: {volume}%\nSource: {desc}";
+        on-click = "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle";
+        on-click-right = "pavucontrol -t 4";
+        on-scroll-up = "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 2%+";
+        on-scroll-down = "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 2%-";
       };
 
       "backlight" = {
-        format = "{icon}  {percent}%";
-        format-icons = [ "󰃞" "󰃟" "󰃠" ];
+        format = "{icon} {percent}%";
+        format-icons = [ "󰃞" "󰃟" "󰃝" "󰃠" ];
+        tooltip = true;
+        tooltip-format = "Brightness: {percent}%";
         on-scroll-up = "brightnessctl set 2%+";
         on-scroll-down = "brightnessctl set 2%-";
+        on-click = "brightnessctl set 100%";
+        on-click-right = "brightnessctl set 30%";
       };
 
       "group/network" = {
@@ -1910,18 +2013,33 @@ in {
       };
 
       "network" = {
-        format-wifi = "󰤨  {signalStrength}%";
-        format-ethernet = "󰈀";
-        format-disconnected = "󰤭";
-        tooltip-format-wifi = "󰤨 {essid}\n󰩟 {ipaddr}\n󰕒 {bandwidthUpBytes}  󰇚 {bandwidthDownBytes}";
+        interval = 5;
+        format-wifi = "󰤨 {signalStrength}%";
+        format-ethernet = "󰈀 {ipaddr}";
+        format-linked = "󰈀 {ifname}";
+        format-disconnected = "󰤭 Offline";
+        format-disabled = "󰤮";
+        tooltip = true;
+        tooltip-format-wifi = "󰤨 <b>{essid}</b> ({signalStrength}%)\n󰩟 {ipaddr}/{cidr}\n󰕒 {bandwidthUpBytes}  󰇚 {bandwidthDownBytes}\n󰒍 Gateway: {gwaddr}";
+        tooltip-format-ethernet = "󰈀 <b>{ifname}</b>\n󰩟 {ipaddr}/{cidr}\n󰕒 {bandwidthUpBytes}  󰇚 {bandwidthDownBytes}";
+        tooltip-format-disconnected = "No network connection";
         on-click = "nm-connection-editor";
+        on-click-right = "kitty --class floating-term -e nmtui";
       };
 
       "bluetooth" = {
         format = "󰂯";
         format-connected = "󰂱 {num_connections}";
+        format-connected-battery = "󰂱 {device_battery_percentage}%";
         format-disabled = "󰂲";
+        format-off = "󰂲";
+        tooltip = true;
+        tooltip-format = "Bluetooth: {status}";
+        tooltip-format-connected = "Connected to:\n{device_enumerate}";
+        tooltip-format-enumerate-connected = "  󰂱 {device_alias}";
+        tooltip-format-enumerate-connected-battery = "  󰂱 {device_alias} ({device_battery_percentage}%)";
         on-click = "blueman-manager";
+        on-click-right = "bluetoothctl power toggle";
       };
 
       "group/system" = {
@@ -1929,23 +2047,58 @@ in {
         modules = [ "cpu" "memory" "temperature" ];
       };
 
-      "cpu" = { interval = 5; format = "󰻠 {usage}%"; states = { warning = 70; critical = 90; }; };
-      "memory" = { interval = 5; format = "󰍛 {percentage}%"; states = { warning = 70; critical = 90; }; };
-      "temperature" = { interval = 5; critical-threshold = 80; format = "{icon} {temperatureC}°"; format-icons = [ "󱃃" "󰔏" "󱃂" ]; };
-
-      "battery" = {
-        interval = 30;
-        states = { good = 80; warning = 30; critical = 15; };
-        format = "{icon}  {capacity}%";
-        format-charging = "󰂄  {capacity}%";
-        format-plugged = "󰚥  {capacity}%";
-        format-icons = [ "󰂎" "󰁺" "󰁻" "󰁼" "󰁽" "󰁾" "󰁿" "󰂀" "󰂁" "󰂂" "󰁹" ];
-        tooltip-format = "{timeTo}\n{capacity}% • {health}% health";
+      "cpu" = { 
+        interval = 3; 
+        format = "󰻠 {usage}%"; 
+        states = { warning = 70; critical = 90; }; 
+        tooltip = true;
+        tooltip-format = "CPU Usage: {usage}%\nLoad: {load}";
+        on-click = "kitty --class floating-term -e btop";
+      };
+      "memory" = { 
+        interval = 3; 
+        format = "󰍛 {percentage}%"; 
+        states = { warning = 70; critical = 90; }; 
+        tooltip = true;
+        tooltip-format = "RAM: {used:0.1f}GB / {total:0.1f}GB ({percentage}%)\nSwap: {swapUsed:0.1f}GB / {swapTotal:0.1f}GB";
+        on-click = "kitty --class floating-term -e btop";
+      };
+      "temperature" = { 
+        interval = 3; 
+        critical-threshold = 80; 
+        format = "{icon} {temperatureC}°"; 
+        format-critical = "{icon} {temperatureC}°";
+        format-icons = [ "󱃃" "󰔏" "󱃂" ]; 
+        tooltip = true;
+        tooltip-format = "Temperature: {temperatureC}°C / {temperatureF}°F";
+        on-click = "kitty --class floating-term -e ~/.local/bin/thermal-status";
       };
 
-      "tray" = { icon-size = 18; spacing = 10; };
+      "battery" = {
+        interval = 10;
+        states = { good = 80; warning = 30; critical = 15; };
+        format = "{icon} {capacity}%";
+        format-charging = "󰂄 {capacity}%";
+        format-plugged = "󰚥 {capacity}%";
+        format-full = "󰁹 Full";
+        format-icons = [ "󰂎" "󰁺" "󰁻" "󰁼" "󰁽" "󰁾" "󰁿" "󰂀" "󰂁" "󰂂" "󰁹" ];
+        tooltip = true;
+        tooltip-format = "Battery: {capacity}%\nStatus: {timeTo}\nPower: {power:.2f}W\nHealth: {health}%\nCycles: {cycles}";
+      };
 
-      "custom/power" = { format = "󰐥"; tooltip = "Power Menu"; on-click = "wlogout -p layer-shell"; };
+      "tray" = { 
+        icon-size = 18; 
+        spacing = 8;
+        show-passive-items = true;
+      };
+
+      "custom/power" = { 
+        format = "󰐥"; 
+        tooltip = true;
+        tooltip-format = "Power Menu\n\n󰌾 l: Lock\n󰗽 e: Logout\n󰤄 s: Sleep\n󰜉 r: Reboot\n󰐥 p: Shutdown"; 
+        on-click = "wlogout -p layer-shell"; 
+        on-click-right = "hyprlock";
+      };
 
       "custom/separator-left" = { format = ""; tooltip = false; };
       "custom/separator-right" = { format = ""; tooltip = false; };
@@ -2321,115 +2474,222 @@ in {
   # Wofi Launcher
   # ════════════════════════════════════════════════════════════════════════════
   home.file.".config/wofi/config".text = ''
-    width=650
-    height=450
+    # Wofi Configuration - DeMoD Theme
+    width=700
+    height=500
     location=center
     show=drun
-    prompt=Search...
+    prompt=  Search applications...
     filter_rate=100
     allow_markup=true
     no_actions=true
     insensitive=true
     allow_images=true
-    image_size=36
+    image_size=42
     gtk_dark=true
     layer=overlay
     columns=1
+    orientation=vertical
+    halign=fill
+    line_wrap=off
+    dynamic_lines=false
+    content_halign=fill
+    matching=contains
+    sort_order=alphabetical
+    hide_scroll=false
+    key_expand=Tab
+    key_exit=Escape
   '';
 
   home.file.".config/wofi/style.css".text = ''
-    /* Wofi Theme - Enhanced UX per Design System */
+    /* ═══════════════════════════════════════════════════════════════════════════
+     * DeMoD Wofi Theme - Premium Launcher Experience
+     * Turquoise/Violet gradient, glassmorphic design
+     * ═══════════════════════════════════════════════════════════════════════════ */
+    
+    @define-color bg ${p.bg};
+    @define-color surface ${p.surface};
+    @define-color accent ${p.accent};
+    @define-color accent-alt ${p.accentAlt};
+    @define-color text ${p.text};
+    @define-color text-dim ${p.textDim};
+    @define-color border ${p.border};
+    
     * {
-      font-family: "JetBrains Mono", "Inter", sans-serif;
+      font-family: "JetBrainsMono Nerd Font", "Inter", system-ui, sans-serif;
       font-size: 14px;
+      outline: none;
     }
 
     window {
-      background: linear-gradient(180deg, ${p.bg}F8 0%, ${p.surface}F5 100%);
-      border: 2px solid ${p.accent};
-      border-radius: 20px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(0, 245, 212, 0.15);
+      background: linear-gradient(160deg, 
+        alpha(@bg, 0.92) 0%, 
+        alpha(@surface, 0.88) 50%,
+        alpha(@bg, 0.92) 100%);
+      border: 2px solid alpha(@accent, 0.6);
+      border-radius: 24px;
+      box-shadow: 
+        0 0 0 1px alpha(@border, 0.3),
+        0 12px 48px rgba(0, 0, 0, 0.6),
+        0 0 60px alpha(@accent, 0.08),
+        inset 0 1px 0 alpha(white, 0.05);
+      animation: fadeIn 0.2s ease-out;
     }
 
+    /* ── Search Input ─────────────────────────────────────────────────────────── */
     #input {
-      margin: 14px;
-      padding: 14px 18px;
-      border: 2px solid ${p.border};
-      border-radius: 14px;
-      background: ${p.bgAlt};
-      color: ${p.text};
-      font-size: 15px;
-      transition: all 0.2s ease;
+      margin: 18px 18px 12px 18px;
+      padding: 16px 20px;
+      border: 2px solid alpha(@border, 0.5);
+      border-radius: 16px;
+      background: linear-gradient(135deg, 
+        alpha(@surface, 0.8) 0%, 
+        alpha(@bg, 0.9) 100%);
+      color: @text;
+      font-size: 16px;
+      font-weight: 500;
+      caret-color: @accent;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 
+        inset 0 2px 4px alpha(black, 0.2),
+        0 1px 0 alpha(white, 0.03);
     }
 
     #input:focus {
-      border-color: ${p.accent};
-      box-shadow: 0 0 0 3px alpha(${p.accent}, 0.15);
-      background: ${p.surfaceAlt};
+      border-color: @accent;
+      background: linear-gradient(135deg,
+        alpha(@surface, 0.95) 0%,
+        alpha(@bg, 0.98) 100%);
+      box-shadow: 
+        0 0 0 4px alpha(@accent, 0.12),
+        inset 0 2px 4px alpha(black, 0.15),
+        0 0 20px alpha(@accent, 0.1);
     }
 
-    #input::placeholder {
-      color: ${p.textDim};
+    #input image {
+      color: @text-dim;
+      margin-right: 12px;
     }
 
+    #input:focus image {
+      color: @accent;
+    }
+
+    /* ── Results Container ────────────────────────────────────────────────────── */
     #inner-box {
-      margin: 0 14px 14px 14px;
+      margin: 0 18px 18px 18px;
+      background: transparent;
     }
 
     #outer-box {
       margin: 0;
+      padding: 0;
     }
 
     #scroll {
       margin: 0;
+      padding: 0;
     }
 
+    /* ── Scrollbar ────────────────────────────────────────────────────────────── */
+    scrollbar {
+      background: transparent;
+      margin-left: 8px;
+    }
+    
+    scrollbar slider {
+      background: alpha(@accent, 0.35);
+      border-radius: 6px;
+      min-width: 8px;
+      min-height: 40px;
+      transition: all 0.2s ease;
+    }
+    
+    scrollbar slider:hover {
+      background: alpha(@accent, 0.55);
+      min-width: 10px;
+    }
+    
+    scrollbar slider:active {
+      background: @accent;
+    }
+
+    /* ── Entry Items ──────────────────────────────────────────────────────────── */
+    #entry {
+      padding: 14px 18px;
+      margin: 4px 0;
+      border-radius: 14px;
+      background: transparent;
+      border: 2px solid transparent;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    #entry:hover {
+      background: alpha(@accent, 0.08);
+      border-color: alpha(@accent, 0.15);
+    }
+
+    #entry:selected {
+      background: linear-gradient(135deg, 
+        alpha(${p.gradientStart}, 0.95) 0%, 
+        alpha(${p.gradientEnd}, 0.9) 100%);
+      border-color: transparent;
+      box-shadow: 
+        0 4px 16px alpha(@accent, 0.35),
+        0 0 0 1px alpha(white, 0.1),
+        inset 0 1px 0 alpha(white, 0.15);
+    }
+
+    #entry:selected:hover {
+      background: linear-gradient(135deg, 
+        ${p.gradientStart} 0%, 
+        ${p.gradientEnd} 100%);
+      box-shadow: 
+        0 6px 20px alpha(@accent, 0.45),
+        0 0 0 1px alpha(white, 0.15),
+        inset 0 1px 0 alpha(white, 0.2);
+    }
+
+    /* ── Text ─────────────────────────────────────────────────────────────────── */
     #text {
-      color: ${p.text};
+      color: @text;
+      font-weight: 500;
+      margin-left: 4px;
     }
 
     #text:selected {
       color: ${p.textOnAccent};
+      font-weight: 600;
+      text-shadow: 0 1px 2px alpha(black, 0.2);
     }
 
-    #entry {
-      padding: 12px 16px;
-      margin: 4px 0;
-      border-radius: 12px;
-      background: transparent;
+    /* ── App Icons ────────────────────────────────────────────────────────────── */
+    #img {
+      margin-right: 14px;
+      border-radius: 10px;
+      background: alpha(@surface, 0.5);
+      padding: 4px;
       transition: all 0.2s ease;
     }
 
-    #entry:selected {
-      background: linear-gradient(135deg, ${p.gradientStart} 0%, ${p.gradientEnd} 100%);
-      box-shadow: 0 4px 12px alpha(${p.accent}, 0.3);
+    #entry:selected #img {
+      background: alpha(white, 0.15);
+      box-shadow: 0 2px 8px alpha(black, 0.2);
     }
 
-    #entry:hover {
-      background: alpha(${p.accent}, 0.12);
+    /* ── Expander (for subcategories) ─────────────────────────────────────────── */
+    #expander-box {
+      padding: 0;
     }
 
-    #entry:selected:hover {
-      background: linear-gradient(135deg, ${p.gradientStart} 0%, ${p.gradientEnd} 100%);
+    expander {
+      color: @text-dim;
     }
 
-    #img {
-      margin-right: 12px;
-    }
-
-    /* Scrollbar styling */
-    scrollbar {
-      background: transparent;
-    }
-    
-    scrollbar slider {
-      background: alpha(${p.accent}, 0.4);
-      border-radius: 4px;
-      min-width: 6px;
-    }
-    
-    scrollbar slider:hover {
-      background: alpha(${p.accent}, 0.6);
+    /* ── No Results ───────────────────────────────────────────────────────────── */
+    #entry:first-child:last-child #text {
+      color: @text-dim;
+      font-style: italic;
     }
   '';
 
@@ -2440,48 +2700,116 @@ in {
     {"label":"lock","action":"hyprlock","text":"Lock","keybind":"l"}
     {"label":"logout","action":"hyprctl dispatch exit","text":"Logout","keybind":"e"}
     {"label":"suspend","action":"systemctl suspend","text":"Sleep","keybind":"s"}
+    {"label":"hibernate","action":"systemctl hibernate","text":"Hibernate","keybind":"h"}
     {"label":"reboot","action":"systemctl reboot","text":"Reboot","keybind":"r"}
     {"label":"shutdown","action":"systemctl poweroff","text":"Shutdown","keybind":"p"}
   '';
 
   home.file.".config/wlogout/style.css".text = ''
+    /* ═══════════════════════════════════════════════════════════════════════════
+     * DeMoD Wlogout Theme - Premium Power Menu
+     * ═══════════════════════════════════════════════════════════════════════════ */
+    
     * {
       background-image: none;
-      font-family: "JetBrains Mono", sans-serif;
+      font-family: "JetBrainsMono Nerd Font", "Inter", sans-serif;
       font-size: 14px;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     window {
-      background: linear-gradient(180deg, ${p.bg}E8 0%, ${p.surface}E5 100%);
+      background: linear-gradient(180deg, 
+        alpha(${p.bg}, 0.85) 0%, 
+        alpha(${p.surface}, 0.80) 100%);
+      animation: fadeIn 0.3s ease-out;
     }
 
     button {
       color: ${p.text};
-      background: linear-gradient(180deg, ${p.surface} 0%, ${p.surfaceAlt} 100%);
-      border: 2px solid ${p.border};
-      border-radius: 20px;
-      margin: 12px;
-      padding: 20px;
+      background: linear-gradient(180deg, 
+        alpha(${p.surface}, 0.9) 0%, 
+        alpha(${p.surfaceAlt}, 0.85) 100%);
+      border: 2px solid alpha(${p.border}, 0.6);
+      border-radius: 24px;
+      margin: 16px;
+      padding: 24px;
+      min-width: 120px;
+      min-height: 120px;
       background-repeat: no-repeat;
-      background-position: center 30%;
-      background-size: 30%;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-      transition: all 0.3s ease;
+      background-position: center 35%;
+      background-size: 28%;
+      box-shadow: 
+        0 4px 20px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 alpha(white, 0.05);
     }
 
-    button:focus, button:hover {
-      background: linear-gradient(135deg, ${p.gradientStart} 0%, ${p.gradientEnd} 100%);
-      color: ${p.textOnAccent};
+    button:focus,
+    button:hover {
       border-color: ${p.accent};
-      box-shadow: 0 6px 24px alpha(${p.accent}, 0.4);
-      transform: scale(1.02);
+      box-shadow: 
+        0 8px 32px alpha(${p.accent}, 0.35),
+        0 0 40px alpha(${p.accent}, 0.15),
+        inset 0 1px 0 alpha(white, 0.1);
+      outline: none;
     }
 
-    #lock:focus, #lock:hover { background: linear-gradient(135deg, ${p.info} 0%, ${p.accent} 100%); }
-    #logout:focus, #logout:hover { background: linear-gradient(135deg, ${p.warning} 0%, ${p.orange} 100%); }
-    #suspend:focus, #suspend:hover { background: linear-gradient(135deg, ${p.purple} 0%, ${p.pink} 100%); }
-    #reboot:focus, #reboot:hover { background: linear-gradient(135deg, ${p.accentAlt} 0%, ${p.info} 100%); }
-    #shutdown:focus, #shutdown:hover { background: linear-gradient(135deg, ${p.error} 0%, ${p.pink} 100%); }
+    button:active {
+      transform: scale(0.98);
+    }
+
+    /* ── Lock ─────────────────────────────────────────────────────────────────── */
+    #lock {
+      background-image: url("${pkgs.wlogout}/share/wlogout/icons/lock.png");
+    }
+    #lock:focus, #lock:hover { 
+      background: linear-gradient(135deg, ${p.info} 0%, ${p.accent} 100%);
+      color: ${p.textOnAccent};
+    }
+
+    /* ── Logout ───────────────────────────────────────────────────────────────── */
+    #logout {
+      background-image: url("${pkgs.wlogout}/share/wlogout/icons/logout.png");
+    }
+    #logout:focus, #logout:hover { 
+      background: linear-gradient(135deg, ${p.warning} 0%, ${p.orange} 100%);
+      color: ${p.bg};
+    }
+
+    /* ── Suspend/Sleep ────────────────────────────────────────────────────────── */
+    #suspend {
+      background-image: url("${pkgs.wlogout}/share/wlogout/icons/suspend.png");
+    }
+    #suspend:focus, #suspend:hover { 
+      background: linear-gradient(135deg, ${p.purple} 0%, ${p.pink} 100%);
+      color: ${p.textOnAccent};
+    }
+
+    /* ── Hibernate ────────────────────────────────────────────────────────────── */
+    #hibernate {
+      background-image: url("${pkgs.wlogout}/share/wlogout/icons/hibernate.png");
+    }
+    #hibernate:focus, #hibernate:hover { 
+      background: linear-gradient(135deg, ${p.accentDim} 0%, ${p.purple} 100%);
+      color: ${p.textOnAccent};
+    }
+
+    /* ── Reboot ───────────────────────────────────────────────────────────────── */
+    #reboot {
+      background-image: url("${pkgs.wlogout}/share/wlogout/icons/reboot.png");
+    }
+    #reboot:focus, #reboot:hover { 
+      background: linear-gradient(135deg, ${p.accentAlt} 0%, ${p.info} 100%);
+      color: ${p.textOnAccent};
+    }
+
+    /* ── Shutdown ─────────────────────────────────────────────────────────────── */
+    #shutdown {
+      background-image: url("${pkgs.wlogout}/share/wlogout/icons/shutdown.png");
+    }
+    #shutdown:focus, #shutdown:hover { 
+      background: linear-gradient(135deg, ${p.error} 0%, #FF6B7F 100%);
+      color: ${p.text};
+    }
   '';
 
   # ════════════════════════════════════════════════════════════════════════════
@@ -2670,28 +2998,44 @@ in {
     executable = true;
     text = ''
       #!/usr/bin/env bash
+      set -u
       step="''${2:-5}"
       
+      # Check if wpctl is available
+      if ! command -v wpctl &>/dev/null; then
+        notify-send -t 2000 -u critical "Volume" "wpctl not found" 2>/dev/null || true
+        exit 1
+      fi
+      
       get_icon() {
-        vol=$1; mute=$2
+        local vol=$1 mute=$2
         [[ "$mute" == "yes" ]] && echo "󰖁" && return
         [[ $vol -ge 70 ]] && echo "󰕾" || [[ $vol -ge 30 ]] && echo "󰖀" || echo "󰕿"
       }
       
       send_notif() {
-        vol=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{print int($2*100)}')
-        mute=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ | grep -q MUTED && echo "yes" || echo "no")
-        icon=$(get_icon "$vol" "$mute")
-        text=$([[ $mute == "yes" ]] && echo "Muted" || echo "$vol%")
+        local output
+        output=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null) || return
+        local vol=$(echo "$output" | awk '{print int($2*100)}')
+        local mute=$([[ "$output" == *"MUTED"* ]] && echo "yes" || echo "no")
+        local icon=$(get_icon "$vol" "$mute")
+        local text=$([[ $mute == "yes" ]] && echo "Muted" || echo "$vol%")
         
         notify-send -t 1500 -h string:x-canonical-private-synchronous:volume \
-          -h int:value:"$vol" "$icon  Volume" "$text"
+          -h int:value:"$vol" "$icon  Volume" "$text" 2>/dev/null || true
       }
       
       case "''${1:-}" in
-        up)   wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ "$step%+"; send_notif ;;
-        down) wpctl set-volume @DEFAULT_AUDIO_SINK@ "$step%-"; send_notif ;;
-        mute) wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle; send_notif ;;
+        up)   wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ "$step%+" 2>/dev/null; send_notif ;;
+        down) wpctl set-volume @DEFAULT_AUDIO_SINK@ "$step%-" 2>/dev/null; send_notif ;;
+        mute) wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle 2>/dev/null; send_notif ;;
+        mic-mute) wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle 2>/dev/null
+          muted=$(wpctl get-volume @DEFAULT_AUDIO_SOURCE@ 2>/dev/null | grep -q MUTED && echo "yes" || echo "no")
+          icon=$([[ "$muted" == "yes" ]] && echo "󰍭" || echo "󰍬")
+          text=$([[ "$muted" == "yes" ]] && echo "Muted" || echo "Active")
+          notify-send -t 1500 -h string:x-canonical-private-synchronous:mic "$icon  Microphone" "$text" 2>/dev/null || true
+          ;;
+        *)    echo "Usage: $0 {up|down|mute|mic-mute} [step]" ;;
       esac
     '';
   };
@@ -2724,17 +3068,54 @@ in {
     text = ''
       #!/usr/bin/env bash
       set -euo pipefail
+      
       DIR="$HOME/Pictures/Screenshots"
       mkdir -p "$DIR"
       FILE="$DIR/$(date +'%Y-%m-%d_%H%M%S').png"
       
-      notify() { notify-send -t 3000 -i camera-photo "󰄀  Screenshot" "$1"; }
+      notify() { 
+        notify-send -t 3000 -i camera-photo "󰄀  Screenshot" "$1" 2>/dev/null || true
+      }
+      
+      error_notify() {
+        notify-send -t 3000 -u critical "󰄀  Screenshot" "Failed: $1" 2>/dev/null || true
+      }
       
       case "''${1:-region}" in
-        screen)      grim "$FILE" && wl-copy < "$FILE" && notify "Screen saved" ;;
-        window)      grim -g "$(hyprctl activewindow -j | jq -r '"\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"')" "$FILE" && wl-copy < "$FILE" && notify "Window saved" ;;
-        region)      grim -g "$(slurp -d)" "$FILE" && wl-copy < "$FILE" && notify "Region saved" ;;
-        region-edit) grim -g "$(slurp -d)" - | swappy -f - ;;
+        screen)
+          if grim "$FILE" && wl-copy < "$FILE"; then
+            notify "Screen saved"
+          else
+            error_notify "Screen capture failed"
+          fi
+          ;;
+        window)
+          GEOM=$(hyprctl activewindow -j 2>/dev/null | jq -r '"\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"' 2>/dev/null)
+          if [[ -n "$GEOM" && "$GEOM" != "null,null nullxnull" ]]; then
+            if grim -g "$GEOM" "$FILE" && wl-copy < "$FILE"; then
+              notify "Window saved"
+            else
+              error_notify "Window capture failed"
+            fi
+          else
+            error_notify "No active window"
+          fi
+          ;;
+        region)
+          SELECTION=$(slurp -d 2>/dev/null) || { error_notify "Selection cancelled"; exit 0; }
+          if grim -g "$SELECTION" "$FILE" && wl-copy < "$FILE"; then
+            notify "Region saved"
+          else
+            error_notify "Region capture failed"
+          fi
+          ;;
+        region-edit)
+          SELECTION=$(slurp -d 2>/dev/null) || { error_notify "Selection cancelled"; exit 0; }
+          grim -g "$SELECTION" - | swappy -f - 2>/dev/null || error_notify "Edit failed"
+          ;;
+        *)
+          error_notify "Unknown mode: ''${1:-}"
+          ;;
       esac
     '';
   };
@@ -2870,14 +3251,28 @@ in {
     '';
   };
 
-  # Lid Script
+  # Lid Script - handles laptop lid close/open events
   home.file.".config/hypr/scripts/lid.sh" = lib.mkIf features.hasBattery {
     executable = true;
     text = ''
       #!/usr/bin/env bash
+      set -u
+      
+      # Only disable internal display if external monitor is connected
       case "''${1:-}" in
-        close) hyprctl monitors -j | jq -e 'length > 1' >/dev/null 2>&1 && hyprctl keyword monitor "eDP-1,disable" ;;
-        open)  hyprctl keyword monitor "eDP-1,preferred,auto,1" ;;
+        close)
+          # Check if we have more than one monitor before disabling
+          if hyprctl monitors -j 2>/dev/null | jq -e 'length > 1' >/dev/null 2>&1; then
+            hyprctl keyword monitor "eDP-1,disable" 2>/dev/null || true
+          fi
+          ;;
+        open)
+          hyprctl keyword monitor "eDP-1,preferred,auto,1" 2>/dev/null || true
+          ;;
+        *)
+          echo "Usage: $0 {close|open}"
+          exit 1
+          ;;
       esac
     '';
   };
@@ -2886,16 +3281,21 @@ in {
     executable = true;
     text = ''
       #!/usr/bin/env bash
-      if ! hyprctl monitors -j | jq -e '.[] | select(.name | test("^(DP|HDMI)"))' >/dev/null 2>&1; then
-        notify-send -i dialog-warning "Clamshell" "No external monitor"
+      set -u
+      
+      # Check for external monitors (DP or HDMI)
+      if ! hyprctl monitors -j 2>/dev/null | jq -e '.[] | select(.name | test("^(DP|HDMI)"))' >/dev/null 2>&1; then
+        notify-send -u warning -i dialog-warning "Clamshell" "No external monitor detected" 2>/dev/null || true
         exit 1
       fi
-      if hyprctl monitors -j | jq -e '.[] | select(.name | test("^eDP"))' >/dev/null 2>&1; then
-        hyprctl keyword monitor "eDP-1,disable"
-        notify-send "󰍹 Clamshell" "Laptop screen disabled"
+      
+      # Toggle internal display
+      if hyprctl monitors -j 2>/dev/null | jq -e '.[] | select(.name | test("^eDP"))' >/dev/null 2>&1; then
+        hyprctl keyword monitor "eDP-1,disable" 2>/dev/null && \
+          notify-send "󰍹 Clamshell" "Laptop screen disabled" 2>/dev/null || true
       else
-        hyprctl keyword monitor "eDP-1,preferred,auto,1"
-        notify-send "󰍹 Clamshell" "Laptop screen enabled"
+        hyprctl keyword monitor "eDP-1,preferred,auto,1" 2>/dev/null && \
+          notify-send "󰍹 Clamshell" "Laptop screen enabled" 2>/dev/null || true
       fi
     '';
   };
@@ -3004,9 +3404,8 @@ in {
     EDITOR = "nvim";
     BROWSER = "brave";
     TERMINAL = "kitty";
-    # Qt theming
-    QT_QPA_PLATFORMTHEME = "qt5ct";
-    QT_STYLE_OVERRIDE = "kvantum";
+    # Note: Qt theming (QT_QPA_PLATFORMTHEME, QT_STYLE_OVERRIDE) is set
+    # per-session in Hyprland env block to avoid breaking Plasma 6
   };
   home.sessionPath = [ "$HOME/.local/bin" ];
 
