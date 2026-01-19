@@ -477,7 +477,8 @@ let
      left = [ "custom/logo" "hyprland/workspaces" "hyprland/submap" "custom/separator-left" "hyprland/window" ];
      center = [ "custom/separator-dot" "clock" "custom/separator-dot" ];
      right = lib.flatten [
-       [ "custom/media" ]
+       (lib.optionals features.enableGaming [ "custom/gamemode" ])
+       [ "custom/recording" "custom/media" ]
        (lib.optionals features.hasBacklight [ "custom/separator-right" "backlight" ])
        [ "custom/separator-right" "group/audio" ]
        [ "custom/separator-right" "group/network" ]
@@ -500,8 +501,9 @@ in {
   home.pointerCursor = {
     gtk.enable = true;
     x11.enable = true;
-    package = pkgs.bibata-cursors;
-    name = "Bibata-Modern-Classic";
+    # idTech4 cursor theme - custom DeMoD cursor set
+    package = pkgs.bibata-cursors;  # Fallback package, idTech4 installed separately
+    name = "idTech4";
     size = 24;
   };
 
@@ -542,13 +544,34 @@ in {
     # Apps
     [ brave xfce.thunar xfce.tumbler vlc gnome-calculator gnome-system-monitor ]
     (lib.optionals features.enableDev [ vscode-fhs obsidian git gh lazygit btop ])
-    (lib.optionals features.enableGaming [ steam ])
+    (lib.optionals features.enableGaming [ 
+      steam
+      gamescope           # Micro-compositor for games
+      mangohud            # Performance overlay
+      gamemode            # CPU/GPU optimization daemon
+      lutris              # Game launcher
+      wine-staging        # Wine with gaming patches
+      winetricks          # Wine helper
+      protontricks        # Proton helper
+      dxvk                # DirectX to Vulkan
+      vkd3d-proton        # DirectX 12 to Vulkan
+    ])
     [ thunderbird libreoffice-qt6-fresh ]
 
     # Media
     [ wireplumber pavucontrol playerctl easyeffects helvum ]
     (lib.optional features.hasBacklight brightnessctl)
     [ gpu-screen-recorder imagemagick ffmpeg gnome-keyring ]
+
+    # XWayland & Compatibility
+    [ 
+      xorg.xrandr          # XWayland display config
+      xorg.xprop           # Window properties
+      xorg.xdpyinfo        # Display info
+      xorg.xhost           # X server access control
+      xclip                # X11 clipboard (for legacy apps)
+      xsel                 # X11 selections
+    ]
   ];
 
   # ════════════════════════════════════════════════════════════════════════════
@@ -755,6 +778,9 @@ in {
     HiddenPreviews=5
     OpenGLIsUnsafe=false
     WindowsBlockCompositing=true
+    LatencyPolicy=Low
+    # Allow VRR/FreeSync
+    AllowTearing=true
     
     [Effect-blur]
     BlurStrength=8
@@ -797,6 +823,18 @@ in {
     FocusPolicy=ClickToFocus
     FocusStealingPreventionLevel=1
     
+    [Xwayland]
+    Scale=1
+    XwaylandEavesdrops=Combinations
+    XwaylandEavesdropsAllowed=true
+    
+    [NightColor]
+    Active=true
+    EveningBeginFixed=2000
+    Mode=Times
+    MorningBeginFixed=0600
+    NightTemperature=4500
+    
     [org.kde.kdecoration2]
     BorderSize=Normal
     BorderSizeAuto=false
@@ -814,6 +852,68 @@ in {
     
     [Wallpapers]
     usersWallpapers=
+  '';
+
+  # KDE Power Management - Gaming-friendly profiles
+  home.file.".config/powerdevilrc".text = ''
+    [AC][Performance]
+    PowerProfile=performance
+    
+    [AC][Display]
+    DimDisplayIdleTimeoutSec=600
+    TurnOffDisplayIdleTimeoutSec=900
+    
+    [AC][SuspendAndShutdown]
+    AutoSuspendAction=0
+    AutoSuspendIdleTimeoutSec=0
+    PowerButtonAction=16
+    
+    [Battery][BatteryCritical]
+    BatteryCriticalAction=1
+    
+    [Battery][BatteryLow]
+    BatteryLowAction=0
+    
+    [Battery][Performance]
+    PowerProfile=balanced
+    
+    [Battery][Display]
+    DimDisplayIdleTimeoutSec=120
+    TurnOffDisplayIdleTimeoutSec=300
+    
+    [LowBattery][Performance]
+    PowerProfile=power-saver
+  '';
+
+  # KDE Input Settings - for both Plasma and XWayland apps
+  home.file.".config/kcminputrc".text = ''
+    [Keyboard]
+    KeyRepeat=repeat
+    RepeatDelay=300
+    RepeatRate=50
+    
+    [Libinput][1][Apple Inc. Magic Trackpad]
+    NaturalScroll=true
+    PointerAcceleration=0
+    TapToClick=true
+    
+    [Mouse]
+    cursorTheme=idTech4
+    cursorSize=24
+    
+    [Tmp]
+    LeftHandedOverride=false
+  '';
+
+  # KDE Baloo File Indexing - disable for gaming performance
+  home.file.".config/baloofilerc".text = ''
+    [Basic Settings]
+    Indexing-Enabled=false
+    
+    [General]
+    dbVersion=2
+    exclude filters=*~,*.part,*.o,*.la,*.lo,*.loT,*.moc,moc_*.cpp,qrc_*.cpp,ui_*.h,cmake_install.cmake,CMakeCache.txt,CTestTestfile.cmake,*.nvram,*.rcore,lzo,*.elc,*.qmlc,*.jsc,node_modules,.git,.hg,.svn
+    exclude filters version=9
   '';
 
   # Note: plasma-org.kde.plasma.desktop-appletsrc is intentionally NOT managed
@@ -941,7 +1041,7 @@ in {
     [Settings]
     gtk-application-prefer-dark-theme=true
     gtk-button-images=true
-    gtk-cursor-theme-name=Bibata-Modern-Classic
+    gtk-cursor-theme-name=idTech4
     gtk-cursor-theme-size=24
     gtk-decoration-layout=close,minimize,maximize:menu
     gtk-enable-animations=true
@@ -1092,7 +1192,7 @@ in {
   home.file.".config/gtk-4.0/settings.ini".text = ''
     [Settings]
     gtk-application-prefer-dark-theme=true
-    gtk-cursor-theme-name=Bibata-Modern-Classic
+    gtk-cursor-theme-name=idTech4
     gtk-cursor-theme-size=24
     gtk-decoration-layout=close,minimize,maximize:menu
     gtk-enable-animations=true
@@ -1551,33 +1651,87 @@ in {
       monitor = "${monitors.laptop.name}, ${monitors.laptop.resolution}, ${monitors.laptop.position}, ${monitors.laptop.scale}";
 
       exec-once = lib.flatten [
+        # Environment setup - critical for proper session integration
         [ "dbus-update-activation-environment --systemd --all" ]
+        [ "systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XDG_CURRENT_DESKTOP" ]
+        
+        # Core services
         [ "waybar" "hyprpaper" "hypridle" "mako" ]
         [ "${pkgs.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1" ]
         [ "${pkgs.gnome-keyring}/bin/gnome-keyring-daemon --start --components=secrets" ]
+        
+        # System tray apps
         [ "nm-applet --indicator" "udiskie --automount --notify" ]
         (lib.optional features.hasBluetooth "blueman-applet")
+        
+        # Clipboard
         [ "wl-paste --type text --watch cliphist store" "wl-paste --type image --watch cliphist store" ]
+        
+        # Optional services
         (lib.optional features.enableDCF "dcf-tray")
-        [ "mkdir -p ~/.cache/hypr" "mkdir -p ~/Pictures/Screenshots" ]
+        
+        # Directory setup
+        [ "mkdir -p ~/.cache/hypr" "mkdir -p ~/Pictures/Screenshots" "mkdir -p ~/Videos/Recordings" "mkdir -p ~/Videos/Replays" ]
+        
         # Initialize theme
         [ "echo '${defaultPalette}' > ~/.cache/hypr/current-palette" ]
+        
+        # Ensure XWayland has proper cursor
+        [ "sleep 1 && hyprctl setcursor idTech4 24" ]
       ];
 
       env = [
+        # ── Qt Theming ──────────────────────────────────────────────────────────
         "QT_QPA_PLATFORM,wayland;xcb"
         "QT_QPA_PLATFORMTHEME,qt5ct"
         "QT_STYLE_OVERRIDE,kvantum"
         "QT_WAYLAND_DISABLE_WINDOWDECORATION,1"
+        "QT_AUTO_SCREEN_SCALE_FACTOR,1"
+        "QT_SCALE_FACTOR_ROUNDING_POLICY,RoundPreferFloor"
+        
+        # ── GTK Theming ─────────────────────────────────────────────────────────
         "GTK_THEME,Adwaita:dark"
         "GDK_BACKEND,wayland,x11,*"
+        
+        # ── XDG & Desktop ───────────────────────────────────────────────────────
         "XDG_CURRENT_DESKTOP,Hyprland"
         "XDG_SESSION_TYPE,wayland"
+        "XDG_SESSION_DESKTOP,Hyprland"
+        
+        # ── Wayland Native ──────────────────────────────────────────────────────
         "CLUTTER_BACKEND,wayland"
         "SDL_VIDEODRIVER,wayland"
         "MOZ_ENABLE_WAYLAND,1"
+        "MOZ_DBUS_REMOTE,1"
         "ELECTRON_OZONE_PLATFORM_HINT,auto"
+        "_JAVA_AWT_WM_NONREPARENTING,1"
+        
+        # ── Cursor ──────────────────────────────────────────────────────────────
         "XCURSOR_SIZE,24"
+        "XCURSOR_THEME,idTech4"
+        "HYPRCURSOR_SIZE,24"
+        "HYPRCURSOR_THEME,idTech4"
+        
+        # ── XWayland Compatibility ──────────────────────────────────────────────
+        # Force XWayland apps to use the same cursor
+        "WLR_NO_HARDWARE_CURSORS,1"
+        
+        # ── Gaming ──────────────────────────────────────────────────────────────
+        "STEAM_FORCE_DESKTOPUI_SCALING,1"
+        "__GL_GSYNC_ALLOWED,1"
+        "__GL_VRR_ALLOWED,1"
+        "WLR_DRM_NO_ATOMIC,1"
+        # AMD specific - helps with Wine/Proton
+        "AMD_VULKAN_ICD,RADV"
+        "RADV_PERFTEST,gpl"
+        # Wine/Proton
+        "WINE_FULLSCREEN_FSR,1"
+        "DXVK_ASYNC,1"
+        # Gamemode integration
+        "GAMEMODERUNEXEC,env"
+        
+        # ── SSH & Development ───────────────────────────────────────────────────
+        "SSH_AUTH_SOCK,$XDG_RUNTIME_DIR/gcr/ssh"
       ];
 
       input = {
@@ -1684,19 +1838,37 @@ in {
         focus_on_activate = true;
       };
 
-      # Gestures - Hyprland 0.51+ syntax
-      # Note: workspace_swipe, workspace_swipe_fingers, workspace_swipe_min_fingers are removed
-      # The modifier options below still work for the gesture action
+      # ── XWayland Configuration ────────────────────────────────────────────────
+      # Makes X11 apps look better and behave properly
+      xwayland = {
+        force_zero_scaling = true;  # Crisp rendering at native resolution
+        use_nearest_neighbor = false;  # Smoother scaling
+      };
+
+      # ── Cursor Configuration ──────────────────────────────────────────────────
+      cursor = {
+        no_hardware_cursors = true;  # Better XWayland compatibility
+        no_break_fs_vrr = true;  # Don't break VRR in fullscreen
+        min_refresh_rate = 60;  # Minimum refresh for VRR
+        hotspot_padding = 0;
+        inactive_timeout = 5;
+        hide_on_key_press = true;
+        hide_on_touch = true;
+        enable_hyprcursor = true;
+        sync_gsettings_theme = true;  # Sync cursor theme to GTK
+      };
+
+      # Gestures - touchpad swipe configuration
+      # Note: workspace_swipe is enabled by default in recent Hyprland
       gestures = lib.mkIf features.hasTouchpad {
+        workspace_swipe_direction_lock = true;
+        workspace_swipe_direction_lock_threshold = 10;
         workspace_swipe_invert = false;
         workspace_swipe_distance = 250;
         workspace_swipe_cancel_ratio = 0.5;
         workspace_swipe_min_speed_to_force = 30;
         workspace_swipe_create_new = true;
-        # New gesture syntax: fingers, direction, action
-        gesture = [
-          "3, horizontal, workspace"
-        ];
+        workspace_swipe_forever = false;
       };
 
       binds = {
@@ -1744,6 +1916,12 @@ in {
         [ "SHIFT, Print, exec, ~/.config/hypr/scripts/screenshot.sh region" "$mod SHIFT, Print, exec, ~/.config/hypr/scripts/screenshot.sh region-edit" ]
         [ "$mod SHIFT, X, exec, hyprpicker -a -n" ]
 
+        # Screen Recording (GPU accelerated)
+        [ "$mod, R, exec, ~/.config/hypr/scripts/record.sh toggle" ]
+        [ "$mod SHIFT, R, exec, ~/.config/hypr/scripts/record.sh save-replay" ]
+        [ "$mod ALT, R, exec, ~/.config/hypr/scripts/record.sh region" ]
+        [ "$mod CTRL, R, exec, ~/.config/hypr/scripts/record.sh replay-toggle" ]
+
         # Clipboard & Session
         [ "$mod, V, exec, cliphist list | wofi --dmenu -p '󰅌 Clipboard' | cliphist decode | wl-copy" ]
         [ "$mod, Escape, exec, wlogout -p layer-shell" "$mod CTRL, L, exec, hyprlock" "$mod SHIFT, Escape, exit" ]
@@ -1757,6 +1935,10 @@ in {
         [ "$mod, M, exec, gnome-system-monitor" "$mod, equal, exec, gnome-calculator" ]
         (lib.optional features.enableDCF "$mod, D, exec, $terminal --title 'DCF Control' -e dcf-control")
         (lib.optional features.hasBattery "$mod, F12, exec, ~/.config/hypr/scripts/toggle_clamshell.sh")
+        
+        # Gaming
+        (lib.optional features.enableGaming "$mod, F9, exec, ~/.config/hypr/scripts/gamemode.sh toggle")
+        (lib.optional features.enableGaming "$mod SHIFT, F9, exec, mangohud --dlsym")
       ];
 
       binde = lib.flatten [
@@ -1810,31 +1992,61 @@ in {
         "workspace 9 silent, class:^(steam)$"
         "float, class:^(steam)$, title:^(Friends|Settings|Screenshot).*$"
 
+        # ── Gaming Window Rules ─────────────────────────────────────────────────
+        # Steam
+        "float, class:^(steam)$, title:^(Steam Settings)$"
+        "float, class:^(steam)$, title:^(Steam - News).*$"
+        "float, class:^(steam)$, title:^(.*Steam Guard.*)$"
+        "stayfocused, class:^(steam)$, title:^()$"
+        "minsize 1 1, class:^(steam)$, title:^()$"
+        
+        # Lutris
+        "workspace 9 silent, class:^(lutris)$"
+        "float, class:^(lutris)$, title:^(Lutris)$"
+        
+        # GameScope - fullscreen compositor for games
+        "fullscreen, class:^(gamescope)$"
+        "immediate, class:^(gamescope)$"
+        "noblur, class:^(gamescope)$"
+        "noshadow, class:^(gamescope)$"
+        
+        # Wine/Proton games - immediate rendering, no animations
+        "immediate, class:^(steam_app_.*)$"
+        "fullscreen, class:^(steam_app_.*)$, title:^(?!.*Settings).*$"
+        "noblur, class:^(steam_app_.*)$"
+        "noshadow, class:^(steam_app_.*)$"
+        "idleinhibit always, class:^(steam_app_.*)$"
+        
+        # Generic game windows
+        "immediate, class:^(.*[Gg]ame.*)$"
+        "idleinhibit always, class:^(.*[Gg]ame.*)$"
+        "idleinhibit always, fullscreen:1"
+        
+        # Wine windows
+        "float, class:^(wine)$"
+        "float, class:^(.*.exe)$"
+        "float, class:^(explorer.exe)$"
+        "noinitialfocus, class:^(steam)$, title:^(notificationtoasts)$"
+
+        # ── XWayland Specific Rules ─────────────────────────────────────────────
+        # XWayland apps: ensure proper rendering and focus behavior
+        "rounding 8, xwayland:1"
+        "forcergbx, xwayland:1"
+        
+        # Common XWayland apps that need special handling
+        "float, class:^(Gimp.*)$, title:^((?!GNU Image).*)$"
+        "float, class:^(feh)$"
+        "float, class:^(mpv)$"
+        "idleinhibit always, class:^(mpv)$"
+
         # Visuals
         "opacity 0.95 0.88, class:^(kitty)$"
         "opacity 0.95 0.90, class:^(Code)$"
         "opacity 1.0 override, fullscreen:1"
         "noborder, fullscreen:1"
         "idleinhibit fullscreen, class:^(brave-browser|firefox|mpv|vlc)$"
-
-        # XWayland bridge
-        "opacity 0.0 override, class:^(xwaylandvideobridge)$"
-        "noanim, class:^(xwaylandvideobridge)$"
-        "noinitialfocus, class:^(xwaylandvideobridge)$"
-        "maxsize 1 1, class:^(xwaylandvideobridge)$"
       ];
 
-      # Layer rules - Hyprland 0.52+ syntax
-      # Uses: blur true/false, ignore_alpha [value], animation [type], match:namespace [name]
-      layerrule = [
-        "blur true, ignore_alpha 0.5, match:namespace waybar"
-        "blur true, ignore_alpha 0.5, match:namespace wofi"
-        "blur true, ignore_alpha 0.5, match:namespace notifications"
-        "blur true, ignore_alpha 0.5, match:namespace logout_dialog"
-        "animation slide, match:namespace wofi"
-        "animation slide, match:namespace notifications"
-        "animation fade, match:namespace logout_dialog"
-      ];
     };
 
     extraConfig = lib.mkMerge [
@@ -1957,6 +2169,26 @@ in {
         on-scroll-up = "playerctl volume 0.02+";
         on-scroll-down = "playerctl volume 0.02-";
         tooltip = true;
+      };
+
+      "custom/recording" = {
+        format = "{}";
+        exec = "~/.config/hypr/scripts/record.sh status";
+        return-type = "json";
+        interval = 1;
+        tooltip = true;
+        on-click = "~/.config/hypr/scripts/record.sh toggle";
+        on-click-right = "~/.config/hypr/scripts/record.sh save-replay";
+        on-click-middle = "~/.config/hypr/scripts/record.sh replay-toggle";
+      };
+
+      "custom/gamemode" = {
+        format = "{}";
+        exec = "~/.config/hypr/scripts/gamemode.sh status";
+        return-type = "json";
+        interval = 2;
+        tooltip = true;
+        on-click = "~/.config/hypr/scripts/gamemode.sh toggle";
       };
 
       "group/audio" = {
@@ -2261,6 +2493,61 @@ in {
       #custom-media.Paused {
         color: ${p.textDim};
         font-style: italic;
+      }
+
+      /* ─────────────────────────────────────────────────────────────────────────
+       * Recording Indicator
+       * ───────────────────────────────────────────────────────────────────────── */
+      #custom-recording {
+        padding: 0 12px;
+        margin: 6px 2px;
+        border-radius: 12px;
+        transition: all 0.3s ease;
+      }
+
+      #custom-recording.recording {
+        color: ${p.bg};
+        background: ${p.error};
+        font-weight: bold;
+        animation: recording-pulse 1s ease infinite;
+      }
+
+      #custom-recording.replay {
+        color: ${p.bg};
+        background: ${p.purple};
+        font-weight: bold;
+      }
+
+      #custom-recording.idle {
+        color: ${p.textDim};
+        background: alpha(${p.surfaceAlt}, 0.3);
+      }
+
+      @keyframes recording-pulse {
+        0%, 100% { box-shadow: 0 0 8px ${p.error}; opacity: 1; }
+        50% { box-shadow: 0 0 16px ${p.error}; opacity: 0.85; }
+      }
+
+      /* ─────────────────────────────────────────────────────────────────────────
+       * Gamemode Indicator
+       * ───────────────────────────────────────────────────────────────────────── */
+      #custom-gamemode {
+        padding: 0 12px;
+        margin: 6px 2px;
+        border-radius: 12px;
+        transition: all 0.3s ease;
+      }
+
+      #custom-gamemode.active {
+        color: ${p.bg};
+        background: linear-gradient(135deg, ${p.success} 0%, ${p.accent} 100%);
+        font-weight: bold;
+        box-shadow: 0 0 10px alpha(${p.success}, 0.5);
+      }
+
+      #custom-gamemode.inactive {
+        color: ${p.textDim};
+        background: transparent;
       }
 
       /* ─────────────────────────────────────────────────────────────────────────
@@ -3062,6 +3349,93 @@ in {
     '';
   };
 
+  # Gamemode Toggle Script (for gaming performance optimization)
+  home.file.".config/hypr/scripts/gamemode.sh" = lib.mkIf features.enableGaming {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      # DeMoD Gamemode Toggle - Optimizes system for gaming
+      # Uses gamemode daemon + Hyprland optimizations
+      
+      STATEFILE="/tmp/demod-gamemode-active"
+      
+      notify() {
+        notify-send -t 3000 -i applications-games "$1" "$2" 2>/dev/null || true
+      }
+      
+      gamemode_on() {
+        # Start gamemode
+        if command -v gamemoded &>/dev/null; then
+          gamemoded -r 2>/dev/null || true
+          gamemoded -d 2>/dev/null &
+        fi
+        
+        # Hyprland gaming optimizations
+        hyprctl --batch "\
+          keyword animations:enabled 0; \
+          keyword decoration:blur:enabled 0; \
+          keyword decoration:drop_shadow 0; \
+          keyword decoration:dim_inactive 0; \
+          keyword misc:vfr 0; \
+          keyword misc:vrr 2; \
+          keyword general:gaps_in 0; \
+          keyword general:gaps_out 0; \
+          keyword general:border_size 1"
+        
+        # Disable compositor effects
+        touch "$STATEFILE"
+        notify "󰊴  Game Mode ON" "Animations disabled, VRR forced, gaps removed"
+      }
+      
+      gamemode_off() {
+        # Stop gamemode
+        if command -v gamemoded &>/dev/null; then
+          gamemoded -r 2>/dev/null || true
+        fi
+        
+        # Restore Hyprland defaults
+        hyprctl --batch "\
+          keyword animations:enabled 1; \
+          keyword decoration:blur:enabled 1; \
+          keyword decoration:drop_shadow 1; \
+          keyword decoration:dim_inactive 1; \
+          keyword misc:vfr 1; \
+          keyword misc:vrr 1; \
+          keyword general:gaps_in 5; \
+          keyword general:gaps_out 10; \
+          keyword general:border_size 2"
+        
+        rm -f "$STATEFILE"
+        notify "󰊴  Game Mode OFF" "Desktop effects restored"
+      }
+      
+      gamemode_status() {
+        if [[ -f "$STATEFILE" ]]; then
+          echo '{"text": "󰊴", "class": "active", "tooltip": "Game Mode Active\nClick to disable"}'
+        else
+          echo '{"text": "", "class": "inactive", "tooltip": "Game Mode\nClick to enable"}'
+        fi
+      }
+      
+      case "''${1:-toggle}" in
+        on)     gamemode_on ;;
+        off)    gamemode_off ;;
+        toggle)
+          if [[ -f "$STATEFILE" ]]; then
+            gamemode_off
+          else
+            gamemode_on
+          fi
+          ;;
+        status) gamemode_status ;;
+        *)
+          echo "Usage: $0 {on|off|toggle|status}"
+          exit 1
+          ;;
+      esac
+    '';
+  };
+
   # Screenshot
   home.file.".config/hypr/scripts/screenshot.sh" = {
     executable = true;
@@ -3120,57 +3494,294 @@ in {
     '';
   };
 
+  # GPU Screen Recorder Script
+  home.file.".config/hypr/scripts/record.sh" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      # DeMoD GPU Screen Recorder - Hardware accelerated recording
+      # Uses gpu-screen-recorder for AMD/Intel/NVIDIA
+      
+      set -euo pipefail
+      
+      DIR="$HOME/Videos/Recordings"
+      REPLAY_DIR="$HOME/Videos/Replays"
+      PIDFILE="/tmp/gpu-recorder.pid"
+      MODEFILE="/tmp/gpu-recorder.mode"
+      REPLAY_DURATION=60  # seconds
+      
+      mkdir -p "$DIR" "$REPLAY_DIR"
+      
+      notify() {
+        notify-send -t 3000 -i camera-video "󰑋  Recording" "$1" 2>/dev/null || true
+      }
+      
+      error_notify() {
+        notify-send -t 3000 -u critical "󰑋  Recording" "Failed: $1" 2>/dev/null || true
+      }
+      
+      is_recording() {
+        [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+      }
+      
+      get_mode() {
+        [[ -f "$MODEFILE" ]] && cat "$MODEFILE" || echo "none"
+      }
+      
+      stop_recording() {
+        if is_recording; then
+          local pid=$(cat "$PIDFILE")
+          local mode=$(get_mode)
+          
+          # Send SIGINT for graceful stop (gpu-screen-recorder saves on SIGINT)
+          kill -INT "$pid" 2>/dev/null || true
+          
+          # Wait for process to finish
+          for i in {1..30}; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.1
+          done
+          
+          rm -f "$PIDFILE" "$MODEFILE"
+          
+          if [[ "$mode" == "record" ]]; then
+            notify "Recording saved to Videos/Recordings"
+          fi
+          return 0
+        fi
+        return 1
+      }
+      
+      start_recording() {
+        local output="$DIR/$(date +'%Y-%m-%d_%H%M%S').mp4"
+        
+        # Use gpu-screen-recorder with optimal settings
+        # -w screen (all monitors) or specify monitor
+        # -f 60 = 60fps, -a default_output = system audio
+        # -c mp4 = container, -q very_high = quality preset
+        gpu-screen-recorder \
+          -w screen \
+          -f 60 \
+          -a default_output \
+          -c mp4 \
+          -q very_high \
+          -o "$output" &
+        
+        local pid=$!
+        echo "$pid" > "$PIDFILE"
+        echo "record" > "$MODEFILE"
+        notify "Recording started (Super+R to stop)"
+      }
+      
+      start_region_recording() {
+        local selection
+        selection=$(slurp -d 2>/dev/null) || { error_notify "Selection cancelled"; exit 0; }
+        
+        local output="$DIR/region_$(date +'%Y-%m-%d_%H%M%S').mp4"
+        
+        # Parse slurp output: "x,y WxH"
+        local x y w h
+        read -r x y w h <<< "$(echo "$selection" | sed 's/,/ /g; s/x/ /g')"
+        
+        gpu-screen-recorder \
+          -w screen \
+          -s "$selection" \
+          -f 60 \
+          -a default_output \
+          -c mp4 \
+          -q very_high \
+          -o "$output" &
+        
+        local pid=$!
+        echo "$pid" > "$PIDFILE"
+        echo "record" > "$MODEFILE"
+        notify "Region recording started"
+      }
+      
+      start_replay_buffer() {
+        # Replay buffer - continuously records last N seconds
+        # Save with SIGUSR1 (Super+Shift+R)
+        gpu-screen-recorder \
+          -w screen \
+          -f 60 \
+          -a default_output \
+          -c mp4 \
+          -q very_high \
+          -r "$REPLAY_DURATION" \
+          -o "$REPLAY_DIR" &
+        
+        local pid=$!
+        echo "$pid" > "$PIDFILE"
+        echo "replay" > "$MODEFILE"
+        notify "Replay buffer active (''${REPLAY_DURATION}s)"
+      }
+      
+      save_replay() {
+        if is_recording && [[ "$(get_mode)" == "replay" ]]; then
+          local pid=$(cat "$PIDFILE")
+          # SIGUSR1 saves the replay buffer
+          kill -USR1 "$pid" 2>/dev/null
+          notify "Replay saved to Videos/Replays"
+        else
+          error_notify "No replay buffer active"
+        fi
+      }
+      
+      # Waybar status output (JSON)
+      output_status() {
+        if is_recording; then
+          local mode=$(get_mode)
+          if [[ "$mode" == "record" ]]; then
+            echo '{"text": "󰑋 REC", "class": "recording", "tooltip": "Recording active\nClick: Stop | Right: Save Replay"}'
+          else
+            echo '{"text": "󰃽 REPLAY", "class": "replay", "tooltip": "Replay buffer active ('"$REPLAY_DURATION"'s)\nClick: Stop | Right: Save Replay"}'
+          fi
+        else
+          echo '{"text": "", "class": "idle", "tooltip": "Screen Recording\nClick: Start | Middle: Replay Mode"}'
+        fi
+      }
+      
+      case "''${1:-status}" in
+        toggle)
+          if is_recording; then
+            stop_recording
+          else
+            start_recording
+          fi
+          ;;
+        region)
+          stop_recording 2>/dev/null || true
+          start_region_recording
+          ;;
+        replay-toggle)
+          if is_recording; then
+            stop_recording
+          else
+            start_replay_buffer
+          fi
+          ;;
+        save-replay)
+          save_replay
+          ;;
+        stop)
+          stop_recording || error_notify "Not recording"
+          ;;
+        status)
+          output_status
+          ;;
+        *)
+          echo "Usage: $0 {toggle|region|replay-toggle|save-replay|stop|status}"
+          exit 1
+          ;;
+      esac
+    '';
+  };
+
   # Keybind Help
   home.file.".config/hypr/scripts/keybind-help.sh" = {
     executable = true;
     text = ''
       #!/usr/bin/env bash
-      # DeMoD palette - white on black with turquoise/violet accents
+      # DeMoD Keybind Cheat Sheet - Comprehensive Help Popup
+      
+      # DeMoD palette
       CYAN="#00F5D4"      # Electric turquoise
       VIOLET="#8B5CF6"    # Electric violet  
       YELLOW="#FFE814"    # Banana yellow
       GREEN="#39FF14"     # Electric green
       WHITE="#FFFFFF"     # Pure white
+      RED="#FF3B5C"       # Coral red
+      ORANGE="#FF9F1C"    # Electric orange
       
       echo "
-      <b><span color='$CYAN'>══════ CORE ══════</span></b>
-      <span color='$GREEN'>Super + /</span>          Help
-      <span color='$GREEN'>Super + Space</span>      Launcher
-      <span color='$GREEN'>Super + Return</span>     Terminal
-      <span color='$GREEN'>Super + B</span>          Browser
-      <span color='$GREEN'>Super + E</span>          Files
+      <b><span color='$CYAN'>═══════════════ CORE ═══════════════</span></b>
+      <span color='$GREEN'>Super + /</span>              This Help
+      <span color='$GREEN'>Super + F1</span>             This Help
+      <span color='$GREEN'>Super + Space</span>          App Launcher
+      <span color='$GREEN'>Super + Return</span>         Terminal
+      <span color='$GREEN'>Super+Shift + Return</span>   Floating Terminal
+      <span color='$GREEN'>Super + B</span>              Browser
+      <span color='$GREEN'>Super + E</span>              File Manager
+      <span color='$GREEN'>Super + C</span>              VS Code
+      <span color='$GREEN'>Super + O</span>              Obsidian
 
-      <b><span color='$CYAN'>══════ WINDOWS ══════</span></b>
-      <span color='$GREEN'>Super + Q</span>          Close
-      <span color='$GREEN'>Super + W</span>          Float
-      <span color='$GREEN'>Super + F</span>          Fullscreen
-      <span color='$GREEN'>Super + H/J/K/L</span>    Focus (vim)
-      <span color='$GREEN'>Super+Shift + ↑</span>    Move Window
-      <span color='$GREEN'>Super+Ctrl + ↑</span>     Resize
+      <b><span color='$CYAN'>═══════════════ WINDOWS ════════════</span></b>
+      <span color='$GREEN'>Super + Q</span>              Close Window
+      <span color='$GREEN'>Super+Shift + Q</span>        Kill Window (click)
+      <span color='$GREEN'>Super + W</span>              Toggle Float
+      <span color='$GREEN'>Super + F</span>              Fullscreen
+      <span color='$GREEN'>Super+Shift + F</span>        Fake Fullscreen
+      <span color='$GREEN'>Super + P</span>              Pseudo-tile
+      <span color='$GREEN'>Super + X</span>              Toggle Split
+      <span color='$GREEN'>Super+Shift + C</span>        Center Window
+      <span color='$GREEN'>Super+Shift + P</span>        Pin Window
 
-      <b><span color='$CYAN'>══════ WORKSPACES ══════</span></b>
-      <span color='$GREEN'>Super + 1-0</span>        Switch WS
-      <span color='$GREEN'>Super+Shift + 1-0</span>  Move to WS
-      <span color='$GREEN'>Super + \`</span>          Previous
-      <span color='$GREEN'>Super + [ / ]</span>      Prev/Next
-      <span color='$GREEN'>Super + S</span>          Scratchpad
+      <b><span color='$VIOLET'>─────────── Navigation ────────────</span></b>
+      <span color='$GREEN'>Super + H/J/K/L</span>        Focus (vim)
+      <span color='$GREEN'>Super + ←/↓/↑/→</span>        Focus (arrows)
+      <span color='$GREEN'>Super+Shift + H/J/K/L</span>  Move Window
+      <span color='$GREEN'>Super+Ctrl + H/J/K/L</span>   Resize Window
+      <span color='$GREEN'>Super + U</span>              Focus Urgent
 
-      <b><span color='$VIOLET'>══════ THEME ══════</span></b>
-      <span color='$YELLOW'>Super + F8</span>         Cycle Theme
-      <span color='$YELLOW'>Super+Shift + F8</span>   Theme Menu
+      <b><span color='$VIOLET'>─────────── Groups ────────────────</span></b>
+      <span color='$GREEN'>Super + G</span>              Toggle Group
+      <span color='$GREEN'>Super + Tab</span>            Next in Group
+      <span color='$GREEN'>Super+Shift + Tab</span>      Prev in Group
 
-      <b><span color='$CYAN'>══════ MEDIA ══════</span></b>
-      <span color='$GREEN'>Print</span>              Screenshot
-      <span color='$GREEN'>Super + Print</span>      Window Shot
-      <span color='$GREEN'>Shift + Print</span>      Region Shot
-      <span color='$GREEN'>Super + V</span>          Clipboard
+      <b><span color='$CYAN'>═══════════ WORKSPACES ═════════════</span></b>
+      <span color='$GREEN'>Super + 1-0</span>            Go to WS 1-10
+      <span color='$GREEN'>Super+Shift + 1-0</span>      Move to WS 1-10
+      <span color='$GREEN'>Super + \`</span>              Previous WS
+      <span color='$GREEN'>Super + [</span>              Previous WS
+      <span color='$GREEN'>Super + ]</span>              Next WS
+      <span color='$GREEN'>Super + Scroll</span>         Cycle Workspaces
+      <span color='$GREEN'>Super + S</span>              Scratchpad
+      <span color='$GREEN'>Super+Shift + S</span>        Move to Scratchpad
 
-      <b><span color='$VIOLET'>══════ SYSTEM ══════</span></b>
-      <span color='$YELLOW'>Super + Escape</span>     Power Menu
-      <span color='$YELLOW'>Super + Ctrl + L</span>   Lock
-      <span color='$GREEN'>Super + T</span>          Thermals
-      <span color='$GREEN'>Super + M</span>          Monitor
-      " | wofi --dmenu -p "󰌌 Keybinds" --cache-file /dev/null --width 420 --height 650 --allow-markup
+      <b><span color='$CYAN'>═══════════ SCREENSHOTS ════════════</span></b>
+      <span color='$GREEN'>Print</span>                  Full Screen
+      <span color='$GREEN'>Super + Print</span>          Active Window
+      <span color='$GREEN'>Shift + Print</span>          Select Region
+      <span color='$GREEN'>Super+Shift + Print</span>    Region → Edit
+      <span color='$GREEN'>Super+Shift + X</span>        Color Picker
+
+      <b><span color='$RED'>═══════════ RECORDING ══════════════</span></b>
+      <span color='$ORANGE'>Super + R</span>              Toggle Recording
+      <span color='$ORANGE'>Super+Alt + R</span>          Record Region
+      <span color='$ORANGE'>Super+Ctrl + R</span>         Replay Buffer Mode
+      <span color='$ORANGE'>Super+Shift + R</span>        Save Replay
+
+      <b><span color='$VIOLET'>════════════ CLIPBOARD ═════════════</span></b>
+      <span color='$YELLOW'>Super + V</span>              Clipboard History
+
+      <b><span color='$VIOLET'>══════════════ THEME ═══════════════</span></b>
+      <span color='$YELLOW'>Super + F8</span>             Cycle Theme
+      <span color='$YELLOW'>Super+Shift + F8</span>       Theme Menu
+
+      <b><span color='$GREEN'>═══════════════ GAMING ═════════════</span></b>
+      <span color='$GREEN'>Super + F9</span>             Toggle Game Mode
+      <span color='$GREEN'>Super+Shift + F9</span>       MangoHUD Overlay
+
+      <b><span color='$CYAN'>══════════════ SYSTEM ══════════════</span></b>
+      <span color='$GREEN'>Super + T</span>              Thermal Status
+      <span color='$GREEN'>Super + M</span>              System Monitor
+      <span color='$GREEN'>Super + =</span>              Calculator
+      <span color='$YELLOW'>Super + Escape</span>         Power Menu
+      <span color='$YELLOW'>Super+Ctrl + L</span>         Lock Screen
+      <span color='$RED'>Super+Shift + Escape</span>   Exit Hyprland
+
+      <b><span color='$VIOLET'>════════════ MEDIA KEYS ════════════</span></b>
+      <span color='$GREEN'>🔊  Vol +/-</span>            Volume Up/Down
+      <span color='$GREEN'>🔇  Mute</span>               Toggle Mute
+      <span color='$GREEN'>🎤  Mic Mute</span>           Toggle Mic
+      <span color='$GREEN'>⏯  Play</span>               Play/Pause
+      <span color='$GREEN'>⏭  Next/Prev</span>          Media Skip
+      <span color='$GREEN'>🔆  Brightness</span>         Brightness +/-
+
+      <b><span color='$VIOLET'>═════════════ MOUSE ════════════════</span></b>
+      <span color='$GREEN'>Super + LMB</span>            Move Window
+      <span color='$GREEN'>Super + RMB</span>            Resize Window
+      " | wofi --dmenu -p "󰌌 Keybinds" --cache-file /dev/null --width 460 --height 880 --allow-markup
     '';
   };
 
