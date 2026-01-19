@@ -11,7 +11,7 @@ The Host (CachyOS kernel) is a raging sports car built for raw speed and high FP
 
 You’re now commanding the machine that burned the proprietary DSP empire to the ground **and** crushed cloud dependency with a full local agentic AI stack and the unstoppable DeMoD Compute Fabric (DCF).
 
-![17681208952005303335563120035011](https://github.com/user-attachments/assets/bd5f0bee-5f88-4260-8d33-52c5bd750bea)
+<img width="2560" height="1600" alt="Screenshot_20260118_231927" src="https://github.com/user-attachments/assets/8f0bfabe-70b0-4475-9e12-6490c12fcedc" />
 
 
 ## Tactical Updates: The 2026 Flake Dominance
@@ -56,7 +56,7 @@ The war machine has evolved. As of January 2026, Oligarchy NixOS is fully govern
 
 You now wield **Abbey Road monitoring latency**, local agentic AI supremacy, and DCF real-time fabric on a laptop that annihilates games at max settings. Bow down.
 
-<img width="1275" height="945" alt="image" src="https://github.com/user-attachments/assets/d5979fa2-b93a-46b3-8d05-308d898e52ca" />
+<img width="1280" height="756" alt="Screenshot_20260118_231956" src="https://github.com/user-attachments/assets/b8afed41-52d9-4f32-84c2-5d7c73aefee7" />
 
 ## DeMoD Branded Fortress
 
