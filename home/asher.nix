@@ -929,7 +929,7 @@ in {
   home.file.".config/Kvantum/DeMoD/DeMoD.kvconfig".text = ''
     [%General]
     author=DeMoD
-    comment=DeMoD Dark Theme - Turquoise/Violet on Black
+    comment=DeMoD Dark Theme - Theme-aware Qt styling
     x11drag=menubar_and_primary_toolbar
     alt_mnemonic=true
     left_tabs=false
@@ -980,25 +980,25 @@ in {
     respect_DE=true
     
     [GeneralColors]
-    window.color=#080810
-    base.color=#0C0C14
-    alt.base.color=#101018
-    button.color=#161620
-    light.color=#252530
-    mid.light.color=#1C1C28
-    dark.color=#040408
-    mid.color=#101018
-    highlight.color=#00F5D4
-    inactive.highlight.color=#8B5CF6
-    text.color=#FFFFFF
-    window.text.color=#FFFFFF
-    button.text.color=#FFFFFF
-    disabled.text.color=#808080
-    tooltip.text.color=#FFFFFF
-    highlight.text.color=#080810
-    link.color=#00F5D4
-    link.visited.color=#A78BFA
-    progress.indicator.text.color=#080810
+    window.color=${p.bg}
+    base.color=${p.bgAlt}
+    alt.base.color=${p.surface}
+    button.color=${p.surfaceAlt}
+    light.color=${p.border}
+    mid.light.color=${p.overlay}
+    dark.color=${p.black}
+    mid.color=${p.surface}
+    highlight.color=${p.accent}
+    inactive.highlight.color=${p.purple}
+    text.color=${p.text}
+    window.text.color=${p.text}
+    button.text.color=${p.text}
+    disabled.text.color=${p.textDim}
+    tooltip.text.color=${p.text}
+    highlight.text.color=${p.textOnAccent}
+    link.color=${p.accent}
+    link.visited.color=${p.pink}
+    progress.indicator.text.color=${p.textOnAccent}
     
     [Hacks]
     transparent_dolphin_view=false
@@ -1026,11 +1026,11 @@ in {
   home.file.".config/Kvantum/DeMoD/DeMoD.svg".text = ''
     <?xml version="1.0" encoding="UTF-8"?>
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
-      <!-- DeMoD Kvantum Theme Base -->
+      <!-- DeMoD Kvantum Theme Base - Theme-aware -->
       <defs>
         <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style="stop-color:#00F5D4"/>
-          <stop offset="100%" style="stop-color:#8B5CF6"/>
+          <stop offset="0%" style="stop-color:${p.gradientStart}"/>
+          <stop offset="100%" style="stop-color:${p.gradientEnd}"/>
         </linearGradient>
       </defs>
     </svg>
@@ -1064,54 +1064,54 @@ in {
 
   # GTK 3 Custom CSS
   home.file.".config/gtk-3.0/gtk.css".text = ''
-    /* DeMoD GTK3 Overrides - Enhanced UX per Design System */
-    @define-color theme_bg_color #080810;
-    @define-color theme_fg_color #FFFFFF;
-    @define-color theme_base_color #0C0C14;
-    @define-color theme_text_color #FFFFFF;
-    @define-color theme_selected_bg_color #00F5D4;
-    @define-color theme_selected_fg_color #080810;
-    @define-color theme_tooltip_bg_color #101018;
-    @define-color theme_tooltip_fg_color #FFFFFF;
-    @define-color accent_color #00F5D4;
-    @define-color accent_bg_color #00F5D4;
-    @define-color accent_fg_color #080810;
+    /* DeMoD GTK3 Overrides - Theme-aware styling */
+    @define-color theme_bg_color ${p.bg};
+    @define-color theme_fg_color ${p.text};
+    @define-color theme_base_color ${p.bgAlt};
+    @define-color theme_text_color ${p.text};
+    @define-color theme_selected_bg_color ${p.accent};
+    @define-color theme_selected_fg_color ${p.textOnAccent};
+    @define-color theme_tooltip_bg_color ${p.surface};
+    @define-color theme_tooltip_fg_color ${p.text};
+    @define-color accent_color ${p.accent};
+    @define-color accent_bg_color ${p.accent};
+    @define-color accent_fg_color ${p.textOnAccent};
     
     /* ── Scrollbars ─────────────────────────────────────────────────────────── */
     scrollbar slider {
       min-width: 8px;
       min-height: 8px;
       border-radius: 4px;
-      background-color: alpha(#00F5D4, 0.4);
+      background-color: alpha(${p.accent}, 0.4);
       transition: all 0.15s ease;
     }
     
     scrollbar slider:hover {
-      background-color: alpha(#00F5D4, 0.6);
+      background-color: alpha(${p.accent}, 0.6);
     }
     
     scrollbar slider:active {
-      background-color: #00F5D4;
+      background-color: ${p.accent};
     }
     
     /* ── Selection ──────────────────────────────────────────────────────────── */
     selection, *:selected {
-      background-color: #00F5D4;
-      color: #080810;
+      background-color: ${p.accent};
+      color: ${p.textOnAccent};
     }
     
     /* ── Links ──────────────────────────────────────────────────────────────── */
     *:link {
-      color: #00F5D4;
+      color: ${p.accent};
       transition: color 0.15s ease;
     }
     
     *:visited {
-      color: #A78BFA;
+      color: ${p.pink};
     }
     
     *:link:hover {
-      color: #8B5CF6;
+      color: ${p.purple};
     }
     
     /* ── Buttons ────────────────────────────────────────────────────────────── */
@@ -1120,17 +1120,17 @@ in {
     }
     
     button:checked {
-      background-image: linear-gradient(135deg, #00F5D4, #8B5CF6);
-      color: #080810;
+      background-image: linear-gradient(135deg, ${p.gradientStart}, ${p.gradientEnd});
+      color: ${p.textOnAccent};
     }
     
     button:hover {
-      box-shadow: 0 4px 12px rgba(0, 245, 212, 0.2);
+      box-shadow: 0 4px 12px alpha(${p.accent}, 0.2);
     }
     
     button:focus {
       outline: none;
-      box-shadow: 0 0 0 3px rgba(0, 245, 212, 0.3);
+      box-shadow: 0 0 0 3px alpha(${p.accent}, 0.3);
     }
     
     /* ── Entries/Inputs ─────────────────────────────────────────────────────── */
@@ -1140,12 +1140,12 @@ in {
     }
     
     entry:focus {
-      box-shadow: 0 0 0 3px rgba(0, 245, 212, 0.15);
+      box-shadow: 0 0 0 3px alpha(${p.accent}, 0.15);
     }
     
     /* ── Progress bars ──────────────────────────────────────────────────────── */
     progressbar progress {
-      background-image: linear-gradient(135deg, #00F5D4, #8B5CF6);
+      background-image: linear-gradient(135deg, ${p.gradientStart}, ${p.gradientEnd});
       border-radius: 4px;
     }
     
@@ -1155,27 +1155,27 @@ in {
     }
     
     switch:checked {
-      background-image: linear-gradient(135deg, #00F5D4, #8B5CF6);
+      background-image: linear-gradient(135deg, ${p.gradientStart}, ${p.gradientEnd});
     }
     
     switch:checked slider {
-      background-color: #FFFFFF;
+      background-color: ${p.text};
     }
     
     /* ── Scale/Sliders ──────────────────────────────────────────────────────── */
     scale highlight {
-      background-image: linear-gradient(135deg, #00F5D4, #8B5CF6);
+      background-image: linear-gradient(135deg, ${p.gradientStart}, ${p.gradientEnd});
     }
     
     scale slider {
-      background-color: #FFFFFF;
+      background-color: ${p.text};
     }
     
     /* ── Checkboxes & Radio ─────────────────────────────────────────────────── */
     checkbutton check:checked,
     radiobutton radio:checked {
-      background-image: linear-gradient(135deg, #00F5D4, #8B5CF6);
-      color: #080810;
+      background-image: linear-gradient(135deg, ${p.gradientStart}, ${p.gradientEnd});
+      color: ${p.textOnAccent};
     }
     
     /* ── Reduced Motion Support ─────────────────────────────────────────────── */
@@ -1207,38 +1207,38 @@ in {
 
   # GTK 4 Custom CSS
   home.file.".config/gtk-4.0/gtk.css".text = ''
-    /* DeMoD GTK4 Overrides - Enhanced UX per Design System */
-    @define-color window_bg_color #080810;
-    @define-color window_fg_color #FFFFFF;
-    @define-color view_bg_color #0C0C14;
-    @define-color view_fg_color #FFFFFF;
-    @define-color card_bg_color #101018;
-    @define-color card_fg_color #FFFFFF;
-    @define-color headerbar_bg_color #080810;
-    @define-color headerbar_fg_color #FFFFFF;
-    @define-color popover_bg_color #101018;
-    @define-color popover_fg_color #FFFFFF;
-    @define-color dialog_bg_color #101018;
-    @define-color dialog_fg_color #FFFFFF;
-    @define-color sidebar_bg_color #0C0C14;
-    @define-color sidebar_fg_color #FFFFFF;
-    @define-color accent_color #00F5D4;
-    @define-color accent_bg_color #00F5D4;
-    @define-color accent_fg_color #080810;
-    @define-color destructive_color #FF3B5C;
-    @define-color success_color #39FF14;
-    @define-color warning_color #FFE814;
-    @define-color error_color #FF3B5C;
+    /* DeMoD GTK4 Overrides - Theme-aware styling */
+    @define-color window_bg_color ${p.bg};
+    @define-color window_fg_color ${p.text};
+    @define-color view_bg_color ${p.bgAlt};
+    @define-color view_fg_color ${p.text};
+    @define-color card_bg_color ${p.surface};
+    @define-color card_fg_color ${p.text};
+    @define-color headerbar_bg_color ${p.bg};
+    @define-color headerbar_fg_color ${p.text};
+    @define-color popover_bg_color ${p.surface};
+    @define-color popover_fg_color ${p.text};
+    @define-color dialog_bg_color ${p.surface};
+    @define-color dialog_fg_color ${p.text};
+    @define-color sidebar_bg_color ${p.bgAlt};
+    @define-color sidebar_fg_color ${p.text};
+    @define-color accent_color ${p.accent};
+    @define-color accent_bg_color ${p.accent};
+    @define-color accent_fg_color ${p.textOnAccent};
+    @define-color destructive_color ${p.error};
+    @define-color success_color ${p.success};
+    @define-color warning_color ${p.warning};
+    @define-color error_color ${p.error};
     
     /* ── Global Selection ───────────────────────────────────────────────────── */
     selection {
-      background-color: #00F5D4;
-      color: #080810;
+      background-color: ${p.accent};
+      color: ${p.textOnAccent};
     }
     
     /* ── Accent Elements ────────────────────────────────────────────────────── */
     .accent {
-      color: #00F5D4;
+      color: ${p.accent};
     }
     
     /* ── Buttons ────────────────────────────────────────────────────────────── */
@@ -1247,33 +1247,33 @@ in {
     }
     
     button:hover {
-      box-shadow: 0 4px 12px rgba(0, 245, 212, 0.15);
+      box-shadow: 0 4px 12px alpha(${p.accent}, 0.15);
     }
     
     button:focus {
       outline: none;
-      box-shadow: 0 0 0 3px rgba(0, 245, 212, 0.3);
+      box-shadow: 0 0 0 3px alpha(${p.accent}, 0.3);
     }
     
     button.suggested-action {
-      background-image: linear-gradient(135deg, #00F5D4, #8B5CF6);
-      color: #080810;
-      box-shadow: 0 4px 12px rgba(0, 245, 212, 0.3);
+      background-image: linear-gradient(135deg, ${p.gradientStart}, ${p.gradientEnd});
+      color: ${p.textOnAccent};
+      box-shadow: 0 4px 12px alpha(${p.accent}, 0.3);
     }
     
     button.suggested-action:hover {
-      background-image: linear-gradient(135deg, #00E5C7, #7C4DE8);
-      box-shadow: 0 6px 20px rgba(0, 245, 212, 0.4);
+      background-image: linear-gradient(135deg, ${p.accentAlt}, ${p.purple});
+      box-shadow: 0 6px 20px alpha(${p.accent}, 0.4);
     }
     
     button.destructive-action {
-      background-color: #FF3B5C;
-      color: #FFFFFF;
+      background-color: ${p.error};
+      color: ${p.text};
     }
     
     button.destructive-action:hover {
-      background-color: #E62E4D;
-      box-shadow: 0 4px 12px rgba(255, 59, 92, 0.3);
+      background-color: ${p.brightRed};
+      box-shadow: 0 4px 12px alpha(${p.error}, 0.3);
     }
     
     /* ── Entries/Inputs ─────────────────────────────────────────────────────── */
@@ -1283,12 +1283,12 @@ in {
     }
     
     entry:focus {
-      box-shadow: 0 0 0 3px rgba(0, 245, 212, 0.15);
+      box-shadow: 0 0 0 3px alpha(${p.accent}, 0.15);
     }
     
     /* ── Progress bars ──────────────────────────────────────────────────────── */
     progressbar > trough > progress {
-      background-image: linear-gradient(135deg, #00F5D4, #8B5CF6);
+      background-image: linear-gradient(135deg, ${p.gradientStart}, ${p.gradientEnd});
     }
     
     /* ── Switches ───────────────────────────────────────────────────────────── */
@@ -1297,35 +1297,35 @@ in {
     }
     
     switch:checked {
-      background-image: linear-gradient(135deg, #00F5D4, #8B5CF6);
+      background-image: linear-gradient(135deg, ${p.gradientStart}, ${p.gradientEnd});
     }
     
     /* ── Scale/Slider ───────────────────────────────────────────────────────── */
     scale highlight {
-      background-image: linear-gradient(135deg, #00F5D4, #8B5CF6);
+      background-image: linear-gradient(135deg, ${p.gradientStart}, ${p.gradientEnd});
     }
     
     scale slider {
-      background-color: #FFFFFF;
+      background-color: ${p.text};
     }
     
     /* ── Links ──────────────────────────────────────────────────────────────── */
     link, .link {
-      color: #00F5D4;
+      color: ${p.accent};
       transition: color 0.15s ease;
     }
     
     link:visited, .link:visited {
-      color: #A78BFA;
+      color: ${p.pink};
     }
     
     link:hover, .link:hover {
-      color: #8B5CF6;
+      color: ${p.purple};
     }
     
     /* ── Scrollbars ─────────────────────────────────────────────────────────── */
     scrollbar slider {
-      background-color: alpha(#00F5D4, 0.4);
+      background-color: alpha(${p.accent}, 0.4);
       border-radius: 9999px;
       min-width: 8px;
       min-height: 8px;
@@ -1333,52 +1333,52 @@ in {
     }
     
     scrollbar slider:hover {
-      background-color: alpha(#00F5D4, 0.6);
+      background-color: alpha(${p.accent}, 0.6);
     }
     
     scrollbar slider:active {
-      background-color: #00F5D4;
+      background-color: ${p.accent};
     }
     
     /* ── Check and Radio Buttons ────────────────────────────────────────────── */
     checkbutton check:checked,
     radiobutton radio:checked {
-      background-image: linear-gradient(135deg, #00F5D4, #8B5CF6);
-      color: #080810;
+      background-image: linear-gradient(135deg, ${p.gradientStart}, ${p.gradientEnd});
+      color: ${p.textOnAccent};
     }
     
     checkbutton check:focus,
     radiobutton radio:focus {
-      box-shadow: 0 0 0 3px rgba(0, 245, 212, 0.3);
+      box-shadow: 0 0 0 3px alpha(${p.accent}, 0.3);
     }
     
     /* ── Headerbar ──────────────────────────────────────────────────────────── */
     headerbar {
-      background-color: #080810;
-      border-bottom: 1px solid #252530;
+      background-color: ${p.bg};
+      border-bottom: 1px solid ${p.border};
     }
     
     /* ── Window Controls ────────────────────────────────────────────────────── */
     windowcontrols button.close:hover {
-      background-color: #FF3B5C;
+      background-color: ${p.error};
     }
     
     windowcontrols button.minimize:hover,
     windowcontrols button.maximize:hover {
-      background-color: rgba(255, 255, 255, 0.1);
+      background-color: alpha(${p.text}, 0.1);
     }
     
     /* ── Cards ──────────────────────────────────────────────────────────────── */
     .card {
-      background-color: #101018;
-      border: 1px solid #252530;
+      background-color: ${p.surface};
+      border: 1px solid ${p.border};
       border-radius: 16px;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
       transition: all 0.2s ease;
     }
     
     .card:hover {
-      border-color: #8B5CF6;
+      border-color: ${p.purple};
     }
     
     /* ── Reduced Motion Support ─────────────────────────────────────────────── */
@@ -2719,7 +2719,7 @@ in {
   services.mako = {
     enable = true;
     settings = {
-      background-color = "rgba(16, 16, 24, 0.95)";
+      background-color = p.surface + "f2";  # Surface with 95% opacity
       text-color = p.text;
       border-color = p.accent;
       border-radius = 14;
@@ -2739,7 +2739,7 @@ in {
 
       # Urgency levels per Design System
       "urgency=low" = { 
-        border-color = "#808080";  # Gray per design system
+        border-color = p.textDim;  # Gray per design system
         default-timeout = 3000; 
       };
       "urgency=normal" = { 
@@ -3684,14 +3684,14 @@ in {
       #!/usr/bin/env bash
       # DeMoD Keybind Cheat Sheet - Comprehensive Help Popup
       
-      # DeMoD palette
-      CYAN="#00F5D4"      # Electric turquoise
-      VIOLET="#8B5CF6"    # Electric violet  
-      YELLOW="#FFE814"    # Banana yellow
-      GREEN="#39FF14"     # Electric green
-      WHITE="#FFFFFF"     # Pure white
-      RED="#FF3B5C"       # Coral red
-      ORANGE="#FF9F1C"    # Electric orange
+      # Theme-aware palette
+      CYAN="${p.accent}"
+      VIOLET="${p.purple}"
+      YELLOW="${p.warning}"
+      GREEN="${p.success}"
+      WHITE="${p.text}"
+      RED="${p.error}"
+      ORANGE="${p.orange}"
       
       echo "
       <b><span color='$CYAN'>═══════════════ CORE ═══════════════</span></b>
