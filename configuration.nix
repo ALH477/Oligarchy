@@ -37,7 +37,7 @@
     # soundFile = ./assets/boot-chime.mid;
     # Or use a wav/mp3/flac:
      soundFile = ./assets/boot-intro.wav;
-
+	volume = 40;
     # Optional: Background video (loops behind waveform)
     # backgroundVideo = ./assets/grid-animation.mp4;
 
