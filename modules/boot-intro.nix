@@ -206,10 +206,13 @@ let
     # Brief delay for DRM/KMS initialization
     sleep 0.3
 
+    # At early boot, PipeWire isn't running yet — use ALSA directly
     ${pkgs.mpv}/bin/mpv \
       --fs --no-border --no-config --no-osd-bar --no-input-default-bindings \
       --vo=gpu,drm --gpu-context=auto --hwdec=auto-safe \
-      --audio-device=auto \
+      --ao=alsa \
+      --alsa-buffer-time=100000 \
+      --volume=${toString cfg.volume} \
       --panscan=${if cfg.fillMode == "fill" then "1.0" else "0"} \
       --scale=ewa_lanczossharp \
       --really-quiet \
@@ -341,6 +344,20 @@ in
       default = 30;
       description = "Max playback time before service exits.";
     };
+
+    volume = mkOption {
+      type = types.int;
+      default = 100;
+      description = "Playback volume (0-100).";
+    };
+
+    # ── Read-only Outputs ──
+    videoPath = mkOption {
+      type = types.path;
+      readOnly = true;
+      default = finalVideoPath;
+      description = "Path to the generated video in the Nix store.";
+    };
   };
 
   config = mkIf cfg.enable {
@@ -351,12 +368,17 @@ in
       }
     ];
 
-    environment.systemPackages = [ pkgs.mpv ];
+    environment.systemPackages = [ pkgs.mpv pkgs.alsa-utils ];
+
+    # Symlink video to a predictable location for easy access
+    environment.etc."demod/boot-intro.mp4".source = finalVideoPath;
 
     systemd.services.boot-intro-player = {
       description = "DeMoD Boot Intro";
 
-      after = [ "systemd-user-sessions.service" "plymouth-quit-wait.service" ];
+      # sound.target ensures ALSA is ready
+      after = [ "systemd-user-sessions.service" "plymouth-quit-wait.service" "sound.target" ];
+      wants = [ "sound.target" ];
       before = [ "display-manager.service" ];
       wantedBy = [ "multi-user.target" ];
 
