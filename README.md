@@ -132,8 +132,7 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 - **Virtual Camera**: `v4l2loopback` for streaming domination.
 - **Virtual DSP Coprocessor**: Soundproof clean-room RT guest inside the chaotic host party bus — a technical masterpiece.
 
-<img width="2560" height="1600" alt="image" src="https://github.com/user-attachments/assets/7f0e3a46-8573-40ba-a3c9-1e9dad2acf31" />
-
+![wallpaper-color](https://github.com/user-attachments/assets/6c5754c8-21d6-45c1-a775-b77a871bf517)
 
 ## Security – The Iron Curtain (System-Wide + DCF)
 
