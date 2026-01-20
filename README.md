@@ -22,6 +22,8 @@ The war machine has evolved. As of January 2026, Oligarchy NixOS is fully govern
 **Flake Dominance**: Everything is locked to reproducible git revisions via `flake.nix`.  
 **Modular Segregation**: Core config is lean; R&D weapons (AI, DSP, DCF) are isolated in `./modules/` for instant swapping.  
 **Framework 16 (7040) Hardening**: `nixos-hardware` pinned directly in flake inputs for AMD 7040 supremacy and expansion-card domination.
+**Home Manager**: Finally using a home file to create a unified UX.
+**Boot Intro**: a custom made boot intro was made for a plymouth compatible video based intro that plays with mpv before login.
 
 ### New Offensive & Defensive Capabilities
 **DeMoD Branded Fortress**: Full thematic takeover — Hyprland, Waybar, Kitty, Wofi, Mako, Hyprlock, Wlogout all branded with DeMoD cyan/red alerts and gradients.  
