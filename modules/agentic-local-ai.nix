@@ -89,7 +89,7 @@ let
 
   # Docker image selection
   ollamaImage =
-    if effectiveAcceleration == "rocm" then "ollama/ollama:0.14.0-rc2-rocm"
+    if effectiveAcceleration == "rocm" then "ollama/ollama:0.15.5-rc2-rocm"
     else "ollama/ollama:latest";
 
   # Generate docker-compose.yml
@@ -133,7 +133,7 @@ let
         OLLAMA_MAX_QUEUE = toString currentPreset.maxQueue;
         OLLAMA_MEMORY_PRESSURE_THRESHOLD = currentPreset.memoryPressure;
       } // lib.optionalAttrs (effectiveAcceleration == "rocm") {
-        ROCR_VISIBLE_DEVICES = "0";
+        ROCR_VISIBLE_DEVICES = "1, 0";
       } // lib.optionalAttrs (effectiveAcceleration == "rocm" && cfg.advanced.rocm.gfxVersionOverride != null) {
         HSA_OVERRIDE_GFX_VERSION = cfg.advanced.rocm.gfxVersionOverride;
       };
@@ -306,7 +306,7 @@ in {
 
     network.bindAddress = mkOption {
       type = types.str;
-      default = "127.0.0.1";
+      default = "0.0.0.0";
       description = "Bind address (0.0.0.0 to expose to LAN).";
     };
 
