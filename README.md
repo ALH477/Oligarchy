@@ -225,6 +225,7 @@ BSD 3-Clause License (full text unchanged from original).
 
 ArchibaldOS BSD-3 | StreamDB LGPL | Core Oligarchy BSD-3.
 
-Victory is yours.
+# Victory is y(ours).
 
-![Oligarchy-toy-edition](https://github.com/user-attachments/assets/01bb8a08-8422-4acc-ae66-38e3c668419a)
+<img width="1280" height="640" alt="image" src="https://github.com/user-attachments/assets/965c99e0-6ce2-4698-bff7-117f257bf48e" />
+
