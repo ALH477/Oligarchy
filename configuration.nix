@@ -8,6 +8,9 @@
   imports = [
     ./modules/audio.nix
 	./modules/boot-intro.nix
+    ./modules/dcf-community-node.nix
+    ./modules/dcf-identity.nix
+    ./modules/dcf-tray.nix
   ];
 
   options = {
@@ -81,6 +84,19 @@
     };
 
     # ──────────────────────────────────────────────────────────────────────────
+    # OpenClaw AI Assistant Gateway
+    # ──────────────────────────────────────────────────────────────────────────
+    services.openclaw-agent = {
+      enable = true;
+      lanAccess = true;  # Allow LAN access without opening firewall port
+      plugins = [
+        { source = "github:openclaw/summarize"; }
+        { source = "github:openclaw/oracle"; }
+        { source = "github:openclaw/peekaboo"; }
+      ];
+    };
+
+    # ──────────────────────────────────────────────────────────────────────────
     # Audio Configuration — Pure PipeWire (no X11-based audio remnants)
     # ──────────────────────────────────────────────────────────────────────────
     # Disable the custom audio module (replaced with standard PipeWire config below)
@@ -131,7 +147,7 @@
     # ──────────────────────────────────────────────────────────────────────────
     swapDevices = [
       { device = "/swapfile";
-        size = 71680; }  # 70 GiB
+        size = 32680; }  # 32 GiB
     ];
     boot.kernel.sysctl = {
       "vm.swappiness" = 10;
@@ -293,13 +309,6 @@
       domains = [ "~." ];
       fallbackDns = [ "1.1.1.1" "8.8.8.8" "2606:4700:4700::1111" "2001:4860:4860::8888" ];
       dnsovertls = "opportunistic";
-      extraConfig = ''
-        DNSStubListenerExtra=127.0.0.53
-        MulticastDNS=yes
-        LLMNR=yes
-        Cache=yes
-        CacheFromLocalhost=no
-      '';
     };
 
     systemd.services.systemd-networkd-wait-online.enable = lib.mkForce false;
@@ -530,7 +539,7 @@
     users.users.asher = {
       isNormalUser = true;
       description = "Asher";
-      extraGroups = [ "networkmanager" "wheel" "docker" "wireshark" "disk" "video" "audio" ];
+      extraGroups = [ "networkmanager" "wheel" "docker" "wireshark" "disk" "video" "input" "audio" ];
       shell = pkgs.bash;
     };
 
@@ -573,7 +582,7 @@
         protobuf numpy matplotlib python-snappy tkinter
       ]))
 
-      wireshark tcpdump nmap netcat
+      wireshark tcpdump nmap netcat ncdu
       inetutils dnsutils whois iperf3 mtr ethtool wavemon networkmanagerapplet
 
       cmake gcc gnumake ninja rustc cargo go openssl gnutls pkgconf snappy protobuf
@@ -585,7 +594,7 @@
 
       vulkan-tools vulkan-loader vulkan-validation-layers libva-utils
 
-      dhewm3 darkradiant zandronum
+      dhewm3 darkradiant zandronum shipwright beyond-all-reason
 
       inputs.minecraft.packages.${pkgs.stdenv.hostPlatform.system}.default
 
@@ -606,16 +615,16 @@
 
       mininet
 
-      ollama opencode open-webui alpaca aichat
+      ollama opencode open-webui alpaca aichat aider-chat
 
       (perl.withPackages (ps: with ps; [
         JSON GetoptLong CursesUI ModulePluggable Appcpanminus
       ]))
 
-      (sbcl.withPackages (ps: with ps; [
-        cffi cl-ppcre cl-json cl-csv usocket bordeaux-threads log4cl
-        trivial-backtrace cl-store hunchensocket fiveam cl-dot cserial-port
-      ]))
+      # sbcl.withPackages (ps: with ps; [
+      #   cffi cl-ppcre cl-json cl-csv usocket bordeaux-threads log4cl
+      #   trivial-backtrace cl-store hunchensocket fiveam cl-dot cserial-port
+      # ])
 
       libserialport can-utils lksctp-tools cjson ncurses libuuid
       kicad graphviz mako openscad freecad carla strawberry

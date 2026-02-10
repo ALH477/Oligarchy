@@ -19,6 +19,9 @@
     demod-ip-blocker.url = "git+https://github.com/ALH477/DeMoD-IP-Blocker.git";
     minecraft.url = "github:ALH477/NixOS-MineCraft";
     
+    # OpenClaw AI assistant gateway
+    nix-openclaw.url = "github:openclaw/nix-openclaw";
+    
     # Home Manager for user-level configuration
     home-manager = {
       url = "github:nix-community/home-manager";
@@ -47,6 +50,7 @@
     fw-fanctrl,
     demod-ip-blocker,
     minecraft,
+    nix-openclaw,
     home-manager,
     nixos-generators,
     # archibaldos,
@@ -110,6 +114,7 @@
         ./modules/hardware-configuration.nix
         ./modules/kernel.nix
         ./modules/agentic-local-ai.nix
+        ./modules/openclaw-agent.nix
         ./modules/dcf-community-node.nix
         ./modules/dcf-identity.nix
         ./modules/dcf-tray.nix
