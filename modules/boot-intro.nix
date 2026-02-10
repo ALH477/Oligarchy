@@ -225,23 +225,23 @@ let
       id=$(cat "$card/id")
       
       priority=0
-      device=""
+      DEVICE=""
       
       # Priority 100: Professional USB/DSP interfaces
       if echo "$id" | grep -qE "USB|RME|Focusrite|Scarlett|Clarett|Universal|Apollo|MOTU|Behringer|PreSonus|Audient|Antelope|Apogee|SSL|Metric|UAD"; then
         priority=100
-        device="hw:$cardnum,0"
+        DEVICE="hw:$cardnum,0"
       
       # Priority 50: HDMI/DisplayPort
       elif echo "$id" | grep -qE "HDMI|DisplayPort|NVidia|AMD"; then
         priority=50
-        for dev in 3 7 8; do
-          if [ -e "/proc/asound/card$cardnum/pcm${dev}p" ]; then
-            device="hw:$cardnum,$dev"
+        for dev_num in 3 7 8; do
+          if [ -e "/proc/asound/card$cardnum/pcm''${dev_num}p" ]; then
+            DEVICE="hw:$cardnum,''${dev_num}"
             break
           fi
         done
-        [ -z "$device" ] && device="hw:$cardnum,0"
+        [ -z "$DEVICE" ] && DEVICE="hw:$cardnum,0"
       
       # Priority 25: Other cards
       else
@@ -249,209 +249,172 @@ let
         pcm_device=$(ls "$card"/pcm*p 2>/dev/null | head -n1)
         if [ -n "$pcm_device" ]; then
           devnum=$(basename "$pcm_device" | sed 's/pcm//;s/p//')
-          device="hw:$cardnum,$devnum"
+          DEVICE="hw:$cardnum,$devnum"
         fi
       fi
       
-      if [ $priority -gt $BEST_PRIORITY ] && [ -n "$device" ]; then
+      if [ $priority -gt $BEST_PRIORITY ] && [ -n "$DEVICE" ]; then
         BEST_PRIORITY=$priority
-        BEST_DEVICE="$device"
+        BEST_DEVICE="$DEVICE"
       fi
     done
     
     if [ -n "$BEST_DEVICE" ]; then
-      ${optionalString cfg.debugAudio ''echo "[Performance] Detected: $BEST_DEVICE (priority $BEST_PRIORITY)" >&2''}
       echo "$BEST_DEVICE"
-    else
-      ${optionalString cfg.debugAudio ''echo "[Performance] No device found, using default" >&2''}
-      echo "default"
+      exit 0
     fi
+    
+    # Fallback
+    echo "default"
   '';
-
-  # COMPATIBILITY MODE: Multi-pass detection (100-300ms) - thorough for debugging
+  
+  # COMPATIBILITY MODE: Legacy device detection (~50-100ms)
   audioDetectionCompatibility = pkgs.writeShellScript "detect-audio-compatibility" ''
-    # Manual override
     if [ -n "${cfg.audioDevice}" ]; then
       echo "${cfg.audioDevice}"
       exit 0
     fi
     
-    ${optionalString cfg.debugAudio ''echo "[Compatibility] Starting multi-pass detection..." >&2''}
-    
-    # Pass 1: Professional audio interfaces
-    for card in /proc/asound/card*; do
-      if [ -f "$card/id" ]; then
-        id=$(cat "$card/id")
-        cardnum=$(basename "$card" | sed 's/card//')
-        
-        if echo "$id" | grep -qiE "USB|RME|Focusrite|Scarlett|Clarett|Universal|Apollo|MOTU|Behringer|PreSonus|Audient|Antelope|Apogee|SSL|Metric|UAD"; then
-          DEVICE="hw:$cardnum,0"
-          ${optionalString cfg.debugAudio ''echo "[Compatibility] Found professional audio interface: $id -> $DEVICE" >&2''}
-          echo "$DEVICE"
-          exit 0
-        fi
+    # Try aplay -l parsing (traditional method)
+    if command -v aplay >/dev/null 2>&1; then
+      devices=$(aplay -l 2>/dev/null | grep "^card" || true)
+      
+      # Prefer professional USB interfaces
+      usb_device=$(echo "$devices" | grep -iE "USB|Focusrite|Scarlett|MOTU|Behringer|PreSonus|RME" | head -n1 || true)
+      if [ -n "$usb_device" ]; then
+        card=$(echo "$usb_device" | sed -n 's/card \([0-9]*\).*/\1/p')
+        dev=$(echo "$usb_device" | sed -n 's/.*device \([0-9]*\).*/\1/p')
+        echo "hw:$card,$dev"
+        exit 0
       fi
-    done
-    
-    # Pass 2: HDMI/DisplayPort audio
-    for card in /proc/asound/card*; do
-      if [ -f "$card/id" ]; then
-        id=$(cat "$card/id")
-        cardnum=$(basename "$card" | sed 's/card//')
-        
-        if echo "$id" | grep -qiE "HDMI|DisplayPort|NVidia|AMD|Intel.*HDMI"; then
-          for dev in 3 7 8 9; do
-            if [ -e "/proc/asound/card$cardnum/pcm${dev}p" ]; then
-              DEVICE="hw:$cardnum,$dev"
-              ${optionalString cfg.debugAudio ''echo "[Compatibility] Found HDMI/DP audio: $id -> $DEVICE" >&2''}
-              echo "$DEVICE"
-              exit 0
-            fi
-          done
-        fi
+      
+      # Try HDMI
+      hdmi_device=$(echo "$devices" | grep -iE "HDMI|DisplayPort" | head -n1 || true)
+      if [ -n "$hdmi_device" ]; then
+        card=$(echo "$hdmi_device" | sed -n 's/card \([0-9]*\).*/\1/p')
+        dev=$(echo "$hdmi_device" | sed -n 's/.*device \([0-9]*\).*/\1/p')
+        echo "hw:$card,$dev"
+        exit 0
       fi
-    done
-    
-    # Pass 3: First available PCM device
-    for card in /proc/asound/card*; do
-      if [ -f "$card/id" ]; then
-        cardnum=$(basename "$card" | sed 's/card//')
-        id=$(cat "$card/id")
-        
-        for pcm in "$card"/pcm*p; do
-          if [ -d "$pcm" ]; then
-            devnum=$(basename "$pcm" | sed 's/pcm//;s/p//')
-            DEVICE="hw:$cardnum,$devnum"
-            ${optionalString cfg.debugAudio ''echo "[Compatibility] Using fallback device: $id -> $DEVICE" >&2''}
-            echo "$DEVICE"
-            exit 0
-          fi
-        done
+      
+      # First available device
+      first=$(echo "$devices" | head -n1)
+      if [ -n "$first" ]; then
+        card=$(echo "$first" | sed -n 's/card \([0-9]*\).*/\1/p')
+        dev=$(echo "$first" | sed -n 's/.*device \([0-9]*\).*/\1/p')
+        echo "hw:$card,$dev"
+        exit 0
       fi
-    done
+    fi
     
-    # Pass 4: Last resort
-    ${optionalString cfg.debugAudio ''echo "[Compatibility] No specific device found, using ALSA default" >&2''}
     echo "default"
   '';
-
+  
   audioDetectionScript = if cfg.performanceMode 
                          then audioDetectionPerformance 
                          else audioDetectionCompatibility;
 
   # ════════════════════════════════════════════════════════════════════════════
-  # Systemd Monitor - Performance Mode vs Compatibility Mode
+  # Main Playback Script
   # ════════════════════════════════════════════════════════════════════════════
-  
-  # PERFORMANCE MODE: Blocking wait (no polling overhead)
-  systemdMonitorPerformance = optionalString cfg.fadeOnSystemd ''
-    (
-      # Efficient blocking wait for multi-user.target
-      while ! systemctl is-active --quiet multi-user.target 2>/dev/null; do
-        sleep 1
-      done
+  playScript = pkgs.writeShellApplication {
+    name = "boot-intro-play";
+    runtimeInputs = [ 
+      pkgs.coreutils 
+      pkgs.ncurses 
+      pkgs.mpv 
+      pkgs.alsa-utils 
+      pkgs.systemd
+      pkgs.socat
+    ];
+    text = ''
+      set -euo pipefail
       
-      ${optionalString cfg.debugAudio ''echo "[Performance] System ready, initiating fade..." >&2''}
-      echo '{"command": ["quit"]}' > /tmp/boot-intro-mpv.cmd 2>/dev/null || kill $MPV_PID 2>/dev/null
-    ) &
-    MONITOR_PID=$!
-  '';
-
-  # COMPATIBILITY MODE: Frequent polling for debugging/testing
-  systemdMonitorCompatibility = optionalString cfg.fadeOnSystemd ''
-    (
-      while true; do
-        if systemctl is-active --quiet multi-user.target 2>/dev/null; then
-          ${optionalString cfg.debugAudio ''echo "[Compatibility] System ready, initiating fade..." >&2''}
-          echo 'quit' > /tmp/boot-intro-mpv.cmd 2>/dev/null || kill $MPV_PID 2>/dev/null
-          break
+      # Clear screen and hide cursor
+      clear
+      tput civis
+      trap "tput cnorm" EXIT
+      
+      # Optional startup delay for hardware initialization
+      ${if cfg.startupDelay > 0 then "sleep ${toString cfg.startupDelay}" else ""}
+      
+      # Detect audio device
+      AUDIO_DEVICE=$(${audioDetectionScript})
+      
+      ${optionalString cfg.debugAudio ''
+        echo "Boot Intro Debug: Detected audio device: $AUDIO_DEVICE" >&2
+        aplay -l >&2 || true
+      ''}
+      
+      # Set initial volume if configured
+      ${optionalString (cfg.initialVolume != null) ''
+        amixer -q sset Master ${toString cfg.initialVolume}% unmute 2>/dev/null || true
+      ''}
+      
+      # Build mpv command
+      MPV_CMD=(
+        "mpv"
+        "/etc/demod/boot-intro.mp4"
+        "--no-terminal"
+        "--really-quiet"
+        "--no-input-default-bindings"
+        "--no-osc"
+        "--no-osd-bar"
+        "--osd-level=0"
+        "--audio-device=alsa/$AUDIO_DEVICE"
+        "--audio-channels=${cfg.audioChannels}"
+        "--volume=${toString cfg.volume}"
+        "--video-sync=display-resample"
+        "--hwdec=auto"
+        "--vo=gpu"
+        "--profile=fast"
+      )
+      
+      ${if cfg.fadeOnSystemd then ''
+        # Performance mode: blocking wait for multi-user.target
+        if ${if cfg.performanceMode then "true" else "false"}; then
+          (
+            systemctl is-active multi-user.target --wait >/dev/null 2>&1 && \
+            sleep 0.3 && \
+            echo 'keypress q' | socat - UNIX-CONNECT:/tmp/mpv-socket 2>/dev/null || true
+          ) &
+        # Compatibility mode: polling
+        else
+          (
+            while ! systemctl is-active multi-user.target >/dev/null 2>&1; do
+              sleep 0.5
+            done
+            sleep 0.3
+            echo 'keypress q' | socat - UNIX-CONNECT:/tmp/mpv-socket 2>/dev/null || true
+          ) &
         fi
-        sleep 0.5
-      done
-    ) &
-    MONITOR_PID=$!
-  '';
+        
+        MPV_CMD+=("--input-ipc-server=/tmp/mpv-socket")
+      '' else ""}
+      
+      # Execute mpv
+      "''${MPV_CMD[@]}" || true
+      
+      clear
+    '';
+  };
 
-  systemdMonitor = if cfg.performanceMode 
-                   then systemdMonitorPerformance 
-                   else systemdMonitorCompatibility;
-
-  playScript = pkgs.writeShellScript "boot-intro-play" ''
-    ${optionalString cfg.debugAudio ''
-      echo "Boot Intro Starting [Mode: ${if cfg.performanceMode then "Performance" else "Compatibility"}]" >&2
-    ''}
-    
-    # Startup delay
-    sleep ${toString cfg.startupDelay}
-    
-    # Detect audio device
-    AUDIO_DEVICE=$(${audioDetectionScript})
-    
-    ${optionalString cfg.debugAudio ''
-      echo "Boot intro: device=$AUDIO_DEVICE" >&2
-      ${pkgs.alsa-utils}/bin/aplay -l >&2 2>/dev/null || true
-    ''}
-    
-    # Set initial volume if requested
-    ${optionalString (cfg.initialVolume != null) ''
-      if [ "$AUDIO_DEVICE" != "default" ]; then
-        CARD_NUM=$(echo "$AUDIO_DEVICE" | sed 's/hw://;s/,.*//')
-        ${pkgs.alsa-utils}/bin/amixer ${if cfg.performanceMode then "-q" else ""} -c "$CARD_NUM" sset Master ${toString cfg.initialVolume}% unmute 2>/dev/null || true
-      else
-        ${pkgs.alsa-utils}/bin/amixer ${if cfg.performanceMode then "-q" else ""} sset Master ${toString cfg.initialVolume}% unmute 2>/dev/null || true
-      fi
-    ''}
-    
-    # Launch mpv
-    ${pkgs.mpv}/bin/mpv \
-      --fs --no-border --no-config --no-osd-bar --no-input-default-bindings \
-      --vo=gpu,drm --gpu-context=auto --hwdec=auto-safe \
-      --ao=alsa \
-      --audio-device="alsa/$AUDIO_DEVICE" \
-      --audio-channels=${cfg.audioChannels} \
-      --alsa-buffer-time=100000 \
-      --alsa-resample=no \
-      --audio-samplerate=48000 \
-      --volume=${toString cfg.volume} \
-      --panscan=${if cfg.fillMode == "fill" then "1.0" else "0"} \
-      --scale=ewa_lanczossharp \
-      --really-quiet \
-      ${optionalString cfg.fadeOnSystemd ''--input-file=/tmp/boot-intro-mpv.cmd \''} \
-      ${finalVideoPath} &
-    
-    MPV_PID=$!
-    
-    ${systemdMonitor}
-    
-    # Wait for completion
-    wait $MPV_PID 2>/dev/null || true
-    
-    ${optionalString cfg.fadeOnSystemd ''
-      kill $MONITOR_PID 2>/dev/null || true
-      rm -f /tmp/boot-intro-mpv.cmd
-    ''}
-    
-    ${optionalString cfg.debugAudio ''echo "Boot intro completed" >&2''}
-  '';
-
-in
-{
+in {
   options.services.boot-intro = {
-    enable = mkEnableOption "DeMoD boot intro video system";
+    enable = mkEnableOption "DeMoD boot intro video player";
 
-    # ── Performance Control ──
     performanceMode = mkOption {
       type = types.bool;
       default = true;
       description = ''
-        Enable performance optimizations (recommended for production).
-        - true: Single-pass audio detection (~5-15ms), blocking systemd monitor (~0ms overhead)
-        - false: Multi-pass audio detection (~100-300ms), polling systemd monitor (~200ms overhead)
-        Use false only for debugging or maximum hardware compatibility testing.
+        Performance-optimized mode for pro audio and low-latency systems.
+        Uses /proc/asound for direct device detection (5-15ms overhead).
+        
+        Disable for compatibility mode if you have unusual hardware or need
+        aplay-based detection (~50-100ms overhead).
       '';
     };
 
-    # ── Theme Selection ──
     theme = mkOption {
       type = types.enum (attrNames demodPalettes);
       default = "classic";
@@ -685,9 +648,22 @@ in
 
       conflicts = [ "getty@tty1.service" ];
 
+      # Don't try to start this during nixos-rebuild switch - only on actual boot
+      restartIfChanged = false;
+
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = playScript;
+        
+        # Skip if display manager is already running (prevents running during nixos-rebuild switch)
+        ExecCondition = pkgs.writeShellScript "boot-intro-condition" ''
+          # If display-manager is active, skip this service
+          if ${pkgs.systemd}/bin/systemctl is-active display-manager.service >/dev/null 2>&1; then
+            exit 1
+          fi
+          exit 0
+        '';
+        
+        ExecStart = "${playScript}/bin/boot-intro-play";
 
         StandardInput = "tty";
         StandardOutput = "tty";
