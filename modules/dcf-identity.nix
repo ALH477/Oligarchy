@@ -122,7 +122,7 @@ in {
       requires = [ "docker.service" ];
       
       serviceConfig = {
-        Restart = "always";
+        Restart = lib.mkForce "always";
         RestartSec = "10s";
       };
     };
