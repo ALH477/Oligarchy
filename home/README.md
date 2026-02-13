@@ -25,7 +25,7 @@ nix-home/
 └── README.md            # This file
 ```
 
-## 🚀 Quick Start
+##  Quick Start
 
 1. **Copy to your config directory:**
    ```bash
@@ -60,7 +60,7 @@ nix-home/
    home-manager switch --flake .
    ```
 
-## 🎨 Theme System
+##  Theme System
 
 ### Available Themes
 - **demod** - Radical retro-tech (turquoise/violet, white on black)
@@ -235,6 +235,6 @@ This is a starting point - feel free to:
 - Add more theme palettes
 - Create build variants for different machines
 
-## 🤝 Contributing
+## Contributing
 
 This configuration is personal, but feel free to use it as inspiration for your own modular NixOS setup!
