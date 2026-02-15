@@ -11,6 +11,7 @@
     ./modules/dcf-community-node.nix
     ./modules/dcf-identity.nix
     ./modules/dcf-tray.nix
+    ./modules/security/strict-egress.nix
   ];
 
   options = {
@@ -18,6 +19,15 @@
   };
 
   config = {
+  # ============================================================================
+  # SOPS Secrets Management
+  # ============================================================================
+  sops = {
+    defaultSopsFile = ./secrets/secrets.yaml;
+    defaultSopsFormat = "yaml";
+    age.keyFile = "/etc/sops/age/keys.txt";
+  };
+
   # ──────────────────────────────────────────────────────────────────────────
   # DeMoD Boot Intro
   # ──────────────────────────────────────────────────────────────────────────
@@ -61,16 +71,15 @@
       nodeId = "alh477";  # Your actual node ID
       openFirewall = true;
     };
-    # Identity Service - Enable for production
+    # Identity Service - Enable for production (requires secrets to be set up via sops-nix)
     custom.dcfIdentity = {
-      enable = true;
+      enable = false;
       domain = "dcf.demod.ltd";
       port = 4000;
       dataDir = "/var/lib/demod-identity";
-      secretsFile = "/etc/nixos/secrets/dcf-id.env";
     };
-    # System Tray Controller
-    services.dcf-tray.enable = true;
+    # System Tray Controller (disable if DCF is disabled)
+    services.dcf-tray.enable = lib.mkIf config.custom.dcfIdentity.enable true;
 
     # ──────────────────────────────────────────────────────────────────────────
     # Local AI Stack (Ollama)

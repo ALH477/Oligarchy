@@ -1,0 +1,10 @@
+# Secrets management - NEVER commit these
+secrets/
+secrets/keys.txt
+secrets/secrets.yaml
+secrets/README.md
+*.age
+*.decrypted
+
+# Keep sops.yaml in git (contains only public key, no secrets)
+!secrets/.sops.yaml

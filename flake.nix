@@ -33,10 +33,16 @@
       url = "github:nix-community/nixos-generators";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # Secrets management
+    sops-nix = {
+      url = "github:Mic92/sops-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     
     # ArchibaldOS DSP coprocessor (uncomment when available)
     # archibaldos = {
-    #   url = "github:ALH477/archibaldos";
+    #   url = "github:YOUR_ORG/archibaldos";
     #   inputs.nixpkgs.follows = "nixpkgs";
     # };
   };
@@ -53,6 +59,7 @@
     nix-openclaw,
     home-manager,
     nixos-generators,
+    sops-nix,
     # archibaldos,
     ...
   } @ inputs:
@@ -93,6 +100,7 @@
         
         # Third-party modules
         determinate.nixosModules.default
+        sops-nix.nixosModules.sops
         nixos-hardware.nixosModules.framework-16-7040-amd
         fw-fanctrl.nixosModules.default
         demod-ip-blocker.nixosModules.default
@@ -104,7 +112,7 @@
             useGlobalPkgs = true;
             useUserPackages = true;
             backupFileExtension = "hm-backup";
-            users.asher = import ./home/flake.nix;
+            users.asher = import ./home/home.nix;
             extraSpecialArgs = specialArgs;
           };
         }
@@ -118,6 +126,8 @@
         ./modules/dcf-community-node.nix
         ./modules/dcf-identity.nix
         ./modules/dcf-tray.nix
+        ./modules/secrets.nix
+        ./modules/security/strict-egress.nix
         # Uncomment when archibaldos input is available:
         # ./modules/archibaldos-dsp-vm.nix
       ];
@@ -154,6 +164,7 @@
             custom.dcfCommunityNode.enable = lib.mkForce false;
             custom.dcfIdentity.enable = lib.mkForce false;
             services.dcf-tray.enable = lib.mkForce false;
+            networking.firewall.strictEgress.enable = lib.mkForce false;
             
             boot.supportedFilesystems = lib.mkForce [ 
               "btrfs" "reiserfs" "vfat" "f2fs" "xfs" "ntfs" "cifs" 

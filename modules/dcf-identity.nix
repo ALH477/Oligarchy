@@ -36,6 +36,7 @@ in {
       description = ''
         Path to environment file containing secrets.
         Required variables: STRIPE_SECRET_KEY, DISCORD_CLIENT_SECRET
+        Now managed via sops-nix - use config.sops.secrets."dcf/stripe-secret".path
       '';
       example = "/etc/nixos/secrets/dcf-id.env";
     };
@@ -87,7 +88,8 @@ in {
           RUST_BACKTRACE = "1";
         };
 
-        environmentFiles = [ cfg.secretsFile ];
+        # Note: When enabling, configure secrets via sops-nix
+        # environmentFiles = [ "/run/secrets/dcf/stripe-secret" ];
 
         volumes = [
           "${cfg.dataDir}:/data"
