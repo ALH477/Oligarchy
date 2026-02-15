@@ -1,9 +1,10 @@
-{ config, pkgs, lib, theme, features, ... }:
+{ config, pkgs, lib, theme ? {}, features ? {}, ... }:
 
 let
   p = theme;
   
   # Monitor configuration - auto-detect based on hardware
+  # To customize: override monitors.laptop or monitors.desktop in your config
   monitors = {
     laptop = {
       name = "eDP-1";
@@ -17,10 +18,21 @@ let
       position = "0x0";
       scale = "1";
     };
+    # Fallback for unknown monitors - uses preferred mode
+    fallback = {
+      name = "";
+      resolution = "preferred";
+      position = "0x0";
+      scale = "1";
+    };
   };
   
   # Determine monitor based on hardware features
-  currentMonitor = if features.hasBattery or false then monitors.laptop else monitors.desktop;
+  # If hasBattery, assume laptop; otherwise desktop
+  # Override in your flake if you have a different setup
+  currentMonitor = if features.hasBattery or false 
+    then monitors.laptop 
+    else monitors.desktop;
   
 in {
   wayland.windowManager.hyprland = {
@@ -376,7 +388,10 @@ in {
         "$mod, equal, exec, gnome-calculator"
         
         # Battery/sleep (laptop only)
-        (lib.optional features.hasBattery "$mod, F12, exec, ~/.config/hypr/scripts/lid.sh toggle")
+        (lib.optional (features.hasBattery or false) "$mod, F12, exec, ~/.config/hypr/scripts/lid.sh toggle")
+        
+        # DCF (DeMoD Communication Framework)
+        (lib.optional (features.enableDCF or false) "$mod, D, exec, $terminal --title 'DCF Control' -e dcf-control")
         
         # Gaming - Full support
         (lib.optional (features.enableGaming or false) "$mod, F9, exec, ~/.config/hypr/scripts/gamemode.sh toggle")

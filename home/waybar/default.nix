@@ -1,4 +1,4 @@
-{ config, pkgs, lib, theme, features, ... }:
+{ config, pkgs, lib, theme ? {}, features ? {}, ... }:
 
 let
   p = theme;  # Shorthand for palette
@@ -225,7 +225,6 @@ in {
         tooltip = true;
         on-click = "~/.config/hypr/scripts/gamemode.sh toggle";
       };
-    };
     };
 
     # ════════════════════════════════════════════════════════════════════════════

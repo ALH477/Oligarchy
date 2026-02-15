@@ -1,4 +1,4 @@
-{ config, pkgs, lib, theme, username ? "asher", ... }:
+{ config, pkgs, lib, theme ? {}, features ? {}, username ? "asher", ... }:
 
 let
   p = theme;  # Shorthand for palette

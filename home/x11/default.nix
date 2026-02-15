@@ -1,4 +1,4 @@
-{ config, pkgs, lib, theme, features, ... }:
+{ config, pkgs, lib, theme ? {}, features ? {}, ... }:
 
 let
   p = theme;

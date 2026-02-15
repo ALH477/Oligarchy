@@ -227,7 +227,7 @@ home-manager switch --flake .#
 
 ## License
 
-Copyright (c) 2024-2026 Asher LeRoy
+Copyright (c) 2024-2026 Asher Wolfstein
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:

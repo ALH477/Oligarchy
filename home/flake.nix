@@ -1,6 +1,4 @@
 {
-  description = "DeMoD - Modular Nix Home Manager Configuration";
-
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
     home-manager = {
@@ -14,6 +12,7 @@
   outputs = { self, nixpkgs, home-manager, ... } @ inputs:
     let
       lib = nixpkgs.lib;
+      description = "DeMoD - Modular Nix Home Manager Configuration";
       
       # System configurations
       systems = [ "x86_64-linux" "aarch64-linux" ];
