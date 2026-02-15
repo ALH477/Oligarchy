@@ -1,4 +1,4 @@
-# Oligarchy NixOS – The Unstoppable War Machine
+# ![Oligarchy](./assets/oligarchy.gif) NixOS – The Unstoppable War Machine
 
 **Framework 16 Optimized · AMD 7040 · NVIDIA · Hyprland · Plasma 6 · Cinnamon · CachyOS kernel · ~5–7 W idle · Nuclear-grade DSP coprocessor · Calamares Install · DeMoD Branded Fortress · DCF Compute Fabric**
 
@@ -6,6 +6,8 @@
 
 Oligarchy NixOS isn’t some boring distro hack.  
 It’s the **first personal OS in history** to unleash a **self-healing, real-time DSP coprocessor** that obliterates latency with **~0.38–0.58 ms round-trip** — forged straight from the same flake that rules your host. 
+
+![](./assets/framework_rotating.gif) ![](./assets/demod.gif)
 
 The Host (CachyOS kernel) is a raging sports car built for raw speed and high FPS. The DSP VM (RT BORE kernel) is a flawless Swiss watch that never misses a beat. You wouldn’t put a watch engine in a race car, and you sure as hell wouldn’t put a race-car engine in a precision instrument.
 
