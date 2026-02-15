@@ -260,7 +260,7 @@
         echo "║   config-eval     - Configuration evaluation test            ║"
         echo "║                                                                ║"
         echo "║ TUI Tools:                                                     ║"
-        echo "║   tui哥伦          - Terminal UI for Nix                      ║"
+        echo "║   tui             - Terminal UI for Nix                      ║"
         echo "║   nix-tree        - Explore Nix store                        ║"
         echo "║   htop            - Process monitor                          ║"
         echo "║   iftop           - Network monitor                          ║"
