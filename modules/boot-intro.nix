@@ -31,7 +31,7 @@ let
       accent = "#2a475e";
       background = "#171a21";
       text = "#c7d5e0";
-      waveform = "#66c0f4";
+      waveform = "#FB7E14";
     };
 
     # Amber — warm CRT terminal
