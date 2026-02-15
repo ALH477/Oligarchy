@@ -25,7 +25,9 @@ The war machine has evolved. As of January 2026, Oligarchy NixOS is fully govern
 
 **Home Manager**: Finally using a home file to create a unified UX.
 
-**Boot Intro**: a custom made boot intro was made for a plymouth compatible video based intro that plays with mpv before login.
+**Boot Intro**: a custom made [boot intro](https://www.youtube.com/watch?v=2ZDtOJOCGxw&t=17s) was made for a plymouth compatible video based intro that plays with mpv before login.
+
+[!](https://www.youtube.com/watch?v=2ZDtOJOCGxw&t=17s)
 
 ### New Offensive & Defensive Capabilities
 **DeMoD Branded Fortress**: Full thematic takeover — Hyprland, Waybar, Kitty, Wofi, Mako, Hyprlock, Wlogout all branded with DeMoD cyan/red alerts and gradients.  
