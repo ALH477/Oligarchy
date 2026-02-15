@@ -1,240 +1,259 @@
-# Modular Nix Home Configuration
+# DeMoD Home Configuration
 
-A clean, modular organization of your NixOS home-manager configuration with themed components.
+A production-ready, modular Nix home-manager configuration for Oligarchy NixOS.
 
-## 📁 Directory Structure
+## Overview
 
-```
-nix-home/
-├── home.nix              # Main entry point
-├── packages.nix          # Package installations & XDG config
-├── themes/
-│   └── default.nix      # Color palettes (DeMoD, Catppuccin, Nord, etc.)
-├── waybar/
-│   └── default.nix      # Waybar configuration & styling
-├── hyprland/
-│   └── default.nix      # Hyprland window manager config
-├── shell/
-│   └── default.nix      # Bash configuration & aliases
-├── terminal/
-│   └── default.nix      # Kitty terminal configuration
-├── apps/
-│   └── default.nix      # Application configs (mako, git, etc.)
-├── scripts/
-│   └── default.nix      # Helper scripts
-└── README.md            # This file
-```
+DeMoD is a comprehensive home-manager configuration designed for Hyprland Wayland
+environments. It provides a fully themeable desktop with 8 color palettes,
+modular architecture, and flexible feature flags for hardware and software
+detection.
 
-##  Quick Start
+## Optional Configuration
 
-1. **Copy to your config directory:**
-   ```bash
-   cp -r nix-home ~/.config/
-   ```
+This home configuration is **optional**. Oligarchy NixOS was designed to function
+fully without it. This configuration exists for users who want:
 
-2. **Update your flake or configuration to import:**
-   ```nix
-   # In your flake.nix or configuration.nix
-   imports = [ ./nix-home/home.nix ];
-   ```
+- Custom theming and color palettes
+- Personalized keybindings
+- Additional helper scripts
+- Modular configuration management
 
-3. **Customize settings in `home.nix`:**
-   ```nix
-   # Change active theme
-   activePalette = "demod";  # or "catppuccin", "nord", "rosepine"
-   
-   # Toggle features
-   features = {
-     hasBattery = true;
-     hasNumpad = true;
-     enableDev = true;
-     enableGaming = false;
-     enableAudio = true;
-   };
-   ```
+The base system provides a working desktop out of the box. This home config is for
+personality and personalization only.
 
-4. **Rebuild:**
-   ```bash
-   sudo nixos-rebuild switch --flake .
-   # or
-   home-manager switch --flake .
-   ```
+## Features
 
-##  Theme System
+- **8 Theme Palettes**: demod, catppuccin, nord, rosepine, gruvbox, dracula, tokyo, phosphor
+- **Runtime Theme Switching**: Switch themes without rebuilding
+- **Hardware Detection**: Auto-detects battery, touchpad, backlight, bluetooth
+- **Feature Flags**: Toggle dev tools, gaming, audio, DCF, AI stack
+- **Modular Architecture**: Separate configs for packages, waybar, hyprland, apps, scripts
+- **Flake-based**: Proper Nix flake with validation and assertions
 
-### Available Themes
-- **demod** - Radical retro-tech (turquoise/violet, white on black)
-- **catppuccin** - Cozy pastel (Mocha variant)
-- **nord** - Frozen and calm (arctic blue palette)
-- **rosepine** - Elegant and muted (rose/pine)
+## Quick Start
 
-### Switching Themes
-Change the `activePalette` variable in `home.nix`:
+### Using Flakes
 
 ```nix
-activePalette = "nord";  # Switch to Nord theme
-```
+# In your flake.nix
+{
+  inputs.demod.url = "path:/path/to/home2";
 
-All components (waybar, kitty, hyprland, notifications) will automatically use the new theme.
-
-### Adding New Themes
-Add your palette to `themes/default.nix`:
-
-```nix
-palettes = {
-  # ... existing palettes ...
-  
-  myTheme = {
-    name = "My Theme";
-    bg = "#000000";
-    accent = "#FF00FF";
-    # ... other colors
+  outputs = { self, demod, ... }: {
+    homeConfigurations.x86_64-linux = demod.homeConfigurations.x86_64-linux;
   };
+}
+```
+
+### Using NixOS Module
+
+```nix
+# In configuration.nix
+imports = [ ./home2/flake.nix ];
+
+programs.demod = {
+  enable = true;
+  username = "youruser";
+  theme = "demod";
 };
 ```
 
-## 📦 Module Overview
+## Requirements
 
-### `packages.nix`
-- Font installations
-- Hyprland ecosystem tools
-- CLI utilities
-- Desktop applications
-- Development tools (conditional)
-- Gaming tools (conditional)
-- XDG directory configuration
+- NixOS 25.05 or newer
+- Home Manager (built via flake)
+- Hyprland (for Wayland) or X11 window manager
 
-### `waybar/`
-- Status bar configuration
-- Module layouts (conditional based on features)
-- Themed styling
-- Custom widgets
+## Directory Structure
 
-### `hyprland/`
-- Window manager settings
-- Monitor configuration
-- Keybindings
-- Animations & effects
-- Window rules
-- Environment variables
+```
+home2/
+├── home.nix              # Main entry point with validation
+├── flake.nix             # Nix flake with outputs
+├── packages.nix          # Package installations
+├── themes/
+│   └── default.nix      # 8 color palettes
+├── hyprland/
+│   └── default.nix      # Hyprland window manager
+├── waybar/
+│   └── default.nix      # Status bar
+├── terminal/
+│   └── kitty.nix        # Terminal config
+├── shell/
+│   └── default.nix      # Bash configuration
+├── apps/
+│   ├── kde-globals.nix  # KDE theming
+│   ├── gtk-theming.nix  # GTK theming
+│   ├── wofi.nix         # App launcher
+│   ├── wlogout.nix      # Power menu
+│   ├── hyprlock.nix     # Screen lock
+│   └── ...
+├── scripts/
+│   └── default.nix      # Helper scripts
+└── x11/                 # Optional X11 configs
+```
 
-### `shell/`
-- Bash prompt configuration
-- Aliases
-- Shell options
-- FZF integration
-- Themed welcome message
+## Configuration
 
-### `terminal/`
-- Kitty terminal settings
-- Font configuration
-- Themed colors (ANSI palette)
-- Tab bar styling
+### Username
 
-### `apps/`
-- Mako notification daemon
-- Git configuration
-- Other app configs
+```nix
+# Default: "asher"
+home.nix.override { username = "yourname"; }
+```
 
-### `scripts/`
-- Screenshot utilities
-- Volume control
-- Brightness control (laptop)
-- Lid event handler (laptop)
-- System monitoring
+### Theme Selection
 
-## 🔧 Customization
+Choose from 8 built-in themes:
+
+| Theme | Description |
+|-------|-------------|
+| demod | Turquoise/violet, white on black |
+| catppuccin | Cozy pastel |
+| nord | Arctic blue |
+| rosepine | Rose/pine |
+| gruvbox | Warm earthy |
+| dracula | Purple classic |
+| tokyo | Japanese night |
+| phosphor | Retro terminal green |
 
 ### Feature Flags
-Control what gets installed/configured via the `features` attribute:
+
+Hardware detection runs at build time via `lib.pathExists`. Override any detected
+value by providing your own:
 
 ```nix
 features = {
-  hasBattery = true;      # Laptop-specific features
-  hasBluetooth = true;    # Bluetooth support
-  hasTouchpad = true;     # Touchpad configuration
-  hasBacklight = true;    # Brightness controls
-  hasNumpad = true;       # Numpad keys
-  enableDev = true;       # Development tools
-  enableGaming = false;   # Gaming packages
-  enableAudio = true;     # Audio tools
+  # Hardware (auto-detected)
+  hasBattery = lib.pathExists "/sys/class/power_supply/BAT0";
+  hasTouchpad = lib.pathExists "/dev/input/event0";
+  hasBacklight = lib.pathExists "/sys/class/backlight";
+  hasBluetooth = lib.pathExists "/sys/class/bluetooth";
+
+  # Software
+  enableDev = true;
+  enableGaming = false;
+  enableAudio = true;
+  enableDCF = false;
+  enableAIStack = false;
+
+  # Session
+  sessionType = "wayland";  # or "x11"
+  x11Wm = "icewm";         # icewm, leftwm, dwm, plasma-x11
 };
 ```
 
-### Per-Module Customization
-Each module can be edited independently:
+## Keybindings
 
-- **Change packages:** Edit `packages.nix`
-- **Modify keybindings:** Edit `hyprland/default.nix`
-- **Customize waybar:** Edit `waybar/default.nix`
-- **Add aliases:** Edit `shell/default.nix`
-- **Tweak colors:** Edit `themes/default.nix`
+### Core
 
-### Monitor Configuration
-Edit monitor settings in `hyprland/default.nix`:
+| Key | Action |
+|-----|--------|
+| Super + / | Keybind help |
+| Super + Return | Terminal |
+| Super + Space | App launcher |
+| Super + B | Browser |
+| Super + E | File manager |
 
-```nix
-monitors = {
-  laptop = {
-    name = "eDP-1";
-    resolution = "1920x1080";
-    position = "0x0";
-    scale = "1";
-  };
-  # Add external monitors here
-};
+### Windows
+
+| Key | Action |
+|-----|--------|
+| Super + Q | Close window |
+| Super + W | Toggle float |
+| Super + F | Fullscreen |
+| Super + G | Toggle group |
+| Super + H/J/K/L | Focus (vim keys) |
+
+### Workspaces
+
+| Key | Action |
+|-----|--------|
+| Super + 1-0 | Go to workspace |
+| Super + S | Scratchpad |
+| Super + Tab | Next in group |
+
+### System
+
+| Key | Action |
+|-----|--------|
+| Super + Print | Screenshot |
+| Super + R | Toggle recording |
+| Super + F8 | Cycle theme |
+| Super + Escape | Power menu |
+| Super + Ctrl + L | Lock screen |
+| Super + T | Thermal status |
+
+### Gaming (when enabled)
+
+| Key | Action |
+|-----|--------|
+| Super + F9 | Toggle gamemode |
+| Super + Shift + F9 | MangoHUD overlay |
+
+## Validation
+
+The configuration includes assertions to catch misconfigurations early:
+
+- Username must be non-empty
+- Theme must be valid
+- Session type must be wayland or x11
+- X11 window manager must be valid
+
+## Building
+
+```bash
+# Using flake
+sudo nixos-rebuild switch --flake .#
+
+# Direct home-manager
+home-manager switch --flake .#
 ```
 
-## 🔄 Migration from Original File
+## Modules
 
-This modular structure was created from a single large `asher.nix` file. Key changes:
+| Module | Description |
+|--------|-------------|
+| packages.nix | Fonts, CLI tools, applications |
+| themes/ | Color palettes |
+| hyprland/ | Window manager |
+| waybar/ | Status bar |
+| terminal/ | Kitty terminal |
+| shell/ | Bash prompt and aliases |
+| apps/ | KDE/Qt/GTK theming |
+| scripts/ | Screenshot, volume, theme switching |
+| x11/ | Optional X11 window managers |
 
-1. **Themes centralized** - All color palettes in one place
-2. **Clear separation** - Each component has its own module
-3. **Conditional features** - Easy to enable/disable features
-4. **Better maintainability** - Easier to find and modify specific settings
-5. **Reusable** - Theme system can be shared across configs
+## License
 
-## 📝 Adding New Modules
+Copyright (c) 2024-2026 Asher Wolfstein
 
-To add a new module:
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
 
-1. Create a new directory: `mkdir new-module`
-2. Create `default.nix` with your configuration
-3. Import it in `home.nix`:
-   ```nix
-   imports = [
-     # ... existing imports ...
-     ./new-module
-   ];
-   ```
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
 
-## 🐛 Troubleshooting
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
 
-### Theme not applying
-- Ensure `activePalette` matches a palette name in `themes/default.nix`
-- Rebuild your configuration
-- Restart waybar: `pkill waybar && waybar &`
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software without
+   specific prior written permission.
 
-### Missing features
-- Check `features` flags in `home.nix`
-- Verify conditional packages are installed
-- Check module imports
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-### Scripts not working
-- Verify scripts have execute permissions
-- Check script paths match
-- Ensure required tools are installed
+## Reference
 
-## 📚 Further Customization
-
-This is a starting point - feel free to:
-- Split large modules into multiple files
-- Add new scripts
-- Create custom waybar modules
-- Add more theme palettes
-- Create build variants for different machines
-
-## Contributing
-
-This configuration is personal, but feel free to use it as inspiration for your own modular NixOS setup!
+Original monolithic configuration: `docs/asher.nix`
