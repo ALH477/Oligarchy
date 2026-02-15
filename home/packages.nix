@@ -46,10 +46,10 @@
     # Qt/KDE Theming
     # ══════════════════════════════════════════════════════════════════════════
     [
-      libsForQt5.qt5ct
-      kdePackages.qt6ct
-      libsForQt5.qtstyleplugin-kvantum
-      kdePackages.qtstyleplugin-kvantum  # Qt6 Kvantum
+      libsForQt5.qt5ct                     # Qt5 config tool
+      kdePackages.qt6ct                   # Qt6 config tool
+      libsForQt5.qtstyleplugin-kvantum    # Qt5 Kvantum theme
+      kdePackages.qtstyleplugin-kvantum   # Qt6 Kvantum theme
       papirus-icon-theme
       bibata-cursors
       adwaita-qt
