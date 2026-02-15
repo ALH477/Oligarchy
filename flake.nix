@@ -36,7 +36,7 @@
     
     # ArchibaldOS DSP coprocessor (uncomment when available)
     # archibaldos = {
-    #   url = "github:YOUR_ORG/archibaldos";
+    #   url = "github:ALH477/archibaldos";
     #   inputs.nixpkgs.follows = "nixpkgs";
     # };
   };
@@ -104,7 +104,7 @@
             useGlobalPkgs = true;
             useUserPackages = true;
             backupFileExtension = "hm-backup";
-            users.asher = import ./home/asher.nix;
+            users.asher = import ./home/flake.nix;
             extraSpecialArgs = specialArgs;
           };
         }
