@@ -134,9 +134,10 @@
     };
 
     # ════════════════════════════════════════════════════════════════════════
-    # Installation ISO
+    # Installation ISO & Tests
     # ════════════════════════════════════════════════════════════════════════
     packages.${system} = {
+      # ISO installer
       iso = nixos-generators.nixosGenerate {
         inherit pkgs;
         format = "install-iso";
@@ -200,19 +201,70 @@
     };
     
     # ════════════════════════════════════════════════════════════════════════
-    # Development Shell
+    # Development Shell with Testing Tools
     # ════════════════════════════════════════════════════════════════════════
     devShells.${system}.default = pkgs.mkShell {
       buildInputs = with pkgs; [
+        # Core Nix development
         nil  # Nix LSP
         nixpkgs-fmt
         nix-tree
         nvd  # NixOS version diff
+        
+        # Testing tools
+        testers  # NixOS test framework
+        qemu  # Full QEMU (for manual VM testing)
+        virt-manager  # GUI for VM management
+        libvirt  # Virtualization library
+        virt-viewer  # Minimal SPICE client
+        
+        # TUI tools for testing
+        nix-tree  # Explore Nix store
+        nix-diff  # Compare Nix derivations
+        nix-show-derivation  # View derivation info
+        nix-visualize-derivation  # Visualize derivation graph
+        
+        # Network testing
+        nmap  # Network scanner
+        iperf3  # Network bandwidth tester
+        tcpdump  # Packet analyzer
+        wiresharkCLI  # CLI Wireshark
+        
+        # Debugging
+        gdb  # Debugger
+        strace  # System call tracer
+        ltrace  # Library call tracer
+        lsof  # List open files
+        netstat-nat  # NAT connections
+        
+        # System analysis
+        htop  # Process viewer
+        iftop  # Network traffic monitor
+        iotop  # I/O monitor
+        atop  # Advanced system monitor
       ];
       
       shellHook = ''
-        echo "NixOS Development Shell"
-        echo "Commands: nixos-rebuild, nix flake check, nix build .#iso"
+        echo "╔═══════════════════════════════════════════════════════════════╗"
+        echo "║         Oligarchy NixOS Development Shell                    ║"
+        echo "╠═══════════════════════════════════════════════════════════════╣"
+        echo "║ Testing Commands:                                              ║"
+        echo "║   nix flake check          - Run all automated tests          ║"
+        echo "║   nix run .#test          - Run specific test (see below)    ║"
+        echo "║   nix build .#oligarchy-boot - Build boot test VM              ║"
+        echo "║   nix build .#strict-egress - Build strict-egress test        ║"
+        echo "║                                                                ║"
+        echo "║ Available Tests:                                               ║"
+        echo "║   oligarchy-boot    - Basic boot + connectivity test          ║"
+        echo "║   strict-egress    - Firewall module test                     ║"
+        echo "║   config-eval     - Configuration evaluation test            ║"
+        echo "║                                                                ║"
+        echo "║ TUI Tools:                                                     ║"
+        echo "║   tui哥伦          - Terminal UI for Nix                      ║"
+        echo "║   nix-tree        - Explore Nix store                        ║"
+        echo "║   htop            - Process monitor                          ║"
+        echo "║   iftop           - Network monitor                          ║"
+        echo "╚═══════════════════════════════════════════════════════════════╝"
       '';
     };
   };
