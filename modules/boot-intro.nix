@@ -25,6 +25,15 @@ let
       waveform = "#00FF88";
     };
 
+    steam = {
+      primary = "#66c0f4";
+      secondary = "#1b2838";
+      accent = "#2a475e";
+      background = "#171a21";
+      text = "#c7d5e0";
+      waveform = "#66c0f4";
+    };
+
     # Amber — warm CRT terminal
     amber = {
       primary = "#FFB000";
