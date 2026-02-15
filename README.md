@@ -219,6 +219,8 @@ sudo nix-collect-garbage -d   # or let weekly timer handle it
 
 Fork, improve, test, PR. Keep it Framework-compliant and flake-pure.
 
+![meme](./assets/meme.png)
+
 ## License – The Code of Conquest
 
 BSD 3-Clause License (full text unchanged from original).
