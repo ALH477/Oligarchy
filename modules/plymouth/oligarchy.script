@@ -1,0 +1,475 @@
+// ══════════════════════════════════════════════════════════════════════════
+// Oligarchy Plymouth Theme - DeMoD Radical Retro-Tech Palette
+// ══════════════════════════════════════════════════════════════════════════
+
+// Screen dimensions
+Window.GetMaxWidth = fun() { return Window.GetWidth(); };
+Window.GetMaxHeight = fun() { return Window.GetHeight(); };
+
+screen.width = Window.GetWidth();
+screen.height = Window.GetHeight();
+screen.half_width = screen.width / 2;
+screen.half_height = screen.height / 2;
+
+// ══════════════════════════════════════════════════════════════════════════
+// DeMoD Color Palette (RGB normalized to 0-1)
+// ══════════════════════════════════════════════════════════════════════════
+
+// Background colors
+color.bg = [];
+color.bg.r = 0.031;  // #080810
+color.bg.g = 0.031;
+color.bg.b = 0.063;
+
+color.surface = [];
+color.surface.r = 0.063;  // #101018
+color.surface.g = 0.063;
+color.surface.b = 0.094;
+
+color.overlay = [];
+color.overlay.r = 0.110;  // #1C1C28
+color.overlay.g = 0.110;
+color.overlay.b = 0.157;
+
+// Accent colors
+color.accent = [];
+color.accent.r = 0.000;  // #00F5D4 (Turquoise)
+color.accent.g = 0.961;
+color.accent.b = 0.831;
+
+color.violet = [];
+color.violet.r = 0.545;  // #8B5CF6
+color.violet.g = 0.361;
+color.violet.b = 0.965;
+
+// Text colors
+color.text = [];
+color.text.r = 1.000;  // #FFFFFF
+color.text.g = 1.000;
+color.text.b = 1.000;
+
+color.textAlt = [];
+color.textAlt.r = 0.878;  // #E0E0E0
+color.textAlt.g = 0.878;
+color.textAlt.b = 0.878;
+
+color.textDim = [];
+color.textDim.r = 0.502;  // #808080
+color.textDim.g = 0.502;
+color.textDim.b = 0.502;
+
+// Status colors
+color.success = [];
+color.success.r = 0.224;  // #39FF14 (Neon green)
+color.success.g = 1.000;
+color.success.b = 0.078;
+
+color.error = [];
+color.error.r = 1.000;  // #FF3B5C
+color.error.g = 0.231;
+color.error.b = 0.361;
+
+// ══════════════════════════════════════════════════════════════════════════
+// Background - Wallpaper or solid color
+// ══════════════════════════════════════════════════════════════════════════
+
+// Helper function for max value
+fun max(a, b) {
+    if (a > b) return a;
+    return b;
+}
+
+// Try to load wallpaper.jpg, fallback to solid color if not found
+wallpaper = Image("wallpaper.jpg");
+
+if (wallpaper) {
+    // Wallpaper loaded successfully - scale and center it
+    wallpaper_width = wallpaper.GetWidth();
+    wallpaper_height = wallpaper.GetHeight();
+    
+    // Calculate scaling to cover screen while maintaining aspect ratio
+    scale_x = screen.width / wallpaper_width;
+    scale_y = screen.height / wallpaper_height;
+    scale = max(scale_x, scale_y);
+    
+    // Resize wallpaper to cover screen
+    scaled_width = wallpaper_width * scale;
+    scaled_height = wallpaper_height * scale;
+    
+    wallpaper_scaled = wallpaper.Scale(scaled_width, scaled_height);
+    
+    // Center the wallpaper
+    offset_x = (screen.width - scaled_width) / 2;
+    offset_y = (screen.height - scaled_height) / 2;
+    
+    background.sprite = Sprite(wallpaper_scaled);
+    background.sprite.SetPosition(offset_x, offset_y, -100);
+    
+    // Add dark overlay for better text contrast
+    overlay_image = Image.Color(color.bg.r, color.bg.g, color.bg.b, 0.5, screen.width, screen.height);
+    overlay_sprite = Sprite(overlay_image);
+    overlay_sprite.SetPosition(0, 0, -99);
+    
+} else {
+    // Fallback to solid color background
+    background.image = Image.Color(color.bg.r, color.bg.g, color.bg.b, 1.0, screen.width, screen.height);
+    background.sprite = Sprite(background.image);
+    background.sprite.SetPosition(0, 0, -100);
+    
+    // Add subtle overlay gradient (simulate top-to-bottom fade)
+    gradient_height = screen.height / 3;
+    for (i = 0; i < gradient_height; i++) {
+        alpha = 0.3 * (1.0 - i / gradient_height);
+        line = Image.Color(color.surface.r, color.surface.g, color.surface.b, alpha, screen.width, 1);
+        gradient_sprite = Sprite(line);
+        gradient_sprite.SetPosition(0, i, -99);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Logo and Branding
+// ══════════════════════════════════════════════════════════════════════════
+
+// Main logo with turquoise accent
+logo.image = Image.Text("OLIGARCHY", color.accent.r, color.accent.g, color.accent.b, 1.0, "Sans Bold 54");
+logo.sprite = Sprite(logo.image);
+logo.sprite.SetX(screen.half_width - logo.image.GetWidth() / 2);
+logo.sprite.SetY(screen.half_height - 120);
+
+// Subtitle with dimmed text
+subtitle.image = Image.Text("NixOS", color.textDim.r, color.textDim.g, color.textDim.b, 1.0, "Sans 18");
+subtitle.sprite = Sprite(subtitle.image);
+subtitle.sprite.SetX(screen.half_width - subtitle.image.GetWidth() / 2);
+subtitle.sprite.SetY(screen.half_height - 60);
+
+// ══════════════════════════════════════════════════════════════════════════
+// Animated Spinner - Turquoise/Violet gradient effect
+// ══════════════════════════════════════════════════════════════════════════
+
+Math.PI = 3.14159265359;
+
+spinner = [];
+spinner.num_dots = 12;
+spinner.radius = 35;
+spinner.y_offset = 40;
+spinner.angle = 0;
+spinner.rotation_speed = 1.8;
+spinner.dots = [];
+
+// Initialize spinner dots
+for (i = 0; i < spinner.num_dots; i++) {
+    spinner.dots[i] = Sprite();
+}
+
+// Update spinner with gradient color transition
+fun update_spinner(time) {
+    spinner.angle = time * spinner.rotation_speed;
+    
+    for (i = 0; i < spinner.num_dots; i++) {
+        // Calculate angle for this dot
+        dot_angle = spinner.angle + (i * 2 * Math.PI / spinner.num_dots);
+        
+        // Position
+        x = screen.half_width + Math.Cos(dot_angle) * spinner.radius;
+        y = screen.half_height + spinner.y_offset + Math.Sin(dot_angle) * spinner.radius;
+        
+        // Smooth fade trail effect
+        progress = (i + (spinner.angle / (2 * Math.PI))) % spinner.num_dots;
+        alpha = 0.2 + 0.8 * (progress / spinner.num_dots);
+        
+        // Gradient color transition between turquoise and violet
+        color_mix = progress / spinner.num_dots;
+        dot_r = color.accent.r + (color.violet.r - color.accent.r) * color_mix;
+        dot_g = color.accent.g + (color.violet.g - color.accent.g) * color_mix;
+        dot_b = color.accent.b + (color.violet.b - color.accent.b) * color_mix;
+        
+        // Dot size with subtle pulse
+        base_size = 6;
+        size_variation = 2 * Math.Sin(dot_angle * 2);
+        size = base_size + size_variation;
+        
+        // Create and position dot
+        dot_image = Image.Color(dot_r, dot_g, dot_b, alpha, size, size);
+        spinner.dots[i].SetImage(dot_image);
+        spinner.dots[i].SetPosition(x - size/2, y - size/2, 10);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Progress Bar - Gradient turquoise accent
+// ══════════════════════════════════════════════════════════════════════════
+
+progress_bar = [];
+progress_bar.width = 450;
+progress_bar.height = 3;
+progress_bar.x = screen.half_width - progress_bar.width / 2;
+progress_bar.y = screen.half_height + 110;
+
+// Progress bar background (dark surface)
+progress_bar.bg_image = Image.Color(
+    color.surface.r, 
+    color.surface.g, 
+    color.surface.b, 
+    0.8, 
+    progress_bar.width, 
+    progress_bar.height
+);
+progress_bar.bg_sprite = Sprite(progress_bar.bg_image);
+progress_bar.bg_sprite.SetPosition(progress_bar.x, progress_bar.y, 5);
+
+// Progress bar foreground (turquoise accent)
+progress_bar.fg_sprite = Sprite();
+progress_bar.fg_sprite.SetPosition(progress_bar.x, progress_bar.y, 10);
+
+// Glow effect under progress bar
+progress_bar.glow_sprite = Sprite();
+progress_bar.glow_sprite.SetPosition(progress_bar.x, progress_bar.y - 2, 8);
+
+// Progress callback
+fun progress_callback(duration, progress) {
+    if (progress > 1.0) {
+        progress = 1.0;
+    }
+    
+    if (progress < 0.0) {
+        progress = 0.0;
+    }
+    
+    filled_width = progress_bar.width * progress;
+    
+    if (filled_width > 0) {
+        // Main progress bar with gradient
+        progress_bar.fg_image = Image.Color(
+            color.accent.r, 
+            color.accent.g, 
+            color.accent.b, 
+            1.0, 
+            filled_width, 
+            progress_bar.height
+        );
+        progress_bar.fg_sprite.SetImage(progress_bar.fg_image);
+        
+        // Glow effect (slightly larger and dimmer)
+        glow_height = progress_bar.height + 4;
+        progress_bar.glow_image = Image.Color(
+            color.accent.r, 
+            color.accent.g, 
+            color.accent.b, 
+            0.3, 
+            filled_width, 
+            glow_height
+        );
+        progress_bar.glow_sprite.SetImage(progress_bar.glow_image);
+    }
+}
+
+Plymouth.SetBootProgressFunction(progress_callback);
+
+// ══════════════════════════════════════════════════════════════════════════
+// Status Messages
+// ══════════════════════════════════════════════════════════════════════════
+
+message = [];
+message.sprite = Sprite();
+message.sprite.SetPosition(20, screen.height - 40, 10000);
+
+fun message_callback(text) {
+    if (text != "") {
+        message.image = Image.Text(
+            text, 
+            color.textAlt.r, 
+            color.textAlt.g, 
+            color.textAlt.b, 
+            1.0, 
+            "Sans 11"
+        );
+        message.sprite.SetImage(message.image);
+    } else {
+        message.sprite.SetImage(Image(0, 0));
+    }
+}
+
+Plymouth.SetMessageFunction(message_callback);
+
+// ══════════════════════════════════════════════════════════════════════════
+// Password Dialog - For encrypted disk
+// ══════════════════════════════════════════════════════════════════════════
+
+global.dialog = [];
+
+fun dialog_setup() {
+    local.box;
+    local.lock_icon;
+    local.prompt;
+    local.entry;
+    
+    // Dialog box with overlay color
+    box.width = 500;
+    box.height = 140;
+    box.x = screen.half_width - box.width / 2;
+    box.y = screen.half_height - box.height / 2;
+    
+    box.image = Image.Color(
+        color.overlay.r, 
+        color.overlay.g, 
+        color.overlay.b, 
+        0.95, 
+        box.width, 
+        box.height
+    );
+    box.sprite = Sprite(box.image);
+    box.sprite.SetPosition(box.x, box.y, 10000);
+    
+    // Border accent (turquoise)
+    border_thickness = 2;
+    
+    // Top border
+    border_top = Image.Color(
+        color.accent.r, 
+        color.accent.g, 
+        color.accent.b, 
+        1.0, 
+        box.width, 
+        border_thickness
+    );
+    border_top_sprite = Sprite(border_top);
+    border_top_sprite.SetPosition(box.x, box.y, 10001);
+    
+    // Bottom border
+    border_bottom_sprite = Sprite(border_top);
+    border_bottom_sprite.SetPosition(box.x, box.y + box.height - border_thickness, 10001);
+    
+    // Lock icon representation (simple square for Plymouth limitations)
+    lock_icon.size = 24;
+    lock_icon.image = Image.Color(
+        color.accent.r, 
+        color.accent.g, 
+        color.accent.b, 
+        1.0, 
+        lock_icon.size, 
+        lock_icon.size
+    );
+    lock_icon.sprite = Sprite(lock_icon.image);
+    lock_icon.sprite.SetPosition(
+        box.x + 20, 
+        box.y + 20, 
+        10002
+    );
+    
+    // Password prompt text
+    prompt.image = Image.Text(
+        "", 
+        color.text.r, 
+        color.text.g, 
+        color.text.b, 
+        1.0, 
+        "Sans Bold 13"
+    );
+    prompt.sprite = Sprite(prompt.image);
+    prompt.sprite.SetPosition(box.x + 55, box.y + 25, 10002);
+    
+    // Entry field
+    entry.image = Image.Text(
+        "", 
+        color.accent.r, 
+        color.accent.g, 
+        color.accent.b, 
+        1.0, 
+        "Sans 14"
+    );
+    entry.sprite = Sprite(entry.image);
+    entry.sprite.SetPosition(box.x + 20, box.y + 70, 10002);
+    
+    global.dialog.box = box;
+    global.dialog.lock_icon = lock_icon;
+    global.dialog.border_top = border_top_sprite;
+    global.dialog.border_bottom = border_bottom_sprite;
+    global.dialog.prompt = prompt;
+    global.dialog.entry = entry;
+    global.dialog.bullet = "●";
+}
+
+fun dialog_opacity(opacity) {
+    if (!global.dialog) return;
+    
+    dialog.box.sprite.SetOpacity(opacity);
+    dialog.lock_icon.sprite.SetOpacity(opacity);
+    dialog.border_top.SetOpacity(opacity);
+    dialog.border_bottom.SetOpacity(opacity);
+    dialog.prompt.sprite.SetOpacity(opacity);
+    dialog.entry.sprite.SetOpacity(opacity);
+}
+
+fun display_normal_callback() {
+    global.status = "normal";
+    if (global.dialog) {
+        dialog_opacity(0);
+    }
+}
+
+fun display_password_callback(prompt_text, bullets) {
+    global.status = "password";
+    
+    if (!global.dialog) {
+        dialog_setup();
+    } else {
+        dialog_opacity(1);
+    }
+    
+    // Build bullet string
+    bullet_string = "";
+    for (i = 0; i < bullets; i++) {
+        bullet_string += dialog.bullet + " ";
+    }
+    
+    // Update prompt text
+    if (prompt_text) {
+        dialog.prompt.image = Image.Text(
+            prompt_text, 
+            color.text.r, 
+            color.text.g, 
+            color.text.b, 
+            1.0, 
+            "Sans Bold 13"
+        );
+        dialog.prompt.sprite.SetImage(dialog.prompt.image);
+    }
+    
+    // Update entry field
+    dialog.entry.image = Image.Text(
+        bullet_string, 
+        color.accent.r, 
+        color.accent.g, 
+        color.accent.b, 
+        1.0, 
+        "Sans 14"
+    );
+    dialog.entry.sprite.SetImage(dialog.entry.image);
+}
+
+Plymouth.SetDisplayNormalFunction(display_normal_callback);
+Plymouth.SetDisplayPasswordFunction(display_password_callback);
+
+// ══════════════════════════════════════════════════════════════════════════
+// Animation Refresh Loop
+// ══════════════════════════════════════════════════════════════════════════
+
+fun refresh_callback() {
+    update_spinner(Plymouth.GetTime());
+}
+
+Plymouth.SetRefreshFunction(refresh_callback);
+
+// ══════════════════════════════════════════════════════════════════════════
+// Quit/Exit Handler
+// ══════════════════════════════════════════════════════════════════════════
+
+fun quit_callback() {
+    // Cleanup - Plymouth handles fade transitions automatically
+}
+
+Plymouth.SetQuitFunction(quit_callback);
+
+// ══════════════════════════════════════════════════════════════════════════
+// End of Oligarchy Plymouth Theme
+// ══════════════════════════════════════════════════════════════════════════
