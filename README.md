@@ -55,23 +55,23 @@ So now that you know, Don't be astart by the blimp on your personal computing to
 - Interactive TUI launcher
 
 ### New Offensive & Defensive Capabilities
-**DeMoD Branded Fortress**: Full thematic takeover — Hyprland, Waybar, Kitty, Wofi, Mako, Hyprlock, Wlogout all branded with DeMoD cyan/red alerts and gradients.  
-**Rust-Powered Greeting**: Kitty graphics protocol for displaying brand images in terminal, adaptive layout, system info, and interactive TUI.  
-**Boot Intro Suite v2**: Hybrid video sources, GPU-accelerated FFmpeg encoding, StreamDB video database, and optional community sharing API.  
-**Runtime Aesthetic Toggles**: Instant battlefield control over animations, blur, gaps, opacity, borders, rounding, and color palettes via keybindings.  
-**Agentic AI Stack**: Ollama re-engineered with ROCm acceleration (`gfx11.0.2` override) and `ai-stack` CLI presets for every hardware tier.  
-**DCF Compute Fabric**: Full stack — community node, identity/billing service, system tray controller — all containerized, hardened, and ready to conquer real-time multiplayer and edge networks.  
-**DSP Coprocessor (ArchibaldOS-DSP)**: Polished QEMU/KVM + kexec tyrant, ripped from the ArchibaldOS flake for perfect host/guest alignment.  
-**VM Manager**: Hybrid low-overhead VM management with dedicated VMs:
+- **DeMoD Branded Fortress**: Full thematic takeover — Hyprland, Waybar, Kitty, Wofi, Mako, Hyprlock, Wlogout all branded with DeMoD cyan/red alerts and gradients.  
+- **Rust-Powered Greeting**: Kitty graphics protocol for displaying brand images in terminal, adaptive layout, system info, and interactive TUI.  
+- **Boot Intro Suite v2**: Hybrid video sources, GPU-accelerated FFmpeg encoding, StreamDB video database, and optional community sharing API.  
+- **Runtime Aesthetic Toggles**: Instant battlefield control over animations, blur, gaps, opacity, borders, rounding, and color palettes via keybindings.  
+- **Agentic AI Stack**: Ollama re-engineered with ROCm acceleration (`gfx11.0.2` override) and `ai-stack` CLI presets for every hardware tier.  
+- **DCF Compute Fabric**: Full stack — community node, identity/billing service, system tray controller — all containerized, hardened, and ready to conquer real-time multiplayer and edge networks.  
+- **DSP Coprocessor (ArchibaldOS-DSP)**: Polished QEMU/KVM + kexec tyrant, ripped from the ArchibaldOS flake for perfect host/guest alignment.  
+- **VM Manager**: Hybrid low-overhead VM management with dedicated VMs:
 - **DSP Coprocessor**: ArchibaldOS with NETJACK audio routing (1.33ms latency @ 96kHz)
 - **Coding Sandbox**: Headless Arch Linux for AI coding agents
 - **Kali Linux**: Security/hacking VM
 - **OpenWRT Router**: Lightweight router VM (512MB RAM)
-**DeMoD Voice**: Local TTS and voice cloning with Coqui XTTS-v2 and Piper TTS
-**Kernel Arsenal**: Choose your blade — Zen, XanMod, latest, or CachyOS-BORE — at build time.  
-**Plasma 6 Option**: Optional KDE Plasma 6 session for those who want a heavier but polished alternative.  
-**Automated Maintenance**: Weekly generation purges and full garbage collection.  
-**Idle Power Discipline**: Ruthless screen dimming, lock, DPMS, and suspend timers.
+- **DeMoD Voice**: Local TTS and voice cloning with Coqui XTTS-v2 and Piper TTS
+- **Kernel Arsenal**: Choose your blade — Zen, XanMod, latest, or CachyOS-BORE — at build time.  
+- **Plasma 6 Option**: Optional KDE Plasma 6 session for those who want a heavier but polished alternative.  
+- **Automated Maintenance**: Weekly generation purges and full garbage collection.  
+- **Idle Power Discipline**: Ruthless screen dimming, lock, DPMS, and suspend timers.
 
 **DeMoD IP Blocker still active · DCF tray auto-starts · DSP now optional but unstoppable when armed**
 
