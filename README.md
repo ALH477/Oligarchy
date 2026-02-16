@@ -1,6 +1,6 @@
 # ![Oligarchy](./assets/oligarchy.gif) NixOS – The Unstoppable War Machine
 
-**Framework 16 Optimized · 12K+ LoC · AMD 7040 · NVIDIA · Hyprland · Plasma 6 · Cinnamon · CachyOS kernel · ~5–7 W idle · Nuclear-grade DSP coprocessor · Calamares Install · DeMoD Branded Fortress · DCF Compute Fabric**
+**Framework 16 Optimized · 12K+ LoC · AMD 7040 · NVIDIA · Hyprland · Plasma 6 · IceWM · LeftWM · X11/Wayland · CachyOS/Zen kernel · ~5–7 W idle · Nuclear-grade DSP coprocessor · Calamares Install · DeMoD Branded · DCF Compute Fabric**
 
 ![logo](Untitled.jpg)
 
