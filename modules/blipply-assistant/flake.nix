@@ -133,6 +133,24 @@
           options.services.blipply-assistant = {
             enable = mkEnableOption "Blipply Assistant";
 
+            user = mkOption {
+              type = types.str;
+              default = "blipply";
+              description = "User to run Blipply Assistant as";
+            };
+
+            group = mkOption {
+              type = types.str;
+              default = "blipply";
+              description = "Group to run Blipply Assistant as";
+            };
+
+            homeDirectory = mkOption {
+              type = types.path;
+              default = "/var/empty";
+              description = "Home directory for the blipply user";
+            };
+
             package = mkOption {
               type = types.package;
               default = self.packages.${pkgs.system}.default;
@@ -153,6 +171,16 @@
           };
 
           config = mkIf cfg.enable {
+            # Create blipply user if it doesn't exist
+            users.users.${cfg.user} = {
+              isSystemUser = true;
+              group = cfg.group;
+              description = "Blipply AI Assistant";
+              home = cfg.homeDirectory;
+            };
+            
+            users.groups.${cfg.group} = {};
+
             # Install package
             environment.systemPackages = [ cfg.package ];
 
@@ -174,7 +202,9 @@
             # Enable xdg-desktop-portal for global shortcuts
             xdg.portal = {
               enable = true;
-              extraPortals = mkIf config.services.xserver.desktopManager.plasma6.enable [
+              extraPortals = mkIf (
+                config.services.xserver.desktopManager.plasma6.enable or false
+              ) [
                 pkgs.xdg-desktop-portal-kde
               ];
             };

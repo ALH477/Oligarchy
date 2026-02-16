@@ -180,51 +180,51 @@
 
     # ──────────────────────────────────────────────────────────────────────────
     # Blipply AI Voice Assistant (integrated with OpenClaw)
-    # ──────────────────────────────────────────────────────────────────────────
-    config.oligarchy.blipply = {
-      enable = true;
-      
-      # Use OpenClaw gateway for AI (with plugin context)
-      ai = {
-        model = "llama3.2:3b";  # Can use any model loaded in ai-stack
-      };
-      
-      # Inherit Oligarchy DeMoD theming
-      theme = {
-        inheritPalette = true;
-        avatar = "./assets/blipply-avatar.gif";
-        avatarSize = 96;
-      };
-      
-      # Voice settings
-      voice = {
-        model = "en_US-lessac-medium";
-        ttsSpeed = 1.0;
-        ttsEnabled = true;
-        vadEnabled = true;
-      };
-      
-      # Hotkeys integrated with Oligarchy system
-      hotkeys = {
-        toggle = "Super+Shift+A";
-        pushToTalk = null;  # Set to "Super+Shift+M" for PTT mode
-      };
-      
-      # Default profile
-      profiles = {
-        active = "default";
-        default = {
-          name = "Blipply";
-          personality = "helpful";
-        };
-      };
-      
-      # Context awareness (off by default for privacy)
-      context = {
-        awareness = false;
-        audioDucking = true;  # Lower other audio when speaking
-      };
-    };
+    # Disabled for now - needs fixing
+    # config.oligarchy.blipply = {
+    #   enable = true;
+    #   
+    #   # Use OpenClaw gateway for AI (with plugin context)
+    #   ai = {
+    #     model = "llama3.2:3b";  # Can use any model loaded in ai-stack
+    #   };
+    #   
+    #   # Inherit Oligarchy DeMoD theming
+    #   theme = {
+    #     inheritPalette = true;
+    #     avatar = "./assets/blipply-avatar.gif";
+    #     avatarSize = 96;
+    #   };
+    #   
+    #   # Voice settings
+    #   voice = {
+    #     model = "en_US-lessac-medium";
+    #     ttsSpeed = 1.0;
+    #     ttsEnabled = true;
+    #     vadEnabled = true;
+    #   };
+    #   
+    #   # Hotkeys integrated with Oligarchy system
+    #   hotkeys = {
+    #     toggle = "Super+Shift+A";
+    #     pushToTalk = null;  # Set to "Super+Shift+M" for PTT mode
+    #   };
+    #   
+    #   # Default profile
+    #   profiles = {
+    #     active = "default";
+    #     default = {
+    #       name = "Blipply";
+    #       personality = "helpful";
+    #     };
+    #   };
+    #   
+    #   # Context awareness (off by default for privacy)
+    #   context = {
+    #     awareness = false;
+    #     audioDucking = true;  # Lower other audio when speaking
+    #   };
+    # };
 
     # ──────────────────────────────────────────────────────────────────────────
     # Audio Configuration — Pure PipeWire (no X11-based audio remnants)

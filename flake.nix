@@ -46,11 +46,17 @@
     # DeMoD Boot Intro Suite
     boot-intro.url = path:./modules/boot-intro;
     
+    # Blipply Assistant - AI Voice Assistant (as flake input)
+    blipply-assistant.url = path:./modules/blipply-assistant;
+    
     # ArchibaldOS DSP coprocessor (uncomment when available)
     # archibaldos = {
     #   url = "github:YOUR_ORG/archibaldos";
     #   inputs.nixpkgs.follows = "nixpkgs";
     # };
+
+    # VM Manager - Hybrid VM management
+    vm-manager.url = path:./vm-manager;
   };
 
   outputs = {
@@ -65,9 +71,11 @@
     nix-openclaw,
     greeting,
     boot-intro,
+    blipply-assistant,
     home-manager,
     nixos-generators,
     sops-nix,
+    vm-manager,
     # archibaldos,
     ...
   } @ inputs:
@@ -93,6 +101,7 @@
       inherit inputs nixpkgs-unstable; 
       # Uncomment when archibaldos is available:
       # inherit archibaldos;
+      inherit vm-manager;
     };
     
   in {
@@ -125,7 +134,16 @@
           };
         }
         
-        # Local modules
+        # Local modules - order matters! Options must be defined before config uses them
+        # Boot intro options
+        boot-intro.nixosModules.boot-intro
+        boot-intro.nixosModules.boot-intro-tui
+        boot-intro.nixosModules.boot-intro-api
+        
+        # Blipply integration (defines oligarchy.blipply options)
+        ./modules/blipply-integration.nix
+        
+        # Main configuration (uses options defined above)
         ./configuration.nix
         ./modules/hardware-configuration.nix
         ./modules/kernel.nix
@@ -137,13 +155,13 @@
         ./modules/secrets.nix
         ./modules/security/strict-egress.nix
         greeting.nixosModules.greeting
-        boot-intro.nixosModules.boot-intro
-        boot-intro.nixosModules.boot-intro-tui
-        boot-intro.nixosModules.boot-intro-api
         
         # Blipply Assistant - AI Voice Assistant (integrated from local source)
-        ./modules/blipply-assistant/flake.nix
-        ./modules/blipply-integration.nix
+        blipply-assistant.nixosModules.default
+        
+        # VM Manager - Hybrid VM management
+        vm-manager.nixosModules.quickemu-vm
+        vm-manager.nixosModules.dsp-vm
         
         # Uncomment when archibaldos input is available:
         # ./modules/archibaldos-dsp-vm.nix
