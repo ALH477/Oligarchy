@@ -1,5 +1,34 @@
 # ArchibaldOS Community Edition (v.1.2-Omega-Alpha-Chad-Syndrome-Maestro)
 
+## Integration with Oligarchy NixOS
+
+ArchibaldOS is used as the DSP coprocessor OS in Oligarchy NixOS, running as a virtual machine with NETJACK audio routing for ultra-low latency real-time audio processing.
+
+### Quick Start (Oligarchy)
+
+```nix
+imports = [ vm-manager.nixosModules.dsp-vm ];
+
+custom.vm.dsp = {
+  enable = true;
+  isolatedCores = [ 0 1 ];
+  memoryMB = 4096;
+  
+  archibaldOS = {
+    enable = true;
+    netjack = {
+      enable = true;
+      bufferSize = 128;      # 1.33ms @ 96kHz
+      sampleRate = 96000;
+    };
+  };
+};
+```
+
+See [VM Manager DSP Documentation](../../../vm-manager/docs/dsp-vm.md) for full setup instructions.
+
+---
+
 Old codebase is in a zip file in the release section. I updated the repo to be easier to maintain and learn.
 
 Real-time workstation for audio production and robotics + HydraMesh P2P networking.

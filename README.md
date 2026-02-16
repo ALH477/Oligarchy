@@ -62,6 +62,12 @@ So now that you know, Don't be astart by the blimp on your personal computing to
 **Agentic AI Stack**: Ollama re-engineered with ROCm acceleration (`gfx11.0.2` override) and `ai-stack` CLI presets for every hardware tier.  
 **DCF Compute Fabric**: Full stack — community node, identity/billing service, system tray controller — all containerized, hardened, and ready to conquer real-time multiplayer and edge networks.  
 **DSP Coprocessor (ArchibaldOS-DSP)**: Polished QEMU/KVM + kexec tyrant, ripped from the ArchibaldOS flake for perfect host/guest alignment.  
+**VM Manager**: Hybrid low-overhead VM management with dedicated VMs:
+- **DSP Coprocessor**: ArchibaldOS with NETJACK audio routing (1.33ms latency @ 96kHz)
+- **Coding Sandbox**: Headless Arch Linux for AI coding agents
+- **Kali Linux**: Security/hacking VM
+- **OpenWRT Router**: Lightweight router VM (512MB RAM)
+**DeMoD Voice**: Local TTS and voice cloning with Coqui XTTS-v2 and Piper TTS
 **Kernel Arsenal**: Choose your blade — Zen, XanMod, latest, or CachyOS-BORE — at build time.  
 **Plasma 6 Option**: Optional KDE Plasma 6 session for those who want a heavier but polished alternative.  
 **Automated Maintenance**: Weekly generation purges and full garbage collection.  
@@ -80,6 +86,9 @@ So now that you know, Don't be astart by the blimp on your personal computing to
 | Host OS                          | Oligarchy NixOS (CachyOS/Zen/XanMod/BORE kernel, Hyprland primary, Plasma 6 optional)  |
 | Boot Experience                  | Boot Intro Suite v2 — GPU-accelerated video generation, StreamDB, TUI/API              |
 | Welcome Experience               | Rust-powered greeting — Kitty graphics, adaptive images, terminal-native TUI            |
+| VM Manager                       | 4 dedicated VMs: DSP, Coding Sandbox, Kali, OpenWRT                                   |
+| DSP Coprocessor                  | ArchibaldOS-DSP QEMU/KVM + NETJACK — 1.33ms @ 96kHz                                   |
+| Voice AI                         | DeMoD Voice — Local TTS and voice cloning (Coqui XTTS-v2, Piper)                      |
 | Core 0                           | Isolated (`isolcpus=0`) and surrendered to the DSP overlord                             |
 | DSP Coprocessor                  | ArchibaldOS-DSP QEMU/KVM + kexec image — self-healing tyrant                            |
 | Latency                          | 0.38–0.58 ms @ 96 kHz / 32–64 samples (theoretical)                                     |
