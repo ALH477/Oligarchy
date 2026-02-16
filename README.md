@@ -37,10 +37,27 @@ So now that you know, Don't be astart by the blimp on your personal computing to
 
 **Home Manager**: Finally using a home file to create a unified UX.
 
-**Boot Intro**: a custom made [boot intro](https://www.youtube.com/watch?v=2ZDtOJOCGxw&t=17s) was made for a plymouth compatible video based intro that plays with mpv before login.
+**Boot Intro Suite**: Production-grade boot intro system featuring:
+- Hybrid video source system: generate from audio, StreamDB database, or pre-rendered files
+- FFmpeg generation pipeline with GPU acceleration (NVIDIA NVENC, AMD VAAPI)
+- Quality presets: fast, balanced, high, ultra
+- Enhanced audio detection with retry logic and device validation
+- StreamDB embedded database for video management
+- Optional TUI and REST API for community sharing
+
+**Greeting Module**: Rust-powered welcome system with:
+- Kitty graphics protocol support for high-quality terminal images
+- iTerm2 inline images and Sixel support
+- Adaptive layout: 16:9 banner for wide terminals, square logo for narrow
+- Displays both brand visual (Untitled.jpg) and icon (demod-logo.png)
+- System info display with OS, kernel, uptime, and memory
+- Customizable links, tips, and ASCII art fallback
+- Interactive TUI launcher
 
 ### New Offensive & Defensive Capabilities
 **DeMoD Branded Fortress**: Full thematic takeover — Hyprland, Waybar, Kitty, Wofi, Mako, Hyprlock, Wlogout all branded with DeMoD cyan/red alerts and gradients.  
+**Rust-Powered Greeting**: Kitty graphics protocol for displaying brand images in terminal, adaptive layout, system info, and interactive TUI.  
+**Boot Intro Suite v2**: Hybrid video sources, GPU-accelerated FFmpeg encoding, StreamDB video database, and optional community sharing API.  
 **Runtime Aesthetic Toggles**: Instant battlefield control over animations, blur, gaps, opacity, borders, rounding, and color palettes via keybindings.  
 **Agentic AI Stack**: Ollama re-engineered with ROCm acceleration (`gfx11.0.2` override) and `ai-stack` CLI presets for every hardware tier.  
 **DCF Compute Fabric**: Full stack — community node, identity/billing service, system tray controller — all containerized, hardened, and ready to conquer real-time multiplayer and edge networks.  
@@ -58,9 +75,11 @@ So now that you know, Don't be astart by the blimp on your personal computing to
 
 ## What you’re actually commanding right now
 
-| Component                        | Reality (January 2026)                                                                 |
+| Component                        | Reality (February 2026)                                                                  |
 |----------------------------------|----------------------------------------------------------------------------------------|
 | Host OS                          | Oligarchy NixOS (CachyOS/Zen/XanMod/BORE kernel, Hyprland primary, Plasma 6 optional)  |
+| Boot Experience                  | Boot Intro Suite v2 — GPU-accelerated video generation, StreamDB, TUI/API              |
+| Welcome Experience               | Rust-powered greeting — Kitty graphics, adaptive images, terminal-native TUI            |
 | Core 0                           | Isolated (`isolcpus=0`) and surrendered to the DSP overlord                             |
 | DSP Coprocessor                  | ArchibaldOS-DSP QEMU/KVM + kexec image — self-healing tyrant                            |
 | Latency                          | 0.38–0.58 ms @ 96 kHz / 32–64 samples (theoretical)                                     |
@@ -146,6 +165,8 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 - **Snap Support**: Optional, expands arsenal without breaking reproducibility.
 - **DCF Compute Fabric**: Real-time multiplayer/edge fabric with community node, identity/billing, tray controller, and hardened containers.
 - **Virtual Camera**: `v4l2loopback` for streaming domination.
+- **Rust Greeting System**: Kitty graphics protocol for displaying brand images directly in terminal, adaptive layout based on terminal size, system info display, and interactive TUI launcher.
+- **Boot Intro Suite v2**: Hybrid architecture supporting generated videos from audio, StreamDB database, or pre-rendered files. GPU-accelerated encoding with quality presets.
 - **Virtual DSP Coprocessor**: Soundproof clean-room RT guest inside the chaotic host party bus — a technical masterpiece.
 
 ![wallpaper-color](https://github.com/user-attachments/assets/6c5754c8-21d6-45c1-a775-b77a871bf517)
@@ -205,6 +226,18 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
   | high-vram    | 16GB   | 8           | RTX 3090/4090        |
   | rocm-multi   | 24GB   | 12          | AMD multi-GPU        |
   | pewdiepie    | 24GB+  | 16          | Absolute maximum     |
+
+- **Greeting System** (auto-runs on login):
+  - Displays brand images in Kitty terminal using graphics protocol
+  - Shows system info: OS, kernel, uptime, memory usage
+  - Interactive TUI launcher with keyboard shortcuts
+  - Configurable via `services.oligarchyGreeting`
+  
+- **Boot Intro** (plays before login):
+  - `boot-intro` — Manual trigger
+  - Supports GPU encoding (NVENC/VA-API)
+  - StreamDB integration for video management
+  - Config: `services.boot-intro`
 
 - **DSP Coprocessor** (optional, enable in flake):
   - Enable IOMMU in BIOS.
