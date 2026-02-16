@@ -1,0 +1,15 @@
+default_language: en
+gpu:
+  enabled: true
+  device_id: 0
+  mixed_precision: true
+xtts:
+  cache_dir: null
+  temperature: 0.65
+  length_penalty: 1.0
+  repetition_penalty: 2.0
+  license_accepted: true
+output:
+  sample_rate: 22050
+  format: wav
+  quality: high

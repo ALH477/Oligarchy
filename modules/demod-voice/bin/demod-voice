@@ -1,0 +1,430 @@
+#!/usr/bin/env python3
+"""
+DeMoD LLC Voice Clone CLI
+Zero-shot voice cloning with XTTS-v2, Piper inference, and training helpers.
+"""
+
+import argparse
+import logging
+import os
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from demod_voice.config import load_config, validate_config, get_default_config
+from demod_voice.batch import load_batch_csv, validate_batch_jobs
+
+
+def run_xtts_zero_shot(args):
+    """Zero-shot cloning using XTTS-v2 (quick, no training)."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        from TTS.api import TTS
+    except ImportError:
+        logger.error("Coqui TTS not installed. Run inside nix develop shell.")
+        sys.exit(1)
+    
+    if not args.reference.exists():
+        logger.error(f"Reference file not found: {args.reference}")
+        sys.exit(1)
+    
+    # Get config values
+    config = args.config
+    device = "cuda" if config['gpu']['enabled'] else "cpu"
+    device_id = config['gpu']['device_id']
+    if device == "cuda" and device_id > 0:
+        device = f"cuda:{device_id}"
+    
+    logger.info(f"Loading XTTS-v2 model on {device}...")
+    try:
+        tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+    except Exception as e:
+        logger.error(f"Failed to load XTTS model: {e}")
+        sys.exit(1)
+    
+    # Use language from args or config
+    language = args.language or config.get('default_language', 'en')
+    
+    logger.info(f"Synthesizing with reference: {args.reference}")
+    try:
+        tts.tts_to_file(
+            text=args.text,
+            speaker_wav=str(args.reference),
+            language=language,
+            file_path=str(args.output)
+        )
+        logger.info(f"Generated: {args.output}")
+    except Exception as e:
+        logger.error(f"Synthesis failed: {e}")
+        sys.exit(1)
+
+
+def run_piper_infer(args):
+    """Run Piper TTS inference on a .onnx model."""
+    import logging
+    import shutil
+    import subprocess
+    
+    logger = logging.getLogger(__name__)
+    
+    piper_bin = shutil.which("piper")
+    if not piper_bin:
+        logger.error("piper binary not found in PATH")
+        sys.exit(1)
+    
+    if not args.model.exists():
+        logger.error(f"Model file not found: {args.model}")
+        sys.exit(1)
+    
+    # Get config values
+    config = args.config
+    speaker = args.speaker or config.get('piper', {}).get('default_speaker')
+    
+    cmd = [
+        piper_bin,
+        "--model", str(args.model),
+        "--output_file", str(args.output),
+    ]
+    if speaker:
+        cmd += ["--speaker", str(speaker)]
+    
+    logger.info(f"Running Piper inference...")
+    result = subprocess.run(cmd, input=args.text.encode(), capture_output=True)
+    
+    if result.returncode != 0:
+        logger.error(f"Piper failed: {result.stderr.decode()}")
+        sys.exit(1)
+    
+    logger.info(f"Generated: {args.output}")
+
+
+def run_piper_preprocess(args):
+    """Helper: Preprocess dataset for Piper training."""
+    import logging
+    import subprocess
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        import piper_train.preprocess
+    except ImportError:
+        logger.error("piper_train not installed. Install via: pip install piper-train")
+        sys.exit(1)
+    
+    if not args.input_dir.exists():
+        logger.error(f"Input directory not found: {args.input_dir}")
+        sys.exit(1)
+    
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Get config values
+    config = args.config
+    language = args.language or config.get('default_language', 'en-us')
+    sample_rate = config.get('preprocessing', {}).get('target_sample_rate', 22050)
+    
+    cmd = [
+        sys.executable, "-m", "piper_train.preprocess",
+        "--language", language,
+        "--input-dir", str(args.input_dir),
+        "--output-dir", str(args.output_dir),
+        "--sample-rate", str(sample_rate),
+    ]
+    
+    logger.info(f"Preprocessing dataset (language: {language}, sample_rate: {sample_rate})...")
+    result = subprocess.run(cmd, capture_output=True)
+    if result.returncode != 0:
+        logger.error(f"Preprocessing failed: {result.stderr.decode()}")
+        sys.exit(1)
+    
+    logger.info(f"Preprocessed dataset written to: {args.output_dir}")
+
+
+def run_batch_process(args):
+    """Process multiple voice cloning jobs from CSV file."""
+    import logging
+    from tqdm import tqdm
+    
+    logger = logging.getLogger(__name__)
+    
+    if not args.batch_file.exists():
+        logger.error(f"Batch file not found: {args.batch_file}")
+        sys.exit(1)
+    
+    # Load batch jobs
+    logger.info(f"Loading batch jobs from {args.batch_file}...")
+    jobs = load_batch_csv(args.batch_file)
+    
+    if not jobs:
+        logger.error("No valid jobs found in batch file")
+        sys.exit(1)
+    
+    logger.info(f"Loaded {len(jobs)} jobs")
+    
+    # Validate jobs
+    valid_jobs, errors = validate_batch_jobs(jobs)
+    
+    if errors:
+        logger.warning(f"Found {len(errors)} invalid jobs:")
+        for error in errors:
+            logger.warning(f"  - {error}")
+    
+    if not valid_jobs:
+        logger.error("No valid jobs to process")
+        sys.exit(1)
+    
+    logger.info(f"Processing {len(valid_jobs)} valid jobs...")
+    
+    # Process jobs with progress bar
+    success_count = 0
+    fail_count = 0
+    
+    for job in tqdm(valid_jobs, desc="Processing", disable=args.quiet):
+        try:
+            # Create temporary args object for xtts function
+            job_args = argparse.Namespace(
+                reference=job.reference,
+                text=job.text,
+                output=job.output,
+                language=job.language or args.config.get('default_language', 'en'),
+                config=args.config,
+                gpu=args.gpu,
+                cpu=args.cpu,
+                verbose=args.verbose,
+                quiet=True  # Suppress individual job output in batch mode
+            )
+            
+            run_xtts_zero_shot(job_args)
+            success_count += 1
+            
+        except Exception as e:
+            logger.error(f"Failed to process job: {e}")
+            fail_count += 1
+            if args.fail_fast:
+                logger.error("Stopping due to --fail-fast")
+                break
+    
+    logger.info(f"Batch complete: {success_count} succeeded, {fail_count} failed")
+    
+    if fail_count > 0:
+        sys.exit(1)
+
+
+def run_health_check(args):
+    """Check system health and dependencies."""
+    import logging
+    import json
+    import shutil
+    
+    logger = logging.getLogger(__name__)
+    
+    results = {
+        "status": "ok",
+        "checks": {}
+    }
+    
+    # Check Python version
+    results["checks"]["python_version"] = {
+        "status": "ok",
+        "version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    }
+    
+    # Check GPU availability
+    gpu_available, gpu_message = check_gpu_availability()
+    results["checks"]["gpu"] = {
+        "status": "ok" if gpu_available else "warning",
+        "message": gpu_message,
+        "available": gpu_available
+    }
+    
+    # Check dependencies
+    deps = {
+        "coqui_tts": "TTS",
+        "torch": "torch",
+        "onnxruntime": "onnxruntime",
+        "yaml": "yaml"
+    }
+    
+    for name, module in deps.items():
+        try:
+            __import__(module)
+            results["checks"][name] = {"status": "ok"}
+        except ImportError:
+            results["checks"][name] = {"status": "error", "message": "Not installed"}
+            results["status"] = "error"
+    
+    # Check binaries
+    binaries = {
+        "piper": "piper",
+        "ffmpeg": "ffmpeg"
+    }
+    
+    for name, binary in binaries.items():
+        path = shutil.which(binary)
+        if path:
+            results["checks"][name] = {"status": "ok", "path": path}
+        else:
+            results["checks"][name] = {"status": "error", "message": "Not found in PATH"}
+            results["status"] = "error"
+    
+    # Check config
+    try:
+        config = load_config()
+        validation_errors = validate_config(config)
+        if validation_errors:
+            results["checks"]["config"] = {
+                "status": "warning",
+                "errors": validation_errors
+            }
+        else:
+            results["checks"]["config"] = {"status": "ok"}
+    except Exception as e:
+        results["checks"]["config"] = {"status": "error", "message": str(e)}
+        results["status"] = "error"
+    
+    # Output results
+    if args.json:
+        print(json.dumps(results, indent=2))
+    else:
+        print(f"Health Check: {results['status'].upper()}")
+        print("-" * 40)
+        for check_name, check_result in results["checks"].items():
+            status = check_result["status"]
+            symbol = "✓" if status == "ok" else "⚠" if status == "warning" else "✗"
+            print(f"{symbol} {check_name}: {status}")
+            if "message" in check_result:
+                print(f"    {check_result['message']}")
+    
+    sys.exit(0 if results["status"] == "ok" else 1)
+
+
+def setup_logging(verbose: bool = False):
+    """Setup logging configuration."""
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+
+def check_gpu_availability() -> tuple[bool, str]:
+    """Check if GPU (CUDA) is available and return status message."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            device_count = torch.cuda.device_count()
+            device_name = torch.cuda.get_device_name(0) if device_count > 0 else "Unknown"
+            return True, f"CUDA available: {device_name} ({device_count} device(s))"
+        else:
+            return False, "CUDA not available"
+    except ImportError:
+        return False, "PyTorch not installed"
+    except Exception as e:
+        return False, f"GPU check failed: {e}"
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="DeMoD LLC Voice Clone CLI - Local TTS & Voice Cloning Tools",
+        epilog="MIT License - DeMoD LLC 2026"
+    )
+    parser.add_argument("--gpu", action="store_true", help="Use GPU acceleration if available")
+    parser.add_argument("--cpu", action="store_true", help="Force CPU usage (disable GPU)")
+    parser.add_argument("--config", type=Path, help="Path to config file (default: ~/.config/demod-voice/config.yaml)")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--quiet", "-q", action="store_true", help="Suppress non-error output")
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # xtts-zero-shot
+    p_xtts = subparsers.add_parser("xtts-zero-shot", help="Zero-shot voice cloning with XTTS-v2")
+    p_xtts.add_argument("reference", type=Path, help="Reference WAV file (6-10s clean audio)")
+    p_xtts.add_argument("text", type=str, help="Text to synthesize")
+    p_xtts.add_argument("--output", type=Path, default=Path("output.wav"), help="Output WAV path")
+    p_xtts.add_argument("--language", default="en", help="Language code (default: en)")
+    p_xtts.set_defaults(func=run_xtts_zero_shot)
+
+    # piper-infer
+    p_piper = subparsers.add_parser("piper-infer", help="Inference with Piper .onnx model")
+    p_piper.add_argument("model", type=Path, help="Path to .onnx model")
+    p_piper.add_argument("text", type=str, help="Text to speak")
+    p_piper.add_argument("--output", type=Path, default=Path("output.wav"), help="Output WAV")
+    p_piper.add_argument("--speaker", type=int, help="Speaker ID if multi-speaker model")
+    p_piper.set_defaults(func=run_piper_infer)
+
+    # piper-preprocess
+    p_prep = subparsers.add_parser("piper-preprocess", help="Preprocess dataset for Piper fine-tuning")
+    p_prep.add_argument("--input-dir", type=Path, required=True, help="Dataset root (wavs/ + metadata.csv)")
+    p_prep.add_argument("--output-dir", type=Path, required=True, help="Processed training dir")
+    p_prep.add_argument("--language", default="en-us", help="Language (e.g. en-us)")
+    p_prep.set_defaults(func=run_piper_preprocess)
+
+    # batch - Process multiple jobs from CSV
+    p_batch = subparsers.add_parser("batch", help="Batch process voice cloning jobs from CSV")
+    p_batch.add_argument("batch_file", type=Path, help="CSV file with columns: reference,text,output[,language,speaker]")
+    p_batch.add_argument("--fail-fast", action="store_true", help="Stop on first error")
+    p_batch.set_defaults(func=run_batch_process)
+
+    # health - System health check
+    p_health = subparsers.add_parser("health", help="Check system health and dependencies")
+    p_health.add_argument("--json", action="store_true", help="Output results as JSON")
+    p_health.set_defaults(func=run_health_check)
+
+    args = parser.parse_args()
+    
+    # Setup logging
+    setup_logging(args.verbose)
+    logger = logging.getLogger(__name__)
+    
+    # Load configuration
+    config = load_config(args.config)
+    
+    # Validate configuration
+    validation_errors = validate_config(config)
+    if validation_errors:
+        for error in validation_errors:
+            logger.error(f"Config validation error: {error}")
+        sys.exit(1)
+    
+    # Merge CLI flags with config
+    if args.cpu:
+        config['gpu']['enabled'] = False
+        logger.info("CPU mode forced via --cpu flag")
+    elif args.gpu:
+        config['gpu']['enabled'] = True
+        logger.info("GPU mode requested via --gpu flag")
+    
+    # Check GPU availability if enabled
+    if config['gpu']['enabled']:
+        gpu_available, gpu_message = check_gpu_availability()
+        if gpu_available:
+            logger.info(gpu_message)
+        else:
+            logger.warning(f"{gpu_message}. Falling back to CPU.")
+            config['gpu']['enabled'] = False
+    
+    # Attach config to args for subcommand access
+    args.config = config
+    
+    if args.quiet:
+        logging.getLogger().setLevel(logging.ERROR)
+
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        sys.exit(130)
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,65 @@
+# Nix
+result
+result-*
+.direnv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Audio files
+*.wav
+*.mp3
+*.flac
+*.ogg
+!tests/fixtures/*.wav
+
+# Model checkpoints
+checkpoints/
+models/
+*.onnx
+*.pth
+*.pt
+
+# Datasets
+datasets/
+training_data/
+
+# OS
+.DS_Store
+Thumbs.db

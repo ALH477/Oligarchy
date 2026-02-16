@@ -1,0 +1,4 @@
+FROM alh477/demod-voice:cpu-amd64-latest
+
+# Install compatible transformers version
+RUN pip install transformers==4.41.0

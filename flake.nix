@@ -57,6 +57,9 @@
 
     # VM Manager - Hybrid VM management
     vm-manager.url = path:./vm-manager;
+    
+    # DeMoD Voice - Local TTS and Voice Cloning
+    demod-voice.url = path:./modules/demod-voice;
   };
 
   outputs = {
@@ -76,6 +79,7 @@
     nixos-generators,
     sops-nix,
     vm-manager,
+    demod-voice,
     # archibaldos,
     ...
   } @ inputs:
@@ -162,6 +166,9 @@
         # VM Manager - Hybrid VM management
         vm-manager.nixosModules.quickemu-vm
         vm-manager.nixosModules.dsp-vm
+        
+        # DeMoD Voice - Local TTS and Voice Cloning
+        ./modules/demod-voice/nixos-module.nix
         
         # Uncomment when archibaldos input is available:
         # ./modules/archibaldos-dsp-vm.nix

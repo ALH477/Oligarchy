@@ -1,0 +1,83 @@
+# DeMoD Voice Clone Configuration (Optional)
+# Place this file as ~/.config/demod-voice/config.yaml
+
+# Default language for XTTS synthesis
+default_language: en
+
+# GPU settings
+gpu:
+  # Auto-detect GPU (true) or force CPU (false)
+  enabled: true
+  
+  # CUDA device ID (for multi-GPU systems)
+  device_id: 0
+  
+  # Enable mixed precision (FP16) for faster inference
+  mixed_precision: true
+
+# XTTS settings
+xtts:
+  # Model cache directory (default: ~/.local/share/tts)
+  cache_dir: null
+  
+  # Temperature for sampling (0.0-1.0, higher = more variation)
+  temperature: 0.65
+  
+  # Length penalty (higher = prefer longer/shorter utterances)
+  length_penalty: 1.0
+  
+  # Repetition penalty (higher = less repetition)
+  repetition_penalty: 2.0
+
+# Piper settings
+piper:
+  # Default speaker ID for multi-speaker models
+  default_speaker: null
+  
+  # Speaking rate multiplier (1.0 = normal)
+  speed: 1.0
+  
+  # Noise scale (0.0-1.0, affects variability)
+  noise_scale: 0.667
+  
+  # Noise scale for duration (affects timing variation)
+  noise_scale_w: 0.8
+
+# Output settings
+output:
+  # Default sample rate (Hz)
+  sample_rate: 22050
+  
+  # Output format (wav, mp3, flac)
+  format: wav
+  
+  # Audio quality (for lossy formats like mp3)
+  quality: high
+
+# Preprocessing settings
+preprocessing:
+  # Target sample rate for training datasets
+  target_sample_rate: 22050
+  
+  # Normalize audio to target dB
+  normalize_db: -20
+  
+  # Remove silence from audio clips
+  trim_silence: true
+  
+  # Minimum audio duration (seconds)
+  min_duration: 1.0
+  
+  # Maximum audio duration (seconds)
+  max_duration: 15.0
+
+# Advanced settings
+advanced:
+  # Number of threads for CPU inference
+  num_threads: null  # null = auto-detect
+  
+  # Enable verbose logging
+  verbose: false
+  
+  # Temporary file directory
+  temp_dir: /tmp/demod-voice
