@@ -40,6 +40,12 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     
+    # Oligarchy Greeting - War Room TUI (disabled - needs Python fix)
+    # greeting.url = path:./modules/greeting;
+
+    # DeMoD Boot Intro Suite
+    boot-intro.url = path:./modules/boot-intro;
+    
     # ArchibaldOS DSP coprocessor (uncomment when available)
     # archibaldos = {
     #   url = "github:YOUR_ORG/archibaldos";
@@ -57,6 +63,8 @@
     demod-ip-blocker,
     minecraft,
     nix-openclaw,
+    # greeting,
+    boot-intro,
     home-manager,
     nixos-generators,
     sops-nix,
@@ -128,6 +136,10 @@
         ./modules/dcf-tray.nix
         ./modules/secrets.nix
         ./modules/security/strict-egress.nix
+        # greeting.nixosModules.greeting
+        boot-intro.nixosModules.boot-intro
+        boot-intro.nixosModules.boot-intro-tui
+        boot-intro.nixosModules.boot-intro-api
         # Uncomment when archibaldos input is available:
         # ./modules/archibaldos-dsp-vm.nix
       ];

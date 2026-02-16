@@ -7,7 +7,6 @@
 
   imports = [
     ./modules/audio.nix
-	./modules/boot-intro.nix
     ./modules/dcf-community-node.nix
     ./modules/dcf-identity.nix
     ./modules/dcf-tray.nix
@@ -34,6 +33,12 @@
   services.boot-intro = {
     enable = true;
 
+    # Source type: generate | database | file
+    # "generate" - FFmpeg generation from audio (default, backward compatible)
+    # "database" - StreamDB video storage
+    # "file" - Pre-rendered video file
+    source = "generate";
+
     # Theme selection — pick your DeMoD palette
     # Options: classic, amber, cyan, magenta, red, white, oligarchy, archibald
     theme = "oligarchy";
@@ -43,14 +48,15 @@
     bottomText = "Design ≠ Marketing";
 
     # Optional: Your logo (PNG or animated GIF)
-     logoImage = ./assets/demod-logo.png;
-     logoScale = 0.4;
+    logoImage = ./assets/demod-logo.png;
+    logoScale = 0.4;
 
     # Audio source — MIDI gets synthesized, audio files normalized
     # soundFile = ./assets/boot-chime.mid;
     # Or use a wav/mp3/flac:
-     soundFile = ./assets/boot-intro.wav;
-	volume = 40;
+    soundFile = ./assets/boot-intro.wav;
+    volume = 40;
+
     # Optional: Background video (loops behind waveform)
     # backgroundVideo = ./assets/grid-animation.mp4;
 
@@ -58,7 +64,45 @@
     resolution = "2560x1600";  # Match your Framework 16 display
     waveformOpacity = 0.7;
     fadeDuration = 2.0;
+
+    # NEW: GPU acceleration and quality options
+    # Enable NVIDIA GPU encoding (requires nvidia drivers)
+    # enableGpu = true;
+    
+    # Enable AMD GPU encoding (requires AMD VAAPI)
+    # enableAmdGpu = true;
+    
+    # Quality preset: fast | balanced | high | ultra
+    renderQuality = "balanced";
+
+    # Audio detection tuning
+    audioDetection = {
+      maxRetries = 5;
+      retryDelay = 0.2;
+      timeout = 2;
+    };
+
+    # NEW: Optional TUI and API (for future video management)
+    # enableTui = true;
+    # enableApi = true;
+    # apiPort = 8080;
   };
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Oligarchy Greeting - The War Room TUI
+  # ──────────────────────────────────────────────────────────────────────────
+  # Disabled - requires Python package fix
+  # services.oligarchyGreeting = {
+  #   enable = true;
+  #   
+  #   # TUI settings
+  #   tui = {
+  #     enable = true;
+  #     showLauncher = true;
+  #     # Use st for lightweight launch, or kitty for full-featured
+  #     launchCommand = "st -e welcome-tui";
+  #   };
+  # };
 
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -585,6 +629,8 @@
     environment.systemPackages = with pkgs; [
       vim docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress
       dmidecode util-linux gparted usbutils
+
+      st  # Suckless terminal - lightweight terminal emulator
 
       (python3.withPackages (ps: with ps; [
         pip virtualenv cryptography pycryptodome grpcio grpcio-tools
