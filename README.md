@@ -20,6 +20,16 @@ You’re now commanding the machine that burned the proprietary DSP empire to th
 
 The war machine has evolved. As of January 2026, Oligarchy NixOS is fully governed by a **Deterministic Flake-Powered Architecture**.
 
+## Blipply is coming soon!!!
+
+What is a Blipply, you ask??
+Well, to ask such a silly question, you would be blithely astart to know!
+A Blipply is simply a bubbly blimp that appears on your DE/WM if enabled.
+When Nix gets you stuck in its tricks, Blipply will explain succinctly.
+Is it optimal? Why yes! It is riding an Ollama for minimal hardware trauma.
+
+So now that you know, Don't be astart by the blimp on your personal computing top!
+
 ### Key Structural Revisions 
 **Flake Dominance**: Everything is locked to reproducible git revisions via `flake.nix`.  
 **Modular Segregation**: Core config is lean; R&D weapons (AI, DSP, DCF) are isolated in `./modules/` for instant swapping.  
