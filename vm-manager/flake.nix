@@ -14,7 +14,7 @@
         # Quickemu-based VMs for sandbox and kali
         quickemu-vm = import ./modules/quickemu-vm.nix;
 
-        # Enhanced DSP VM using QEMU with CPU isolation
+        # Enhanced DSP VM using QEMU with ArchibaldOS + NETJACK
         dsp-vm = import ./modules/dsp-vm.nix;
 
         # Pre-configured VM instances

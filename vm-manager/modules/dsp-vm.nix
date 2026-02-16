@@ -1,16 +1,17 @@
 { config, pkgs, lib, ... }:
 
 # ============================================================================
-# DSP VM Module - Enhanced ArchibaldOS DSP Coprocessor
+# DSP VM Module - ArchibaldOS DSP Coprocessor with NETJACK
 # ============================================================================
 # 
 # This module creates an isolated VM running ArchibaldOS for real-time
-# digital signal processing. It uses CPU isolation and VFIO passthrough
-# for deterministic audio latency.
+# digital signal processing. It uses CPU isolation and NETJACK audio
+# routing to the host PipeWire system.
 #
 # Prerequisites:
-#   1. Identify your USB audio interface PCI ID: lspci -nn | grep -i audio
-#   2. Enable IOMMU in BIOS (AMD-Vi / Intel VT-d)
+#   1. Build the VM image: nix build .#archibaldos-dsp-vm
+#   2. Copy result to ~/vms/archibaldos-dsp.qcow2
+#   3. Enable IOMMU in BIOS (AMD-Vi / Intel VT-d)
 #
 # ============================================================================
 
@@ -48,11 +49,57 @@
       description = "CPU model for QEMU.";
     };
     
+    archibaldOS = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Use ArchibaldOS as guest OS (recommended).";
+      };
+      
+      diskImage = lib.mkOption {
+        type = lib.types.path;
+        default = ./config/archibaldos-dsp-image;
+        description = "Path to pre-built ArchibaldOS disk image.";
+      };
+      
+      netjack = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = true;
+          description = "Enable NETJACK2 audio routing to host.";
+        };
+        
+        sourcePort = lib.mkOption {
+          type = lib.types.port;
+          default = 4713;
+          description = "Source port for NETJACK server in VM.";
+        };
+        
+        bufferSize = lib.mkOption {
+          type = lib.types.int;
+          default = 128;
+          description = "Buffer size in frames (128 @ 96kHz = 1.33ms).";
+        };
+        
+        sampleRate = lib.mkOption {
+          type = lib.types.int;
+          default = 96000;
+          description = "Sample rate in Hz (96000 for HD audio).";
+        };
+        
+        channels = lib.mkOption {
+          type = lib.types.int;
+          default = 2;
+          description = "Number of audio channels.";
+        };
+      };
+    };
+    
     audioDevice = {
       enable = lib.mkOption {
         type = lib.types.bool;
         default = false;
-        description = "Enable VFIO passthrough of USB audio interface.";
+        description = "Enable VFIO passthrough of USB audio interface (alternative to NETJACK).";
       };
       
       pciId = lib.mkOption {
@@ -80,12 +127,6 @@
         default = { };
         description = "Port forwards in format { hostPort = guestPort; }.";
       };
-    };
-    
-    diskImage = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = "Path to ArchibaldOS disk image.";
     };
     
     qemuExtraArgs = lib.mkOption {
@@ -218,20 +259,25 @@
               ${lib.optionalString cfg.realtime.mlock "-realtime mlock=on"}
           '';
           
-          diskOpts = lib.optionalString (cfg.diskImage != null) ''
-              -drive file=${cfg.diskImage},format=raw,if=virtio,cache=unsafe,aio=native
+          # Use ArchibaldOS disk image path
+          diskOpts = ''
+              -drive file=${cfg.archibaldOS.diskImage},format=qcow2,if=virtio,cache=unsafe,aio=native
           '';
           
           vfioOpts = lib.optionalString cfg.audioDevice.enable ''
               -device vfio-pci,host=${cfg.audioDevice.pciId}
           '';
           
-          netOpts = lib.optionalString cfg.network.enable (let
-            hostfwds = lib.mapAttrsToList (k: v: "hostfwd=tcp::${toString k}-:${toString v}") cfg.network.hostfwd;
-          in ''
+          # Network options - forward NETJACK port when enabled
+          netOpts = let
+            hostfwds = lib.mapAttrsToList (k: v: "hostfwd=tcp::${toString k}-:${toString v}") 
+              (cfg.network.hostfwd // lib.optionalAttrs (cfg.archibaldOS.netjack.enable) {
+                ${toString cfg.archibaldOS.netjack.sourcePort} = cfg.archibaldOS.netjack.sourcePort;
+              });
+          in lib.optionalString cfg.network.enable ''
               -netdev user,id=net0,${lib.concatStringsSep "," hostfwds} \
               -device virtio-net-pci,netdev=net0
-          '');
+          '';
           
           displayOpts = 
             lib.optionalString cfg.spice " -vga virtio -display gtk,gl=on"
@@ -254,8 +300,42 @@
       startLimitBurst = 5;
     };
 
+    # NETJACK bridge service - connects to VM's JACK server
+    systemd.services.dsp-netjack-bridge = lib.mkIf cfg.archibaldOS.netjack.enable {
+      description = "NETJACK bridge to ArchibaldOS DSP VM";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "${cfg.name}.service" "pipewire.service" ];
+      requires = [ "${cfg.name}.service" ];
+      
+      serviceConfig = {
+        Type = "simple";
+        Restart = "on-failure";
+        RestartSec = 10;
+        User = "asher";
+        
+        ExecStart = pkgs.writeShellScript "dsp-netjack-bridge" ''
+          # Wait for VM to boot and JACK to start
+          sleep 15
+          
+          # Connect to VM's NETJACK server
+          # 128 frames @ 96kHz = 1.33ms round-trip latency
+          exec ${pkgs.jack2}/bin/jack_netsource \
+            -H 10.0.2.2 \
+            -p ${toString cfg.archibaldOS.netjack.sourcePort} \
+            -n archibaldos-dsp \
+            -C ${toString cfg.archibaldOS.netjack.channels} \
+            -P ${toString cfg.archibaldOS.netjack.channels} \
+            -l ${toString cfg.archibaldOS.netjack.bufferSize} \
+            -r ${toString cfg.archibaldOS.netjack.sampleRate}
+        '';
+        
+        ExecStop = "${pkgs.coreutils}/bin/kill -TERM $MAINPID";
+      };
+    };
+
+    # Legacy JACK bridge for VFIO audio device passthrough
     systemd.services.dsp-jack-bridge = lib.mkIf cfg.audioDevice.enable {
-      description = "JACK bridge to DSP VM";
+      description = "JACK bridge to DSP VM (VFIO passthrough)";
       wantedBy = [ "multi-user.target" ];
       after = [ "${cfg.name}.service" "pipewire.service" ];
       
@@ -278,7 +358,8 @@
       };
     };
 
-    networking.firewall.allowedTCPPorts = lib.mkIf cfg.network.enable (lib.attrValues cfg.network.hostfwd);
+    networking.firewall.allowedTCPPorts = lib.mkIf cfg.network.enable 
+      (lib.attrValues cfg.network.hostfwd ++ lib.optionals cfg.archibaldOS.netjack.enable [ cfg.archibaldOS.netjack.sourcePort ]);
 
     environment.systemPackages = [
       (pkgs.writeShellScriptBin "dsp-status" ''
@@ -290,6 +371,9 @@
         echo ""
         echo "=== Hugepages ==="
         cat /proc/meminfo | grep -i huge
+        echo ""
+        echo "=== NETJACK Bridge ==="
+        systemctl status dsp-netjack-bridge.service --no-pager || true
       '')
       
       (pkgs.writeShellScriptBin "dsp-console" ''
@@ -297,8 +381,13 @@
         ${pkgs.socat}/bin/socat -,raw,echo=0 UNIX-CONNECT:/run/${cfg.name}.sock 2>/dev/null || \
           echo "VM not running or console unavailable"
       '')
+      
+      (pkgs.writeShellScriptBin "dsp-netjack-restart" ''
+        echo "Restarting NETJACK bridge..."
+        systemctl restart dsp-netjack-bridge.service
+      '')
     ];
 
-    users.users.asher.extraGroups = [ "libvirtd" "kvm" ];
+    users.users.asher.extraGroups = [ "libvirtd" "kvm" "audio" ];
   };
 }
