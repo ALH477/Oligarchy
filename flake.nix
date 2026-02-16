@@ -40,8 +40,8 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     
-    # Oligarchy Greeting - War Room TUI (disabled - needs Python fix)
-    # greeting.url = path:./modules/greeting;
+    # Oligarchy Greeting - War Room TUI
+    greeting.url = path:./modules/greeting;
 
     # DeMoD Boot Intro Suite
     boot-intro.url = path:./modules/boot-intro;
@@ -63,7 +63,7 @@
     demod-ip-blocker,
     minecraft,
     nix-openclaw,
-    # greeting,
+    greeting,
     boot-intro,
     home-manager,
     nixos-generators,
@@ -136,7 +136,7 @@
         ./modules/dcf-tray.nix
         ./modules/secrets.nix
         ./modules/security/strict-egress.nix
-        # greeting.nixosModules.greeting
+        greeting.nixosModules.greeting
         boot-intro.nixosModules.boot-intro
         boot-intro.nixosModules.boot-intro-tui
         boot-intro.nixosModules.boot-intro-api

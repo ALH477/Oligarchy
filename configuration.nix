@@ -91,18 +91,47 @@
   # ──────────────────────────────────────────────────────────────────────────
   # Oligarchy Greeting - The War Room TUI
   # ──────────────────────────────────────────────────────────────────────────
-  # Disabled - requires Python package fix
-  # services.oligarchyGreeting = {
-  #   enable = true;
-  #   
-  #   # TUI settings
-  #   tui = {
-  #     enable = true;
-  #     showLauncher = true;
-  #     # Use st for lightweight launch, or kitty for full-featured
-  #     launchCommand = "st -e welcome-tui";
-  #   };
-  # };
+  services.oligarchyGreeting = {
+    enable = true;
+    
+    # Show both banner (16:9 visual) and logo (square icon)
+    layout = "adaptive";
+    
+    # Image settings
+    images.banner.enabled = true;
+    images.banner.maxHeight = 20;
+    
+    images.logo.enabled = true;
+    images.logo.maxSize = 15;
+    
+    # Show system info
+    showSystemInfo = true;
+    
+    # Welcome message
+    welcomeMessage = "Welcome to Oligarchy — The War Machine";
+    
+    # Custom links
+    customLinks = [
+      { name = "Documentation"; url = "https://github.com/ALH477/Oligarchy"; }
+      { name = "NixOS Manual"; url = "https://nixos.org/manual/nixos/stable/"; }
+      { name = "Package Search"; url = "https://search.nixos.org/packages"; }
+    ];
+    
+    # Tips
+    tips = [
+      "Press Super+L to lock screen (hyprlock)"
+      "Use 'sudo nixos-rebuild switch --flake .' to update system"
+      "Run 'nix-collect-garbage -d' to clean old generations"
+      "Use 'theme-switcher.sh' to change color palette"
+    ];
+    
+    # TUI settings
+    tui = {
+      enable = true;
+      showLauncher = true;
+      launchCommand = "hyprctl dispatch exec kitty";
+    };
+  };
 
 
     # ──────────────────────────────────────────────────────────────────────────

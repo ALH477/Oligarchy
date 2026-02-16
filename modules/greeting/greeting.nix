@@ -5,81 +5,44 @@ with lib;
 let
   cfg = config.services.oligarchyGreeting;
   
-  welcome-tui = flake.packages.${pkgs.system}.welcome-tui or null;
+  # Get the package from the flake
+  oligarchy-greeting = flake.packages.${pkgs.system}.default or null;
   
-  tuiConfigFile = pkgs.writeText "welcome-tui-config.json" (builtins.toJSON {
-    links = map (l: [ l.name l.url ]) cfg.customLinks;
-    tips = cfg.tips;
-    welcome_message = cfg.welcomeMessage;
+  # Generate config file
+  configFile = pkgs.writeText "oligarchy-greeting.json" (builtins.toJSON {
     ascii_art = cfg.asciiArt;
+    welcome_message = cfg.welcomeMessage;
+    show_system_info = cfg.showSystemInfo;
+    custom_links = cfg.customLinks;
+    tips = cfg.tips;
+    images = {
+      banner = {
+        path = "/etc/oligarchy/banner.jpg";
+        enabled = cfg.images.banner.enabled;
+        position = "header";
+        aspect_ratio = "16:9";
+        max_height = cfg.images.banner.maxHeight;
+      };
+      logo = {
+        path = "/etc/oligarchy/logo.png";
+        enabled = cfg.images.logo.enabled;
+        position = "sidebar";
+        aspect_ratio = "1:1";
+        max_size = cfg.images.logo.maxSize;
+      };
+    };
+    layout = cfg.layout;
+    fallback_to_ascii = cfg.fallbackToAscii;
+    tui = {
+      enabled = cfg.tui.enable;
+      show_launcher = cfg.tui.showLauncher;
+      launch_command = cfg.tui.launchCommand;
+    };
   });
   
-  greetingScript = let
-    scriptContent = ''
-      #!/bin/bash
-      
-      show_header() {
-      ${optionalString cfg.showHeader ''
-        cat << 'EOFART'
-      ${cfg.asciiArt}
-      EOFART
-      ''}
-      }
-      
-      show_welcome() {
-      ${optionalString (cfg.welcomeMessage != "") ''
-        echo "${cfg.welcomeMessage}"
-        echo ""
-      ''}
-      }
-      
-      show_system_info() {
-      ${optionalString cfg.showSystemInfo ''
-        echo "System Information:"
-        echo "  OS: $(cat /etc/os-release | grep PRETTY_NAME | cut -d'"' -f2)"
-        echo "  Kernel: $(uname -r)"
-        echo "  Hostname: $(hostname)"
-        echo ""
-      ''}
-      }
-      
-      show_links() {
-      ${optionalString (cfg.customLinks != []) ''
-        echo "Quick Links:"
-      ${concatMapStringsSep "\n" (link: ''
-        echo "  - ${link.name}: ${link.url}"
-      '') cfg.customLinks}
-        echo ""
-      ''}
-      }
-      
-      show_launcher() {
-      ${optionalString cfg.tui.showLauncher ''
-        echo "Press any key to launch the War Room TUI, or wait 3 seconds..."
-        if read -t 3 -n 1; then
-      ${optionalString (welcome-tui != null) ''
-          ${cfg.tui.launchCommand} ${tuiConfigFile}
-      ''}
-        fi
-      ''}
-      }
-      
-      show_header
-      show_welcome
-      show_system_info
-      show_links
-      show_launcher
-    '';
-  in pkgs.writeScriptBin "show-greeting" scriptContent;
 in {
   options.services.oligarchyGreeting = {
-    enable = mkEnableOption "user greeting on login";
-    
-    showHeader = mkOption {
-      type = types.bool;
-      default = true;
-      description = "Show ASCII art header";
-    };
+    enable = mkEnableOption "Oligarchy welcome greeting on login";
     
     asciiArt = mkOption {
       type = types.str;
@@ -89,12 +52,13 @@ in {
     8b  d8 8     8  8b  d8  dPwwYb  8wwK' 8b    8   8   YP
     `Y88P' 8888 888 `Y88P' dP    Yb 8  Yb `Y88P 8   8   88
       '';
+      description = "ASCII art to display when images are not available";
     };
     
     welcomeMessage = mkOption {
       type = types.str;
-      default = "Welcome to Oligarchy";
-      description = "Welcome message displayed after ASCII art";
+      default = "Welcome to Oligarchy — The War Machine";
+      description = "Welcome message displayed";
     };
     
     showSystemInfo = mkOption {
@@ -106,51 +70,142 @@ in {
     customLinks = mkOption {
       type = types.listOf (types.submodule {
         options = {
-          name = mkOption { type = types.str; };
-          url = mkOption { type = types.str; };
+          name = mkOption { 
+            type = types.str; 
+            description = "Display name for the link";
+          };
+          url = mkOption { 
+            type = types.str; 
+            description = "URL for the link";
+          };
         };
       });
-      default = [];
+      default = [
+        { name = "Documentation"; url = "https://github.com/ALH477/Oligarchy"; }
+        { name = "NixOS Manual"; url = "https://nixos.org/manual/nixos/stable/"; }
+      ];
       description = "Custom quick links to display";
     };
     
     tips = mkOption {
       type = types.listOf types.str;
-      default = [ ];
+      default = [
+        "Press Super+L to lock screen"
+        "Use 'nix flake update' to update system"
+        "Run 'nix-collect-garbage -d' to clean old generations"
+      ];
       description = "Tips to display randomly";
     };
     
-    customContent = mkOption {
-      type = types.str;
-      default = "";
-      description = "Additional custom content to display";
+    images = {
+      banner = {
+        enabled = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable banner image (16:9 visual)";
+        };
+        
+        maxHeight = mkOption {
+          type = types.int;
+          default = 20;
+          description = "Maximum height in terminal rows";
+        };
+      };
+      
+      logo = {
+        enabled = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable logo image (square icon)";
+        };
+        
+        maxSize = mkOption {
+          type = types.int;
+          default = 15;
+          description = "Maximum size in terminal columns/rows";
+        };
+      };
+    };
+    
+    layout = mkOption {
+      type = types.enum [ "adaptive" "banner_only" "logo_only" "both" "ascii_only" ];
+      default = "adaptive";
+      description = ''
+        Image layout mode:
+        - adaptive: Show banner for wide terminals, logo for narrow
+        - banner_only: Always show banner (16:9 visual)
+        - logo_only: Always show logo (square icon)
+        - both: Show both banner and logo
+        - ascii_only: Disable images, use ASCII art
+      '';
+    };
+    
+    fallbackToAscii = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Fall back to ASCII art if images not supported";
     };
     
     tui = {
-      enable = mkEnableOption "launch War Room TUI";
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable interactive TUI launcher";
+      };
       
       showLauncher = mkOption {
         type = types.bool;
         default = true;
-        description = "Show launcher prompt";
+        description = "Show TUI launcher prompt after greeting";
       };
       
       launchCommand = mkOption {
         type = types.str;
-        default = "welcome-tui";
-        description = "Command to launch the TUI";
+        default = "hyprctl dispatch exec kitty";
+        description = "Command to launch when user presses key";
       };
     };
   };
   
   config = mkIf cfg.enable {
-    environment.systemPackages = [ greetingScript ]
-      ++ optional (welcome-tui != null) welcome-tui;
+    assertions = [
+      {
+        assertion = oligarchy-greeting != null;
+        message = "oligarchy-greeting package is required but not available";
+      }
+    ];
     
+    # Install the package
+    environment.systemPackages = [ oligarchy-greeting ];
+    
+    # Create directories and install images
+    environment.etc."oligarchy".source = pkgs.runCommand "oligarchy-assets" {} ''
+      mkdir -p $out
+      
+      # Copy images if they exist in the source
+      if [ -f ${../../assets/demod-logo.png} ]; then
+        cp ${../../assets/demod-logo.png} $out/logo.png
+      fi
+      
+      if [ -f ${../../Untitled.jpg} ]; then
+        cp ${../../Untitled.jpg} $out/banner.jpg
+      fi
+      
+      # Install config
+      cp ${configFile} $out/greeting.json
+    '';
+    
+    # Add greeting to bash login
     programs.bash.loginShellInit = ''
       if [ -z "$SSH_CONNECTION" ] && [ -z "$TMUX" ]; then
-        show-greeting
+        ${oligarchy-greeting}/bin/show-greeting --config /etc/oligarchy/greeting.json
       fi
     '';
+    
+    # Create shell alias
+    environment.shellAliases = {
+      "welcome-tui" = "${oligarchy-greeting}/bin/welcome-tui /etc/oligarchy/greeting.json";
+      "show-greeting" = "${oligarchy-greeting}/bin/show-greeting --config /etc/oligarchy/greeting.json";
+    };
   };
 }
