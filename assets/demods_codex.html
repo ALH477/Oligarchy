@@ -1,0 +1,2746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeMoD's Astart Codex</title>
+    
+    <!-- Performance: Preconnect to Google Fonts CDN -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    
+    <!-- Typography: VT323 for authentic terminal aesthetic -->
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    
+    <!-- Markdown Parser: marked.js from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <style>
+        /* ============================================
+           DEMOD'S ASTART CODEX - STYLESHEET
+           ============================================
+           Purpose: CRT terminal aesthetic documentation UI
+           Author: DeMoD Engineering
+           Framework: Vanilla CSS with CSS variables
+           License: Internal use
+           ============================================ */
+        
+        /* ============================================
+           RESET & BASE STYLES
+           ============================================ */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        /* ============================================
+           DESIGN SYSTEM - CSS Variables
+           Single source of truth for colors/effects
+           ============================================ */
+        :root {
+            --crt-green: #00ff41;       /* Primary phosphor color */
+            --crt-green-dim: #00aa2a;   /* Secondary/muted elements */
+            --crt-dark: #001a00;        /* Screen background */
+            --crt-darker: #000a00;      /* Deep shadows */
+            --glow: 0 0 5px var(--crt-green), 0 0 10px var(--crt-green), 0 0 20px var(--crt-green-dim);
+        }
+
+        /* ============================================
+           BASE LAYOUT
+           Maintains vertical/square aspect ratio
+           ============================================ */
+        body {
+            background: #000;
+            font-family: 'VT323', monospace;
+            color: var(--crt-green);
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: none;  /* Hide default cursor for custom one */
+            padding: 2vh;
+        }
+
+        /* Hide cursor everywhere - important for UX consistency */
+        * {
+            cursor: none !important;
+        }
+
+        /* ============================================
+           LAYOUT CONTAINER
+           Manages aspect ratio and markdown viewer
+           Left-aligned main monitor with markdown on right
+           
+           Layout Strategy:
+           - Mobile (<1200px): Center single monitor
+           - Desktop (≥1200px): Left monitor (720px) + right markdown viewer (600px)
+           - Monitor stays at 720px max width for consistency
+           - Flex layout allows markdown to appear on right when toggled
+           ============================================ */
+        .layout-container {
+            display: flex;
+            gap: 2vh;
+            width: 100%;
+            height: 100%;
+            max-width: 100%;
+            justify-content: flex-start;  /* Left align */
+            align-items: center;
+            padding-left: 2vh;
+        }
+
+        /* ============================================
+           CUSTOM CURSOR - Triforce/Sierpinski Triangle
+           Three triangles forming a fractal pattern
+           ============================================ */
+        .cursor {
+            position: fixed;
+            width: 0;
+            height: 0;
+            pointer-events: none;  /* Don't interfere with clicks */
+            z-index: 10000;        /* Always on top */
+            transform: translate(-12px, -12px);  /* Center on mouse */
+        }
+
+        /* Top triangle of triforce */
+        .cursor::before {
+            content: '';
+            position: absolute;
+            width: 0;
+            height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-bottom: 14px solid var(--crt-green);
+            filter: drop-shadow(0 0 3px var(--crt-green)) drop-shadow(0 0 6px var(--crt-green));
+            animation: cursorPulse 1.5s ease-in-out infinite;
+        }
+
+        /* Bottom left triangle of triforce */
+        .cursor::after {
+            content: '';
+            position: absolute;
+            width: 0;
+            height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-bottom: 14px solid var(--crt-green);
+            filter: drop-shadow(0 0 3px var(--crt-green)) drop-shadow(0 0 6px var(--crt-green));
+            transform: translate(-8px, 14px);
+            animation: cursorPulse 1.5s ease-in-out infinite 0.1s;  /* Staggered animation */
+        }
+
+        /* Bottom right triangle - requires separate element */
+        .cursor-triangle {
+            position: absolute;
+            width: 0;
+            height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-bottom: 14px solid var(--crt-green);
+            filter: drop-shadow(0 0 3px var(--crt-green)) drop-shadow(0 0 6px var(--crt-green));
+            transform: translate(8px, 14px);
+            animation: cursorPulse 1.5s ease-in-out infinite 0.2s;  /* More stagger */
+        }
+
+        /* Cursor pulsing animation for visual interest */
+        @keyframes cursorPulse {
+            0%, 100% { 
+                opacity: 1;
+                filter: drop-shadow(0 0 3px var(--crt-green)) drop-shadow(0 0 6px var(--crt-green));
+            }
+            50% { 
+                opacity: 0.7;
+                filter: drop-shadow(0 0 5px var(--crt-green)) drop-shadow(0 0 10px var(--crt-green)) drop-shadow(0 0 15px var(--crt-green-dim));
+            }
+        }
+
+        /* ============================================
+           CRT MONITOR CHASSIS
+           Physical monitor bezel and frame
+           Maintains 3:4 aspect ratio (vertical/square)
+           Fixed at 720px width, left-aligned
+           ============================================ */
+        .crt-monitor {
+            position: relative;
+            width: 100%;
+            max-width: 720px;  /* Fixed width for consistency */
+            aspect-ratio: 3 / 4;  /* Vertical orientation */
+            background: var(--crt-darker);
+            border: 25px solid #222;
+            border-radius: 25px;
+            box-shadow: 
+                inset 0 0 100px rgba(0, 0, 0, 0.9),
+                0 0 50px rgba(0, 0, 0, 0.5),
+                0 20px 60px rgba(0, 0, 0, 0.8);
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+
+        /* Responsive: Adjust for mobile screens */
+        @media (max-width: 768px) {
+            .crt-monitor {
+                max-width: 95vw;
+                border: 15px solid #222;
+            }
+            
+            .layout-container {
+                justify-content: center;  /* Center on mobile */
+                padding-left: 0;
+            }
+        }
+
+        /* Desktop: Ensure left alignment with enough space for markdown */
+        @media (min-width: 1200px) {
+            .crt-monitor {
+                max-width: 720px;
+            }
+        }
+
+        /* Screen */
+        .screen {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: var(--crt-dark);
+            overflow: hidden;
+            animation: screenFlicker 0.15s infinite;
+        }
+
+        @keyframes screenFlicker {
+            0% { opacity: 1; }
+            98% { opacity: 1; }
+            100% { opacity: 0.95; }
+        }
+
+        /* Boot flash animation - simulates CRT power-on */
+        @keyframes bootFlash {
+            0% { 
+                opacity: 0;
+                filter: brightness(0);
+            }
+            10% { 
+                opacity: 1;
+                filter: brightness(3);
+            }
+            30% { 
+                opacity: 0.8;
+                filter: brightness(0.5);
+            }
+            50% { 
+                opacity: 1;
+                filter: brightness(1.5);
+            }
+            100% { 
+                opacity: 1;
+                filter: brightness(1);
+            }
+        }
+
+        /* Scanlines */
+        .scanlines {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 0, 0, 0.15),
+                rgba(0, 0, 0, 0.15) 1px,
+                transparent 1px,
+                transparent 2px
+            );
+            pointer-events: none;
+            z-index: 1000;
+            animation: scanlineMove 8s linear infinite;
+        }
+
+        @keyframes scanlineMove {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(10px); }
+        }
+
+        /* Screen curvature */
+        .screen::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(ellipse at center, transparent 60%, rgba(0, 0, 0, 0.6) 100%);
+            pointer-events: none;
+            z-index: 999;
+        }
+
+        /* Glow overlay */
+        .screen::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(ellipse at center, rgba(0, 255, 65, 0.1) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 998;
+            animation: glowPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes glowPulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 0.8; }
+        }
+
+        /* Content container */
+        .content {
+            position: relative;
+            padding: 40px;
+            height: 100%;
+            font-size: 24px;
+            line-height: 1.4;
+            text-shadow: 0 0 8px var(--crt-green);
+            z-index: 1;
+            overflow-y: auto;
+        }
+
+        .content::-webkit-scrollbar {
+            width: 12px;
+        }
+
+        .content::-webkit-scrollbar-track {
+            background: var(--crt-darker);
+        }
+
+        .content::-webkit-scrollbar-thumb {
+            background: var(--crt-green);
+            box-shadow: var(--glow);
+        }
+
+        /* Boot screen */
+        .boot-screen {
+            display: none;
+            padding: 40px;
+        }
+
+        .boot-screen.active {
+            display: block;
+        }
+
+        /* Click to boot screen - Full page black/white */
+        .click-to-boot {
+            display: none;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            background: #000;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 100000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.5s;
+        }
+
+        .click-to-boot.active {
+            display: flex;
+        }
+
+        .click-to-boot.fade-out {
+            opacity: 0;
+        }
+
+        .boot-prompt {
+            text-align: center;
+            cursor: none;
+            color: #fff;
+            text-shadow: none;
+        }
+
+        .demod-ascii {
+            font-size: 18px;
+            line-height: 1.1;
+            color: #fff;
+            text-shadow: 0 0 2px #fff;
+            white-space: pre;
+            font-family: 'VT323', monospace;
+            letter-spacing: 1px;
+            animation: asciiGlow 2s ease-in-out infinite;
+        }
+
+        @keyframes asciiGlow {
+            0%, 100% { 
+                text-shadow: 0 0 2px #fff;
+                color: #fff;
+            }
+            50% { 
+                text-shadow: 0 0 8px #fff, 0 0 12px #fff;
+                color: #ffffff;
+            }
+        }
+
+        .click-prompt {
+            margin-top: 60px;
+            font-size: 24px;
+            text-align: center;
+            color: #fff;
+            text-shadow: none;
+        }
+
+        .blink-text {
+            animation: blinkSimple 1.5s infinite;
+            display: inline-block;
+        }
+
+        @keyframes blinkSimple {
+            0%, 49% { opacity: 1; }
+            50%, 100% { opacity: 0.2; }
+        }
+
+        /* Display rollout animation */
+        .display-rollout {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            z-index: 99999;
+            overflow: hidden;
+        }
+
+        .display-rollout.active {
+            display: block;
+        }
+
+        /* Scanline rollout effect */
+        .rollout-scanline {
+            position: absolute;
+            top: -10%;
+            left: 0;
+            width: 100%;
+            height: 10%;
+            background: linear-gradient(
+                to bottom,
+                transparent 0%,
+                rgba(0, 255, 65, 0.05) 30%,
+                rgba(0, 255, 65, 0.2) 45%,
+                rgba(0, 255, 65, 0.4) 50%,
+                rgba(0, 255, 65, 0.2) 55%,
+                rgba(0, 255, 65, 0.05) 70%,
+                transparent 100%
+            );
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.5);
+            animation: rolloutScan 1.2s ease-out forwards;
+        }
+
+        @keyframes rolloutScan {
+            0% { 
+                top: -10%;
+            }
+            100% { 
+                top: 100%;
+            }
+        }
+
+        /* Phosphor warmup effect */
+        .phosphor-warmup {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(
+                ellipse at center,
+                var(--crt-dark) 0%,
+                #000d00 50%,
+                #000 100%
+            );
+            opacity: 0;
+            animation: phosphorGlow 1.2s ease-in-out forwards;
+        }
+
+        @keyframes phosphorGlow {
+            0% { 
+                opacity: 0;
+                filter: brightness(0);
+            }
+            15% { 
+                opacity: 0.2;
+                filter: brightness(0.1);
+            }
+            30% {
+                opacity: 0.4;
+                filter: brightness(0.3);
+            }
+            50% { 
+                opacity: 0.6;
+                filter: brightness(0.5);
+            }
+            75% { 
+                opacity: 0.85;
+                filter: brightness(0.8);
+            }
+            100% { 
+                opacity: 1;
+                filter: brightness(1);
+            }
+        }
+
+        /* Add horizontal scan lines during rollout */
+        .display-rollout::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0, 255, 65, 0.03) 2px,
+                rgba(0, 255, 65, 0.03) 4px
+            );
+            opacity: 0;
+            animation: scanLinesAppear 1.2s ease-in forwards;
+            pointer-events: none;
+        }
+
+        @keyframes scanLinesAppear {
+            0% { opacity: 0; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .boot-line {
+            opacity: 0;
+            animation: fadeIn 0.3s forwards;
+        }
+
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+
+        /* Page styles */
+        .page {
+            display: none;
+            animation: pageLoad 0.5s;
+        }
+
+        .page.active {
+            display: block;
+        }
+
+        @keyframes pageLoad {
+            from { 
+                opacity: 0;
+                transform: translateX(-20px);
+            }
+            to { 
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .header {
+            border: 2px solid var(--crt-green);
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: var(--glow);
+            animation: headerGlow 3s ease-in-out infinite;
+        }
+
+        @keyframes headerGlow {
+            0%, 100% { box-shadow: var(--glow); }
+            50% { box-shadow: 0 0 10px var(--crt-green), 0 0 20px var(--crt-green), 0 0 30px var(--crt-green-dim); }
+        }
+
+        .title {
+            font-size: 42px;
+            text-align: center;
+            letter-spacing: 4px;
+            margin-bottom: 10px;
+            animation: titleFlicker 3s infinite;
+        }
+
+        @keyframes titleFlicker {
+            0%, 100% { opacity: 1; }
+            94%, 96% { opacity: 0.8; }
+            95% { opacity: 1; }
+        }
+
+        .subtitle {
+            text-align: center;
+            font-size: 18px;
+            color: var(--crt-green-dim);
+        }
+
+        .section {
+            margin: 30px 0;
+        }
+
+        .section-title {
+            font-size: 32px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid var(--crt-green-dim);
+            padding-bottom: 5px;
+        }
+
+        .entry {
+            margin: 15px 0;
+            padding-left: 20px;
+        }
+
+        .entry-name {
+            color: var(--crt-green);
+            font-size: 28px;
+        }
+
+        .entry-desc {
+            color: var(--crt-green-dim);
+            padding-left: 20px;
+            margin-top: 5px;
+        }
+
+        .nav-hint {
+            position: fixed;
+            bottom: 30px;
+            right: 50px;
+            font-size: 20px;
+            color: var(--crt-green-dim);
+            text-shadow: 0 0 5px var(--crt-green);
+            animation: navFade 2s ease-in-out infinite;
+        }
+
+        @keyframes navFade {
+            0%, 100% { opacity: 0.6; }
+            50% { opacity: 1; }
+        }
+
+        /* Index styles */
+        .index-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .index-item {
+            border: 1px solid var(--crt-green-dim);
+            padding: 15px;
+            cursor: pointer;
+            transition: all 0.3s;
+            position: relative;
+        }
+
+        .index-item:hover {
+            border-color: var(--crt-green);
+            box-shadow: var(--glow);
+            transform: translateX(5px);
+        }
+
+        .index-item::before {
+            content: '►';
+            position: absolute;
+            left: -15px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .index-item:hover::before {
+            opacity: 1;
+        }
+
+        .index-number {
+            font-size: 36px;
+            color: var(--crt-green);
+            margin-bottom: 5px;
+        }
+
+        .index-title {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .index-desc {
+            font-size: 18px;
+            color: var(--crt-green-dim);
+        }
+
+        .code-example {
+            background: var(--crt-darker);
+            border-left: 3px solid var(--crt-green);
+            padding: 15px;
+            margin: 15px 0;
+            font-size: 20px;
+            overflow-x: auto;
+        }
+
+        .code-comment {
+            color: var(--crt-green-dim);
+        }
+
+        .ui-preview {
+            border: 2px solid var(--crt-green-dim);
+            padding: 20px;
+            margin: 20px 0;
+            background: rgba(0, 255, 65, 0.05);
+        }
+
+        .highlight {
+            background: rgba(0, 255, 65, 0.2);
+            padding: 2px 5px;
+        }
+
+        .page-indicator {
+            position: fixed;
+            top: 30px;
+            right: 50px;
+            font-size: 24px;
+            color: var(--crt-green);
+            text-shadow: var(--glow);
+        }
+
+        /* ASCII art decoration */
+        .ascii-art {
+            text-align: center;
+            margin: 20px 0;
+            line-height: 1.2;
+            color: var(--crt-green-dim);
+        }
+
+        .warning {
+            border: 2px solid var(--crt-green);
+            padding: 15px;
+            margin: 20px 0;
+            animation: warningBlink 1s infinite;
+        }
+
+        @keyframes warningBlink {
+            0%, 49%, 100% { border-color: var(--crt-green); }
+            50%, 99% { border-color: var(--crt-green-dim); }
+        }
+
+        /* Static noise */
+        .noise {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0.03;
+            z-index: 997;
+            pointer-events: none;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' /%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' /%3E%3C/svg%3E");
+            animation: noiseAnim 0.2s infinite;
+        }
+
+        @keyframes noiseAnim {
+            0%, 100% { opacity: 0.03; }
+            50% { opacity: 0.05; }
+        }
+    </style>
+</head>
+<body>
+    <!-- ============================================
+         CUSTOM CURSOR
+         Triforce/Sierpinski triangle design
+         ============================================ -->
+    <div class="cursor">
+        <div class="cursor-triangle"></div>
+    </div>
+    
+    <!-- ============================================
+         MARKDOWN VIEWER CONTROLS
+         Toggle button for markdown panel (desktop only)
+         ============================================ -->
+    <div class="md-controls">
+        <button class="md-toggle" onclick="toggleMarkdown()">
+            <span id="md-toggle-text">M: SHOW MARKDOWN</span>
+        </button>
+    </div>
+    
+    <!-- ============================================
+         LAYOUT CONTAINER
+         Manages main monitor + markdown viewer layout
+         ============================================ -->
+    <div class="layout-container">
+        <!-- ============================================
+             CRT MONITOR CONTAINER
+             Main visual element containing all content
+             ============================================ -->
+        <div class="crt-monitor">
+        <div class="screen">
+            <!-- Visual effects layers -->
+            <div class="scanlines"></div>
+            <div class="noise"></div>
+            
+            <!-- ============================================
+                 CONTENT AREA
+                 All pages and documentation
+                 ============================================ -->
+            <div class="content">
+                <!-- ============================================
+                     CLICK TO START SCREEN
+                     Full-page black/white prompt with DeMoD ASCII
+                     ============================================ -->
+                <div class="click-to-boot active" id="clickToBoot">
+                    <div class="boot-prompt">
+                        <div class="demod-ascii">
+██████╗  ███████╗ ███╗   ███╗  ██████╗  ██████╗ 
+██╔══██╗ ██╔════╝ ████╗ ████║ ██╔═══██╗ ██╔══██╗
+██║  ██║ █████╗   ██╔████╔██║ ██║   ██║ ██║  ██║
+██║  ██║ ██╔══╝   ██║╚██╔╝██║ ██║   ██║ ██║  ██║
+██████╔╝ ███████╗ ██║ ╚═╝ ██║ ╚██████╔╝ ██████╔╝
+╚═════╝  ╚══════╝ ╚═╝     ╚═╝  ╚═════╝  ╚═════╝ 
+                        </div>
+                        <div style="margin-top: 30px; font-size: 20px; color: #999; letter-spacing: 8px;">
+                            ASTART CODEX
+                        </div>
+                        <div class="click-prompt">
+                            <span class="blink-text">[ CLICK TO START ]</span>
+                        </div>
+                        <div style="margin-top: 40px; font-size: 14px; color: #666;">
+                            PRESS ENTER OR SPACE
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ============================================
+                     DISPLAY ROLLOUT ANIMATION
+                     CRT warmup and scanline effect
+                     ============================================ -->
+                <div class="display-rollout" id="displayRollout">
+                    <div class="phosphor-warmup"></div>
+                    <div class="rollout-scanline"></div>
+                </div>
+
+                <!-- ============================================
+                     BOOT SCREEN
+                     Initial loading sequence
+                     Starts after click + sound effect
+                     ============================================ -->
+                <div class="boot-screen" id="boot">
+                    <div class="boot-line" style="animation-delay: 0s;">DeMoD BIOS v4.2.0</div>
+                    <div class="boot-line" style="animation-delay: 0.3s;">Copyright (C) 2025 DeMoD Industries</div>
+                    <div class="boot-line" style="animation-delay: 0.6s;"><br></div>
+                    <div class="boot-line" style="animation-delay: 0.9s;">Initializing Astart Codex...</div>
+                    <div class="boot-line" style="animation-delay: 1.2s;">Loading DSP modules............[OK]</div>
+                    <div class="boot-line" style="animation-delay: 1.5s;">Loading Legal frameworks......[OK]</div>
+                    <div class="boot-line" style="animation-delay: 1.8s;">Loading Engineering specs.....[OK]</div>
+                    <div class="boot-line" style="animation-delay: 2.1s;">Loading Code libraries........[OK]</div>
+                    <div class="boot-line" style="animation-delay: 2.4s;"><br></div>
+                    <div class="boot-line" style="animation-delay: 2.7s;">System ready. Press any key to continue...</div>
+                </div>
+
+                <!-- ============================================
+                     PAGE 0: INDEX
+                     Navigation hub - clickable cards + shortcuts
+                     Grid layout for visual scanning
+                     ============================================ -->
+                <div class="page" id="page0">
+                    <div class="header">
+                        <div class="title">╔═══ INDEX ═══╗</div>
+                        <div class="subtitle">Codex Navigation System</div>
+                    </div>
+
+                    <div class="ascii-art">
+    ┌─────────────────────────────────────────────┐
+    │  Select section by number or use ◄ ►       │
+    └─────────────────────────────────────────────┘
+                    </div>
+
+                    <div class="index-grid">
+                        <div class="index-item" onclick="showPage(1)">
+                            <div class="index-number">01</div>
+                            <div class="index-title">WELCOME</div>
+                            <div class="index-desc">System overview & navigation guide</div>
+                        </div>
+
+                        <div class="index-item" onclick="showPage(2)">
+                            <div class="index-number">02</div>
+                            <div class="index-title">DSP CORE</div>
+                            <div class="index-desc">Signal processing algorithms & implementation</div>
+                        </div>
+
+                        <div class="index-item" onclick="showPage(3)">
+                            <div class="index-number">03</div>
+                            <div class="index-title">LEGAL FRAMEWORK</div>
+                            <div class="index-desc">IP protection & compliance protocols</div>
+                        </div>
+
+                        <div class="index-item" onclick="showPage(4)">
+                            <div class="index-number">04</div>
+                            <div class="index-title">ENGINEERING</div>
+                            <div class="index-desc">Hardware specs & testing protocols</div>
+                        </div>
+
+                        <div class="index-item" onclick="showPage(5)">
+                            <div class="index-number">05</div>
+                            <div class="index-title">PROGRAMMING</div>
+                            <div class="index-desc">Code standards & best practices</div>
+                        </div>
+
+                        <div class="index-item" onclick="showPage(6)">
+                            <div class="index-number">06</div>
+                            <div class="index-title">OPERATIONS</div>
+                            <div class="index-desc">Startup management & scaling</div>
+                        </div>
+
+                        <div class="index-item" onclick="showPage(7)">
+                            <div class="index-number">07</div>
+                            <div class="index-title">RESOURCES</div>
+                            <div class="index-desc">Essential reading & development tools</div>
+                        </div>
+
+                        <div class="index-item" onclick="showPage(8)">
+                            <div class="index-number">08</div>
+                            <div class="index-title">UI FRAMEWORK</div>
+                            <div class="index-desc">Philosophy & design patterns</div>
+                        </div>
+
+                        <div class="index-item" onclick="showPage(9)">
+                            <div class="index-number">09</div>
+                            <div class="index-title">IMPLEMENTATION</div>
+                            <div class="index-desc">Commented code & accessibility</div>
+                        </div>
+
+                        <div class="index-item" onclick="showPage(10)">
+                            <div class="index-number">10</div>
+                            <div class="index-title">DSP DOCS</div>
+                            <div class="index-desc">Signal processing documentation patterns</div>
+                        </div>
+
+                        <div class="index-item" onclick="showPage(11)">
+                            <div class="index-number">11</div>
+                            <div class="index-title">DEPLOYMENT</div>
+                            <div class="index-desc">Production checklist & hosting</div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; QUICK NAVIGATION</div>
+                        <p>• Press I or 0 - Return to this index</p>
+                        <p>• Press 1-9 - Jump directly to sections 1-9</p>
+                        <p>• Use ◄ ► - Navigate sequentially</p>
+                        <p>• Press HOME - Jump to index</p>
+                        <p>• Press END - Jump to last page</p>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; MARKDOWN VIEWER (DESKTOP ONLY)</div>
+                        <p>On screens wider than 1200px, press <span class="highlight">M</span> to toggle a side panel</p>
+                        <p>for viewing markdown documentation files.</p>
+                        <br>
+                        <p><span style="color: var(--crt-green);">Quick Load Examples:</span></p>
+                        <p>• Shift+F - FFT Implementation Guide</p>
+                        <p>• Shift+L - Digital Filter Design</p>
+                        <p>• Shift+S - DSP Startup Checklist</p>
+                        <p>• Drag & Drop - Load your own .md files</p>
+                    </div>
+                </div>
+
+                <!-- Page 1: Welcome -->
+                <div class="page" id="page1">
+                    <div class="header">
+                        <div class="title">DeMoD's ASTART CODEX</div>
+                        <div class="subtitle">Founder's Technical Reference v1.0</div>
+                    </div>
+
+                    <div class="ascii-art">
+    ╔═══════════════════════════════════════════════╗
+    ║   ░▒▓ DIGITAL SIGNAL PROCESSING CODEX ▓▒░   ║
+    ╚═══════════════════════════════════════════════╝
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; SYSTEM OVERVIEW</div>
+                        <p>Welcome to the Astart Codex - your comprehensive technical knowledge base for DSP development, legal frameworks, engineering protocols, and programming standards.</p>
+                        <br>
+                        <p>This codex serves as the central repository for all operational knowledge required to run a DSP startup from inception to deployment.</p>
+                    </div>
+
+                    <div class="warning">
+                        ⚠ CLASSIFIED: FOUNDER EYES ONLY ⚠
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; NAVIGATION</div>
+                        <p>Use ARROW KEYS to navigate between sections:</p>
+                        <div class="entry">
+                            <div class="entry-name">← → Navigate pages</div>
+                            <div class="entry-desc">Move backward and forward through codex</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">I or 0 - Index</div>
+                            <div class="entry-desc">View complete table of contents</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">1-9 - Direct Jump</div>
+                            <div class="entry-desc">Jump to any section by number</div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; NEW IN THIS VERSION</div>
+                        <p>★ Cinematic Boot Sequence - Multi-stage CRT power-on with authentic sounds</p>
+                        <p>★ UI Framework Guide - Learn to build beautiful codebase documentation UIs</p>
+                        <p>★ Interactive Index - Quick navigation to any section</p>
+                        <p>★ Keyboard Shortcuts - Power user navigation</p>
+                        <p>★ Markdown Viewer - Side-by-side .md file display (desktop, press M)</p>
+                        <br>
+                        <p><span class="highlight">Boot Sequence</span>: 3-stage experience</p>
+                        <p>1. DeMoD splash screen → 2. Display rollout → 3. BIOS boot</p>
+                        <p>Complete with procedurally-generated retro CRT sound effects!</p>
+                        <br>
+                        <p><span class="highlight">Desktop Users</span>: Press M to toggle the markdown viewer panel!</p>
+                        <p>Try: Shift+F (FFT), Shift+L (Filters), Shift+S (Startup)</p>
+                    </div>
+                </div>
+
+                <!-- Page 2: DSP Core -->
+                <div class="page" id="page2">
+                    <div class="header">
+                        <div class="title">DSP CORE MODULES</div>
+                        <div class="subtitle">Signal Processing Fundamentals</div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; CORE ALGORITHMS</div>
+                        <div class="entry">
+                            <div class="entry-name">FFT (Fast Fourier Transform)</div>
+                            <div class="entry-desc">Complexity: O(n log n) | Applications: Frequency analysis, filtering</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">FIR Filters</div>
+                            <div class="entry-desc">Linear phase response | Stable | Memory intensive</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">IIR Filters</div>
+                            <div class="entry-desc">Feedback topology | Efficient | Phase nonlinearity</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Wavelet Transforms</div>
+                            <div class="entry-desc">Time-frequency localization | Multi-resolution analysis</div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; IMPLEMENTATION NOTES</div>
+                        <p>• Always validate sample rates against Nyquist theorem</p>
+                        <p>• Consider fixed-point vs floating-point trade-offs</p>
+                        <p>• Profile for real-time constraints (latency < 10ms target)</p>
+                        <p>• Implement proper anti-aliasing on input stages</p>
+                    </div>
+                </div>
+
+                <!-- Page 3: Legal Framework -->
+                <div class="page" id="page3">
+                    <div class="header">
+                        <div class="title">LEGAL FRAMEWORK</div>
+                        <div class="subtitle">Compliance & Protection Protocols</div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; INTELLECTUAL PROPERTY</div>
+                        <div class="entry">
+                            <div class="entry-name">Patent Strategy</div>
+                            <div class="entry-desc">File provisional within 12 months of public disclosure</div>
+                            <div class="entry-desc">Monitor prior art in USPTO, EPO, WIPO databases</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Trade Secrets</div>
+                            <div class="entry-desc">Implement NDAs for all employees and contractors</div>
+                            <div class="entry-desc">Maintain internal documentation access controls</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Open Source Compliance</div>
+                            <div class="entry-desc">Track all dependencies and their licenses (GPL, MIT, Apache)</div>
+                            <div class="entry-desc">Copyleft licenses require source disclosure - audit carefully</div>
+                        </div>
+                    </div>
+
+                    <div class="warning">
+                        REMINDER: Legal counsel required for equity distribution and regulatory filings
+                    </div>
+                </div>
+
+                <!-- Page 4: Engineering -->
+                <div class="page" id="page4">
+                    <div class="header">
+                        <div class="title">ENGINEERING PROTOCOLS</div>
+                        <div class="subtitle">Hardware & System Design</div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; HARDWARE SPECIFICATIONS</div>
+                        <div class="entry">
+                            <div class="entry-name">ADC/DAC Selection</div>
+                            <div class="entry-desc">Bit depth: 16-24 bits for audio, 12-14 for control</div>
+                            <div class="entry-desc">SNR requirements: +6dB per additional bit</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Processor Selection</div>
+                            <div class="entry-desc">DSP: TI C2000, SHARC, or ARM Cortex-M7 with FPU</div>
+                            <div class="entry-desc">FPGA: Consider for parallel processing (Xilinx, Intel)</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Power Management</div>
+                            <div class="entry-desc">Thermal budget: Calculate TDP for continuous operation</div>
+                            <div class="entry-desc">Clock gating and voltage scaling for efficiency</div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; TESTING PROTOCOLS</div>
+                        <p>• Unit tests for all signal processing blocks</p>
+                        <p>• Integration tests with actual hardware in the loop</p>
+                        <p>• Stress testing at temperature extremes</p>
+                        <p>• EMI/EMC compliance testing per FCC/CE standards</p>
+                    </div>
+                </div>
+
+                <!-- Page 5: Programming -->
+                <div class="page" id="page5">
+                    <div class="header">
+                        <div class="title">PROGRAMMING STANDARDS</div>
+                        <div class="subtitle">Code Architecture & Best Practices</div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; LANGUAGE SELECTION</div>
+                        <div class="entry">
+                            <div class="entry-name">C/C++</div>
+                            <div class="entry-desc">Real-time systems, embedded, performance-critical paths</div>
+                            <div class="entry-desc">Use RAII, avoid dynamic allocation in RT loops</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Python</div>
+                            <div class="entry-desc">Prototyping, data analysis, ML model training</div>
+                            <div class="entry-desc">NumPy/SciPy for vectorized operations</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Rust</div>
+                            <div class="entry-desc">Memory-safe alternatives to C++ for new modules</div>
+                            <div class="entry-desc">Zero-cost abstractions with compile-time guarantees</div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; VERSION CONTROL</div>
+                        <p>• Git branching: main → develop → feature/bugfix</p>
+                        <p>• Commit messages: Conventional Commits format</p>
+                        <p>• Code review required before merge to main</p>
+                        <p>• Tag releases with semantic versioning (v1.2.3)</p>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; DOCUMENTATION</div>
+                        <p>• Inline comments for complex algorithms</p>
+                        <p>• Doxygen/Sphinx for API documentation</p>
+                        <p>• Architecture diagrams in docs/ directory</p>
+                        <p>• README with quick start and build instructions</p>
+                    </div>
+                </div>
+
+                <!-- Page 6: Operations -->
+                <div class="page" id="page6">
+                    <div class="header">
+                        <div class="title">OPERATIONAL GUIDELINES</div>
+                        <div class="subtitle">Startup Management & Scaling</div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; FOUNDER RESPONSIBILITIES</div>
+                        <div class="entry">
+                            <div class="entry-name">Legal</div>
+                            <div class="entry-desc">Entity formation, contracts, compliance, IP protection</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Engineering</div>
+                            <div class="entry-desc">System architecture, hardware selection, validation</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Programming</div>
+                            <div class="entry-desc">Core algorithms, infrastructure, CI/CD pipelines</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Business Development</div>
+                            <div class="entry-desc">Customer discovery, fundraising, strategic partnerships</div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; SCALING CHECKLIST</div>
+                        <p>□ Hire technical co-founder or senior engineer</p>
+                        <p>□ Establish formal development processes</p>
+                        <p>□ Secure legal counsel and IP attorney</p>
+                        <p>□ Build automated testing infrastructure</p>
+                        <p>□ Document tribal knowledge into systems</p>
+                        <p>□ Create reproducible development environments</p>
+                    </div>
+
+                    <div class="warning">
+                        CRITICAL: Don't scale prematurely - validate product-market fit first
+                    </div>
+                </div>
+
+                <!-- Page 7: Resources -->
+                <div class="page" id="page7">
+                    <div class="header">
+                        <div class="title">REFERENCE RESOURCES</div>
+                        <div class="subtitle">Essential Reading & Tools</div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; ESSENTIAL TEXTS</div>
+                        <div class="entry">
+                            <div class="entry-name">DSP</div>
+                            <div class="entry-desc">"Understanding Digital Signal Processing" - Lyons</div>
+                            <div class="entry-desc">"Digital Signal Processing" - Proakis & Manolakis</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Embedded Systems</div>
+                            <div class="entry-desc">"Real-Time Systems" - Liu</div>
+                            <div class="entry-desc">"Making Embedded Systems" - White</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Startup Operations</div>
+                            <div class="entry-desc">"The Lean Startup" - Ries</div>
+                            <div class="entry-desc">"Zero to One" - Thiel</div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; DEVELOPMENT TOOLS</div>
+                        <p>• MATLAB/Simulink - Algorithm prototyping</p>
+                        <p>• GNU Radio - SDR development</p>
+                        <p>• Audacity/Reaper - Audio validation</p>
+                        <p>• Oscilloscope/Logic Analyzer - Hardware debug</p>
+                        <p>• Git/GitHub - Version control</p>
+                        <p>• CMake/Make - Build automation</p>
+                    </div>
+
+                    <div class="ascii-art">
+    ═══════════════════════════════════════════════
+         END OF CODEX - CONTINUE LEARNING
+    ═══════════════════════════════════════════════
+                    </div>
+                </div>
+
+                <!-- Page 8: UI Framework for Codebases -->
+                <div class="page" id="page8">
+                    <div class="header">
+                        <div class="title">UI FRAMEWORK</div>
+                        <div class="subtitle">Production-Ready Codebase Documentation</div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; PHILOSOPHY</div>
+                        <p>Great documentation UIs solve three problems simultaneously:</p>
+                        <div class="entry">
+                            <div class="entry-name">1. FINDABILITY</div>
+                            <div class="entry-desc">Users find what they need in &lt;30 seconds</div>
+                            <div class="entry-desc">Search + hierarchy + cross-references</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">2. COMPREHENSION</div>
+                            <div class="entry-desc">Complex systems explained through progressive disclosure</div>
+                            <div class="entry-desc">Visual hierarchy + code examples + diagrams</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">3. ACTIONABILITY</div>
+                            <div class="entry-desc">Users can immediately apply what they learn</div>
+                            <div class="entry-desc">Copy-paste snippets + runnable examples + API playgrounds</div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; THIS CODEX AS CASE STUDY</div>
+                        <div class="ui-preview">
+<span class="code-comment">/* How this codex implements the framework: */</span>
+
+<span style="color: #00ff41;">VISUAL HIERARCHY</span>
+├─ Title (42px) → Immediate context
+├─ Section (32px) → Major topics  
+└─ Entry (28px/20px) → Details
+
+<span style="color: #00ff41;">NAVIGATION PATTERN</span>
+├─ Index (Page 0) → Overview
+├─ Linear Story → Sequential learning
+├─ Keyboard Shortcuts → Power users
+└─ Direct Jump (0-9) → Random access
+
+<span style="color: #00ff41;">AESTHETIC DIRECTION</span>
+└─ Retro CRT → Authenticity + nostalgia
+   ├─ Scanlines + phosphor glow
+   ├─ VT323 monospace font
+   ├─ Green-on-black terminal
+   └─ Custom triforce cursor
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; SELF-DOCUMENTING CODE</div>
+                        <div class="code-example">
+<span class="code-comment">/* ============================================
+   From this codex's source code:
+   Notice how every section has a clear purpose
+   ============================================ */</span>
+
+<span class="code-comment">/* 1. CSS Variables = Design System */</span>
+:root {
+  --crt-green: #00ff41;      <span class="code-comment">/* Primary color */</span>
+  --crt-green-dim: #00aa2a;  <span class="code-comment">/* Secondary */</span>
+  --crt-dark: #001a00;       <span class="code-comment">/* Background */</span>
+  --glow: 0 0 5px...;        <span class="code-comment">/* Reusable effect */</span>
+}
+
+<span class="code-comment">/* 2. Semantic Class Names */</span>
+.section-title    <span class="code-comment">/* Not .big-text */</span>
+.code-example     <span class="code-comment">/* Not .gray-box */</span>
+.warning          <span class="code-comment">/* Not .red-border */</span>
+
+<span class="code-comment">/* 3. Progressive Enhancement */</span>
+.page { display: none; }  <span class="code-comment">/* Hide by default */</span>
+.page.active { display: block; }  <span class="code-comment">/* Show when JS activates */</span>
+
+<span class="code-comment">/* Without JS: &lt;noscript&gt; shows all pages */</span>
+
+<span class="code-comment">/* 4. Accessibility Built-In */</span>
+a:focus { 
+  outline: 2px solid var(--crt-green);
+  outline-offset: 2px;  <span class="code-comment">/* Clear focus indicator */</span>
+}
+
+<span class="code-comment">/* 5. Performance Optimization */</span>
+.animate {
+  transform: translateZ(0);  <span class="code-comment">/* GPU acceleration */</span>
+  will-change: transform;    <span class="code-comment">/* Browser hint */</span>
+}
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; LAYOUT PATTERNS</div>
+                        
+                        <div class="entry">
+                            <div class="entry-name">PATTERN 1: Sidebar Navigation</div>
+                            <div class="entry-desc">Left: Module tree | Center: Code/docs | Right: Metadata</div>
+                            <div class="entry-desc">Best for: Large codebases with deep hierarchy</div>
+                            <div class="entry-desc">Examples: Stripe Docs, React Docs, Vue.js Guide</div>
+                        </div>
+
+                        <div class="entry">
+                            <div class="entry-name">PATTERN 2: Card Grid (Index Page)</div>
+                            <div class="entry-desc">2D grid of modules with preview and stats</div>
+                            <div class="entry-desc">Best for: Medium codebases, overview dashboards</div>
+                            <div class="entry-desc">THIS CODEX USES THIS for the index (page 0)</div>
+                        </div>
+
+                        <div class="entry">
+                            <div class="entry-name">PATTERN 3: Flow Diagram</div>
+                            <div class="entry-desc">Nodes = modules, Edges = dependencies</div>
+                            <div class="entry-desc">Best for: Understanding data flow and architecture</div>
+                            <div class="entry-desc">Examples: Mermaid.js diagrams, D3 force graphs</div>
+                        </div>
+
+                        <div class="entry">
+                            <div class="entry-name">PATTERN 4: Linear Story (THIS CODEX!)</div>
+                            <div class="entry-desc">Sequential pages with keyboard navigation</div>
+                            <div class="entry-desc">Best for: Tutorials, onboarding, guided tours</div>
+                            <div class="entry-desc">Arrow keys + number jump = optimal UX</div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; COLOR SEMANTICS</div>
+                        <div class="code-example">
+<span class="code-comment">// Semantic color system for DSP codebase docs</span>
+
+<span style="color: #00ff41;">PRIMARY (#00ff41)</span>   → Core signals, main data paths
+<span style="color: #00aa2a;">SECONDARY (#00aa2a)</span> → Supporting info, metadata
+<span style="color: #ffaa00;">WARNING (#ffaa00)</span>   → Performance bottlenecks, edge cases
+<span style="color: #ff0066;">ERROR (#ff0066)</span>     → Breaking changes, deprecated APIs
+<span style="color: #00aaff;">LINK (#00aaff)</span>      → Cross-references, dependencies
+<span style="color: #888888;">COMMENT (#888)</span>      → Documentation, explanations
+
+<span class="code-comment">// Example usage in DSP signal flow:</span>
+INPUT (primary) → FILTER (primary) → OUTPUT (primary)
+             ↓
+        PARAMS (secondary)
+        ERRORS (error)
+                        </div>
+                    </div>
+
+                    <div class="warning">
+                        PRODUCTION TIP: Define your color system in CSS variables. One source of truth = consistency.
+                    </div>
+                </div>
+
+                <!-- Page 9: UI Implementation Guide -->
+                <div class="page" id="page9">
+                    <div class="header">
+                        <div class="title">IMPLEMENTATION GUIDE</div>
+                        <div class="subtitle">Production-Ready Code Patterns</div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; COMMENTED CODE TEMPLATE</div>
+                        <div class="code-example">
+<span class="code-comment">/* ============================================
+   DSP MODULE DOCUMENTATION PAGE
+   ============================================
+   Purpose: Document FFT implementation
+   Author: DeMoD Engineering Team
+   Updated: 2025-02-16
+   ============================================ */</span>
+
+&lt;!DOCTYPE html&gt;
+&lt;html lang="en"&gt;
+&lt;head&gt;
+  &lt;meta charset="UTF-8"&gt;
+  <span class="code-comment">&lt;!-- SEO: Helps search/indexing --&gt;</span>
+  &lt;meta name="description" content="FFT API"&gt;
+  
+  <span class="code-comment">&lt;!-- Performance: Preload critical fonts --&gt;</span>
+  &lt;link rel="preload" href="font.woff2"
+        as="font" type="font/woff2"&gt;
+  
+  <span class="code-comment">&lt;!-- Accessibility: Responsive viewport --&gt;</span>
+  &lt;meta name="viewport" 
+        content="width=device-width"&gt;
+&lt;/head&gt;
+
+&lt;style&gt;
+  <span class="code-comment">/* Design System: Single source of truth */</span>
+  :root {
+    --primary: #00ff41;
+    --bg-dark: #001a00;
+    --spacing: 1rem;
+    --radius: 4px;
+  }
+  
+  <span class="code-comment">/* Accessibility: Focus indicators */</span>
+  a:focus, button:focus {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  
+  <span class="code-comment">/* Performance: GPU acceleration */</span>
+  .animate {
+    transform: translateZ(0);
+    will-change: transform;
+  }
+&lt;/style&gt;
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; INTERACTIVE NAVIGATION</div>
+                        <div class="code-example">
+<span class="code-comment">// Keyboard navigation with accessibility</span>
+document.addEventListener('keydown', (e) => {
+  <span class="code-comment">// Prevent default for navigation keys</span>
+  if (['ArrowLeft', 'ArrowRight'].includes(e.key)) {
+    e.preventDefault();
+  }
+  
+  <span class="code-comment">// Navigation state management</span>
+  const current = getCurrentPage();
+  const total = getTotalPages();
+  
+  <span class="code-comment">// Bounds checking prevents errors</span>
+  if (e.key === 'ArrowRight' && current &lt; total) {
+    navigateToPage(current + 1);
+    <span class="code-comment">// Announce to screen readers</span>
+    announcePageChange(current + 1);
+  }
+  
+  <span class="code-comment">// Direct jump with number keys (1-9)</span>
+  if (e.key &gt;= '1' && e.key &lt;= '9') {
+    const page = parseInt(e.key);
+    if (page &lt;= total) {
+      navigateToPage(page);
+    }
+  }
+});
+
+<span class="code-comment">// Accessibility: Screen reader announcements</span>
+function announcePageChange(pageNum) {
+  const live = document.getElementById('aria-live');
+  live.textContent = `Page ${pageNum} of ${total}`;
+}
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; PROGRESSIVE ENHANCEMENT</div>
+                        <div class="code-example">
+<span class="code-comment">/* Core content works without JavaScript */</span>
+&lt;noscript&gt;
+  &lt;style&gt;
+    <span class="code-comment">/* Show all pages when JS disabled */</span>
+    .page { display: block !important; }
+    .nav-hint { display: none; }
+  &lt;/style&gt;
+&lt;/noscript&gt;
+
+<span class="code-comment">// Feature detection before using APIs</span>
+if ('IntersectionObserver' in window) {
+  <span class="code-comment">// Lazy load images as they scroll into view</span>
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          loadImage(entry.target);
+        }
+      });
+    },
+    { rootMargin: '50px' }
+  );
+}
+
+<span class="code-comment">// Graceful degradation for localStorage</span>
+function savePreference(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    <span class="code-comment">// Fall back to in-memory storage</span>
+    window._prefs = window._prefs || {};
+    window._prefs[key] = value;
+  }
+}
+                        </div>
+                    </div>
+
+                    <div class="warning">
+                        CRITICAL: Test with keyboard-only navigation, screen readers (NVDA/JAWS), and JavaScript disabled.
+                    </warning>
+                </div>
+
+                <!-- Page 10: DSP-Specific Documentation -->
+                <div class="page" id="page10">
+                    <div class="header">
+                        <div class="title">DSP DOCUMENTATION</div>
+                        <div class="subtitle">Domain-Specific Patterns for Audio/Signal Processing</div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; DSP MODULE TEMPLATE</div>
+                        <div class="code-example">
+<span class="code-comment">/* ============================================
+   FFT_PROCESSOR.h Documentation
+   ============================================ */</span>
+
+<span style="color: #00ff41;">MODULE: FFTProcessor</span>
+<span style="color: #00aa2a;">Type: Digital Signal Processing</span>
+<span style="color: #00aa2a;">Category: Frequency Analysis</span>
+
+<span style="color: #ffaa00;">PERFORMANCE PROFILE:</span>
+├─ Complexity: O(n log n)
+├─ Memory: 2N complex samples
+├─ Latency: ~0.5ms @ 48kHz, N=1024
+└─ CPU Usage: ~2% (single core)
+
+<span style="color: #00aaff;">DEPENDENCIES:</span>
+├─ libfftw3 (v3.3.10)
+├─ AudioBuffer.h
+└─ WindowFunction.h
+
+<span style="color: #00ff41;">API EXAMPLE:</span>
+FFTProcessor fft(1024);  <span class="code-comment">// 1024-point FFT</span>
+fft.setWindow(HANN);     <span class="code-comment">// Apply Hann window</span>
+fft.process(input, output);
+
+<span style="color: #ff0066;">KNOWN ISSUES:</span>
+└─ #47: Clicks on buffer size change
+   Fix: Use fade-in/out crossfade
+   
+<span style="color: #888888;">SEE ALSO:</span> IFFT, STFT, Spectrogram
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; SIGNAL FLOW VISUALIZATION</div>
+                        <div class="ui-preview">
+<span class="code-comment">/* Visual representation of signal path */</span>
+
+┌──────────────────────────────────────────┐
+│ <span style="color: #00ff41;">INPUT STAGE</span>                         │
+│ ADC → Anti-alias Filter → Gain          │
+└────────────┬─────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────┐
+│ <span style="color: #ffaa00;">PROCESSING CHAIN</span>                    │
+│ FFT → Filter → EQ → Compressor → IFFT   │
+└────────────┬─────────────────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────────┐
+│ <span style="color: #00aaff;">OUTPUT STAGE</span>                        │
+│ Limiter → DAC → Reconstruction Filter   │
+└──────────────────────────────────────────┘
+
+<span class="code-comment">// Interactive: Click any block → view details
+// Hover: Shows sample values in real-time</span>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; PARAMETER DOCUMENTATION</div>
+                        <div class="code-example">
+<span style="color: #00ff41;">PARAMETER: cutoffFrequency</span>
+Type: float
+Range: [20.0, 20000.0] Hz
+Default: 1000.0
+Units: Hertz (Hz)
+
+<span style="color: #00aa2a;">DESCRIPTION:</span>
+Filter cutoff frequency. Frequencies above 
+this point are attenuated by -12dB/octave.
+
+<span style="color: #ffaa00;">INTERACTION:</span>
+└─ Linked to resonance parameter
+   High resonance + low cutoff = instability
+   
+<span style="color: #00ff41;">CODE EXAMPLE:</span>
+filter.setCutoff(440.0f);  <span class="code-comment">// A4 note</span>
+filter.setResonance(0.7f); <span class="code-comment">// Safe range</span>
+
+<span style="color: #ff0066;">VALIDATION:</span>
+if (freq &lt; 20 || freq &gt; nyquist) {
+  throw std::out_of_range("Invalid cutoff");
+}
+                        </div>
+                    </div>
+
+                    <div class="warning">
+                        DSP TIP: Always document sample rate assumptions, buffer sizes, and numerical stability ranges.
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; LIVE INTEGRATION EXAMPLE</div>
+                        <p>This codex includes a <span class="highlight">markdown viewer</span> demonstrating</p>
+                        <p>how to integrate documentation formats side-by-side.</p>
+                        <br>
+                        <p>On desktop (>1200px width):</p>
+                        <div class="entry">
+                            <div class="entry-name">Press M - Toggle viewer panel</div>
+                            <div class="entry-desc">Shows .md files alongside main content</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Shift+F - Load FFT guide</div>
+                            <div class="entry-desc">Comprehensive FFT implementation tutorial</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Shift+L - Load filter design</div>
+                            <div class="entry-desc">Digital filter theory and practice</div>
+                        </div>
+                        <div class="entry">
+                            <div class="entry-name">Drag & Drop - Load your .md</div>
+                            <div class="entry-desc">View any markdown file in CRT style</div>
+                        </div>
+                        <br>
+                        <p>This demonstrates <span style="color: var(--crt-green);">progressive enhancement</span>:</p>
+                        <p>Mobile users get full functionality, desktop users get bonus features.</p>
+                    </div>
+                </div>
+
+                <!-- Page 11: Production Deployment -->
+                <div class="page" id="page11">
+                    <div class="header">
+                        <div class="title">PRODUCTION DEPLOYMENT</div>
+                        <div class="subtitle">Shipping Your Documentation</div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; PRE-LAUNCH CHECKLIST</div>
+                        <div class="code-example">
+<span style="color: #00ff41;">PERFORMANCE</span>
+☑ First Contentful Paint &lt; 1.5s
+☑ Time to Interactive &lt; 3.5s  
+☑ Cumulative Layout Shift &lt; 0.1
+☑ Images optimized (WebP with fallback)
+☑ Fonts subset for used characters
+☑ CSS/JS minified and compressed
+
+<span style="color: #00ff41;">ACCESSIBILITY</span>
+☑ WCAG 2.1 Level AA compliant
+☑ Color contrast ratio &gt;= 4.5:1
+☑ All images have alt text
+☑ Keyboard navigation works
+☑ Screen reader tested (NVDA, JAWS)
+☑ Focus indicators visible
+
+<span style="color: #00ff41;">SEO & DISCOVERY</span>
+☑ Semantic HTML (h1, nav, main, aside)
+☑ Meta descriptions on all pages
+☑ OpenGraph tags for social sharing
+☑ Sitemap.xml generated
+☑ robots.txt configured
+☑ Schema.org markup for code snippets
+
+<span style="color: #00ff41;">RELIABILITY</span>
+☑ Works offline (Service Worker)
+☑ Graceful degradation (no JS)
+☑ Error boundaries implemented
+☑ 404 page exists and is helpful
+☑ Cross-browser tested (Chrome, FF, Safari)
+☑ Mobile responsive (320px+)
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; HOSTING OPTIONS</div>
+                        <div class="entry">
+                            <div class="entry-name">Static Hosting (Recommended)</div>
+                            <div class="entry-desc">Vercel, Netlify, GitHub Pages, Cloudflare Pages</div>
+                            <div class="entry-desc">✓ Free tier available | ✓ Auto SSL | ✓ Global CDN</div>
+                        </div>
+                        
+                        <div class="entry">
+                            <div class="entry-name">Self-Hosted</div>
+                            <div class="entry-desc">Nginx + Let's Encrypt on VPS (DigitalOcean, Linode)</div>
+                            <div class="entry-desc">✓ Full control | ⚠ Requires maintenance</div>
+                        </div>
+
+                        <div class="entry">
+                            <div class="entry-name">Integrated Platforms</div>
+                            <div class="entry-desc">ReadTheDocs, GitBook, Docusaurus Cloud</div>
+                            <div class="entry-desc">✓ Built-in versioning | ✓ Search included</div>
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; CONTINUOUS DEPLOYMENT</div>
+                        <div class="code-example">
+<span class="code-comment"># .github/workflows/deploy-docs.yml</span>
+name: Deploy Documentation
+
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**']  <span class="code-comment"># Only rebuild on doc changes</span>
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      <span class="code-comment"># Build static site</span>
+      - name: Build
+        run: npm run build
+        
+      <span class="code-comment"># Deploy to hosting</span>
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          
+      <span class="code-comment"># Invalidate CDN cache</span>
+      - name: Purge Cache
+        run: curl -X POST ${{ secrets.CDN_PURGE_URL }}
+                        </div>
+                    </div>
+
+                    <div class="section">
+                        <div class="section-title">&gt;&gt; MONITORING & ANALYTICS</div>
+                        <div class="entry">
+                            <div class="entry-name">User Behavior</div>
+                            <div class="entry-desc">Plausible or Fathom (privacy-friendly analytics)</div>
+                            <div class="entry-desc">Track: popular pages, search queries, exit points</div>
+                        </div>
+
+                        <div class="entry">
+                            <div class="entry-name">Performance</div>
+                            <div class="entry-desc">Lighthouse CI, WebPageTest, Chrome UX Report</div>
+                            <div class="entry-desc">Monitor: Core Web Vitals, regression detection</div>
+                        </div>
+
+                        <div class="entry">
+                            <div class="entry-name">Uptime</div>
+                            <div class="entry-desc">UptimeRobot, Pingdom, StatusCake</div>
+                            <div class="entry-desc">Alert: Downtime, broken links, SSL expiry</div>
+                        </div>
+                    </div>
+
+                    <div class="ascii-art">
+    ╔═══════════════════════════════════════════════╗
+    ║  "Documentation is a love letter to your     ║
+    ║   future self and your users"                ║
+    ║                                              ║
+    ║  Ship it. Iterate. Listen to feedback.      ║
+    ╚═══════════════════════════════════════════════╝
+                    </div>
+                </div>
+            </div>
+
+            <!-- ============================================
+                 UI ELEMENTS
+                 Page indicator and navigation hints
+                 ============================================ -->
+            <div class="page-indicator" id="pageIndicator"></div>
+            <div class="nav-hint">I:INDEX | 1-9:JUMP | M:MARKDOWN | ◄►:NAV</div>
+            
+            <!-- Accessibility: Screen reader announcements -->
+            <div id="aria-live" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+        </div>
+    </div>
+    
+    <!-- ============================================
+         MARKDOWN VIEWER PANEL
+         Displays .md files on wide screens
+         Hidden by default, toggle with M key or button
+         ============================================ -->
+    <div class="markdown-viewer" id="markdownViewer">
+        <div class="markdown-screen">
+            <div class="scanlines"></div>
+            <div class="noise"></div>
+            
+            <div class="markdown-content" id="markdownContent">
+                <h1>Markdown Viewer</h1>
+                <p>No markdown file loaded.</p>
+                <p>Drop a .md file here or use the example below.</p>
+                
+                <h2>Example: DSP Algorithm Documentation</h2>
+                <pre><code># FFT Implementation
+
+## Overview
+Fast Fourier Transform implementation using Cooley-Tukey algorithm.
+
+## Parameters
+- **Size**: Must be power of 2 (512, 1024, 2048...)
+- **Window**: Hann, Hamming, or Blackman
+- **Overlap**: 0-75% (50% recommended)
+
+## Usage
+```cpp
+FFT fft(1024);
+fft.setWindow(HANN);
+fft.process(input, output);
+```
+
+## Performance
+- Complexity: O(n log n)
+- Latency: ~0.5ms @ 48kHz
+- Memory: 2N complex samples
+</code></pre>
+            </div>
+        </div>
+    </div>
+</div>
+
+    <style>
+        /* Screen reader only class - visually hidden but accessible */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border-width: 0;
+        }
+
+        /* ============================================
+           MARKDOWN VIEWER
+           Side panel for displaying .md files
+           Displays on right side when screen is wide enough
+           Breakpoint: 1200px (720px monitor + gap + viewer)
+           ============================================ */
+        .markdown-viewer {
+            display: none;  /* Hidden by default */
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            aspect-ratio: 3 / 4;
+            background: var(--crt-darker);
+            border: 25px solid #222;
+            border-radius: 25px;
+            box-shadow: 
+                inset 0 0 100px rgba(0, 0, 0, 0.9),
+                0 0 50px rgba(0, 0, 0, 0.5),
+                0 20px 60px rgba(0, 0, 0, 0.8);
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+
+        /* Show markdown viewer on wide screens (right side) */
+        @media (min-width: 1200px) {
+            .markdown-viewer.active {
+                display: block;
+            }
+        }
+
+        .markdown-screen {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: var(--crt-dark);
+            overflow: hidden;
+        }
+
+        .markdown-content {
+            position: relative;
+            padding: 40px;
+            height: 100%;
+            font-size: 20px;
+            line-height: 1.6;
+            text-shadow: 0 0 8px var(--crt-green);
+            z-index: 1;
+            overflow-y: auto;
+        }
+
+        /* Markdown content styling */
+        .markdown-content h1 {
+            font-size: 32px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid var(--crt-green);
+            padding-bottom: 10px;
+        }
+
+        .markdown-content h2 {
+            font-size: 28px;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            color: var(--crt-green);
+        }
+
+        .markdown-content h3 {
+            font-size: 24px;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            color: var(--crt-green-dim);
+        }
+
+        .markdown-content p {
+            margin-bottom: 15px;
+        }
+
+        .markdown-content ul, .markdown-content ol {
+            margin-left: 30px;
+            margin-bottom: 15px;
+        }
+
+        .markdown-content li {
+            margin-bottom: 8px;
+        }
+
+        .markdown-content code {
+            background: rgba(0, 255, 65, 0.1);
+            padding: 2px 6px;
+            border: 1px solid var(--crt-green-dim);
+            font-family: 'VT323', monospace;
+        }
+
+        .markdown-content pre {
+            background: var(--crt-darker);
+            border-left: 3px solid var(--crt-green);
+            padding: 15px;
+            margin: 15px 0;
+            overflow-x: auto;
+        }
+
+        .markdown-content pre code {
+            background: none;
+            border: none;
+            padding: 0;
+        }
+
+        .markdown-content blockquote {
+            border-left: 3px solid var(--crt-green-dim);
+            padding-left: 20px;
+            margin: 20px 0;
+            color: var(--crt-green-dim);
+        }
+
+        .markdown-content a {
+            color: var(--crt-green);
+            text-decoration: underline;
+        }
+
+        .markdown-content a:hover {
+            text-shadow: var(--glow);
+        }
+
+        .markdown-content::-webkit-scrollbar {
+            width: 12px;
+        }
+
+        .markdown-content::-webkit-scrollbar-track {
+            background: var(--crt-darker);
+        }
+
+        .markdown-content::-webkit-scrollbar-thumb {
+            background: var(--crt-green);
+            box-shadow: var(--glow);
+        }
+
+        /* Markdown viewer header */
+        .markdown-header {
+            position: absolute;
+            top: 20px;
+            left: 40px;
+            right: 40px;
+            font-size: 28px;
+            color: var(--crt-green);
+            text-shadow: var(--glow);
+            z-index: 10;
+            background: var(--crt-dark);
+            padding: 10px 0;
+            border-bottom: 1px solid var(--crt-green-dim);
+        }
+
+        /* Markdown viewer controls */
+        .md-controls {
+            position: fixed;
+            top: 30px;
+            left: 50px;
+            z-index: 10001;
+            display: none;
+        }
+
+        @media (min-width: 1200px) {
+            .md-controls {
+                display: block;
+            }
+        }
+
+        .md-toggle {
+            background: var(--crt-dark);
+            border: 2px solid var(--crt-green);
+            color: var(--crt-green);
+            padding: 10px 20px;
+            font-family: 'VT323', monospace;
+            font-size: 20px;
+            box-shadow: var(--glow);
+            transition: all 0.3s;
+        }
+
+        .md-toggle:hover {
+            background: var(--crt-green);
+            color: var(--crt-dark);
+            box-shadow: 0 0 10px var(--crt-green), 0 0 20px var(--crt-green);
+        }
+
+        .md-toggle:active {
+            transform: translateY(2px);
+        }
+    </style>
+
+    <script>
+        /* ============================================
+           DEMOD'S ASTART CODEX - JAVASCRIPT
+           ============================================
+           Purpose: Navigation and interaction logic
+           Dependencies: None (vanilla JS)
+           Browser Support: ES6+ (Chrome 51+, FF 54+, Safari 10+)
+           ============================================ */
+        
+        /* ============================================
+           CUSTOM CURSOR TRACKING
+           Updates cursor position to follow mouse
+           ============================================ */
+        const cursor = document.querySelector('.cursor');
+        document.addEventListener('mousemove', (e) => {
+            // Update cursor position using clientX/Y for viewport coords
+            cursor.style.left = e.clientX + 'px';
+            cursor.style.top = e.clientY + 'px';
+        });
+
+        /* ============================================
+           STATE MANAGEMENT
+           Track current page and total pages
+           ============================================ */
+        let currentPage = 0;      // 0 = index, 1-11 = content pages
+        const totalPages = 11;    // Update this when adding pages
+        let audioContext = null;  // Web Audio API context
+        let hasBooted = false;    // Track if boot sequence has started
+        
+        /* ============================================
+           DISPLAY ROLLOUT SOUND EFFECTS
+           Simulates CRT display warming up and scanning
+           ============================================ */
+        function playRolloutSounds() {
+            const ctx = audioContext;
+            const now = ctx.currentTime;
+            
+            // SOUND 1: Initial power relay (mechanical click)
+            const relay = ctx.createBufferSource();
+            const relayBuffer = ctx.createBuffer(1, ctx.sampleRate * 0.03, ctx.sampleRate);
+            const relayData = relayBuffer.getChannelData(0);
+            for (let i = 0; i < relayData.length; i++) {
+                relayData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.008));
+            }
+            relay.buffer = relayBuffer;
+            const relayGain = ctx.createGain();
+            relayGain.gain.setValueAtTime(0.4, now);
+            relay.connect(relayGain).connect(ctx.destination);
+            relay.start(now);
+            
+            // SOUND 2: Magnetic deflection coil charging (low sweep)
+            const coil = ctx.createOscillator();
+            const coilGain = ctx.createGain();
+            coil.type = 'sine';
+            coil.frequency.setValueAtTime(30, now + 0.1);
+            coil.frequency.exponentialRampToValueAtTime(120, now + 0.5);
+            coilGain.gain.setValueAtTime(0, now + 0.1);
+            coilGain.gain.linearRampToValueAtTime(0.12, now + 0.2);
+            coilGain.gain.linearRampToValueAtTime(0.08, now + 0.5);
+            coil.connect(coilGain).connect(ctx.destination);
+            coil.start(now + 0.1);
+            coil.stop(now + 0.5);
+            
+            // SOUND 3: Scanning beam (sweeping high frequency)
+            const scan = ctx.createOscillator();
+            const scanGain = ctx.createGain();
+            const scanFilter = ctx.createBiquadFilter();
+            scan.type = 'sawtooth';
+            scan.frequency.setValueAtTime(8000, now + 0.3);
+            scan.frequency.linearRampToValueAtTime(4000, now + 1.0);
+            scanFilter.type = 'bandpass';
+            scanFilter.frequency.setValueAtTime(6000, now + 0.3);
+            scanFilter.Q.setValueAtTime(2, now + 0.3);
+            scanGain.gain.setValueAtTime(0, now + 0.3);
+            scanGain.gain.linearRampToValueAtTime(0.04, now + 0.35);
+            scanGain.gain.linearRampToValueAtTime(0.02, now + 1.0);
+            scan.connect(scanFilter).connect(scanGain).connect(ctx.destination);
+            scan.start(now + 0.3);
+            scan.stop(now + 1.0);
+            
+            // SOUND 4: Phosphor activation (white noise burst)
+            const phosphor = ctx.createBufferSource();
+            const phosphorBuffer = ctx.createBuffer(1, ctx.sampleRate * 0.4, ctx.sampleRate);
+            const phosphorData = phosphorBuffer.getChannelData(0);
+            for (let i = 0; i < phosphorData.length; i++) {
+                phosphorData[i] = (Math.random() * 2 - 1) * 0.3 * Math.exp(-i / (ctx.sampleRate * 0.15));
+            }
+            phosphor.buffer = phosphorBuffer;
+            const phosphorGain = ctx.createGain();
+            const phosphorFilter = ctx.createBiquadFilter();
+            phosphorFilter.type = 'highpass';
+            phosphorFilter.frequency.setValueAtTime(2000, now + 0.5);
+            phosphorGain.gain.setValueAtTime(0.15, now + 0.5);
+            phosphor.connect(phosphorFilter).connect(phosphorGain).connect(ctx.destination);
+            phosphor.start(now + 0.5);
+            
+            // SOUND 5: Stabilization hum (60Hz + harmonics)
+            const hum = ctx.createOscillator();
+            const humGain = ctx.createGain();
+            hum.type = 'sine';
+            hum.frequency.setValueAtTime(60, now + 0.8);
+            humGain.gain.setValueAtTime(0, now + 0.8);
+            humGain.gain.linearRampToValueAtTime(0.06, now + 0.9);
+            humGain.gain.linearRampToValueAtTime(0, now + 1.2);
+            hum.connect(humGain).connect(ctx.destination);
+            hum.start(now + 0.8);
+            hum.stop(now + 1.2);
+        }
+        
+        /* ============================================
+           RETRO CRT POWER-ON SOUND EFFECT
+           Generates authentic CRT startup sound using Web Audio API
+           
+           Sound composition (0.6 seconds total):
+           1. Low frequency sweep (0-0.3s): Simulates magnetic coils energizing
+           2. Click/relay (0.25s): Power relay engaging sound
+           3. Static/hum (0.3-0.6s): CRT stabilizing and warming up
+           4. High frequency charge (0-0.15s): Capacitor charging sound
+           
+           This recreates the classic CRT monitor power-on experience
+           from the 1980s-90s era terminals and monitors.
+           ============================================ */
+        function playBootSound() {
+            const now = audioContext.currentTime;
+            
+            // SOUND 1: Low frequency sweep (CRT warming up)
+            const sweepOsc = audioContext.createOscillator();
+            const sweepGain = audioContext.createGain();
+            
+            sweepOsc.type = 'sine';
+            sweepOsc.frequency.setValueAtTime(40, now);
+            sweepOsc.frequency.exponentialRampToValueAtTime(180, now + 0.3);
+            
+            sweepGain.gain.setValueAtTime(0, now);
+            sweepGain.gain.linearRampToValueAtTime(0.15, now + 0.05);
+            sweepGain.gain.linearRampToValueAtTime(0, now + 0.3);
+            
+            sweepOsc.connect(sweepGain);
+            sweepGain.connect(audioContext.destination);
+            sweepOsc.start(now);
+            sweepOsc.stop(now + 0.3);
+            
+            // SOUND 2: Click/relay sound (power engaging)
+            const clickNoise = audioContext.createBufferSource();
+            const clickBuffer = audioContext.createBuffer(1, audioContext.sampleRate * 0.05, audioContext.sampleRate);
+            const clickData = clickBuffer.getChannelData(0);
+            
+            for (let i = 0; i < clickData.length; i++) {
+                clickData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (audioContext.sampleRate * 0.01));
+            }
+            
+            clickNoise.buffer = clickBuffer;
+            const clickGain = audioContext.createGain();
+            clickGain.gain.setValueAtTime(0.3, now + 0.25);
+            
+            clickNoise.connect(clickGain);
+            clickGain.connect(audioContext.destination);
+            clickNoise.start(now + 0.25);
+            
+            // SOUND 3: Brief static/hum (CRT stabilizing)
+            const staticOsc = audioContext.createOscillator();
+            const staticGain = audioContext.createGain();
+            const staticFilter = audioContext.createBiquadFilter();
+            
+            staticOsc.type = 'sawtooth';
+            staticOsc.frequency.setValueAtTime(120, now + 0.3);
+            
+            staticFilter.type = 'lowpass';
+            staticFilter.frequency.setValueAtTime(800, now + 0.3);
+            
+            staticGain.gain.setValueAtTime(0, now + 0.3);
+            staticGain.gain.linearRampToValueAtTime(0.08, now + 0.35);
+            staticGain.gain.linearRampToValueAtTime(0, now + 0.6);
+            
+            staticOsc.connect(staticFilter);
+            staticFilter.connect(staticGain);
+            staticGain.connect(audioContext.destination);
+            staticOsc.start(now + 0.3);
+            staticOsc.stop(now + 0.6);
+            
+            // SOUND 4: High frequency "charge" sound
+            const chargeOsc = audioContext.createOscillator();
+            const chargeGain = audioContext.createGain();
+            
+            chargeOsc.type = 'sine';
+            chargeOsc.frequency.setValueAtTime(8000, now);
+            chargeOsc.frequency.exponentialRampToValueAtTime(3000, now + 0.15);
+            
+            chargeGain.gain.setValueAtTime(0, now);
+            chargeGain.gain.linearRampToValueAtTime(0.05, now + 0.02);
+            chargeGain.gain.linearRampToValueAtTime(0, now + 0.15);
+            
+            chargeOsc.connect(chargeGain);
+            chargeGain.connect(audioContext.destination);
+            chargeOsc.start(now);
+            chargeOsc.stop(now + 0.15);
+        }
+        
+        /* ============================================
+           CLICK TO START HANDLER
+           Multi-stage boot sequence with animations and sounds
+           
+           Timeline:
+           0.0s   - User clicks/presses key
+           0.0s   - Create audio context
+           0.0s   - Start fade-out of click screen (0.3s duration)
+           0.3s   - Show rollout animation (1.2s duration)
+           0.3s   - Play rollout sounds (scanning, humming, static)
+           1.5s   - Hide rollout, show boot sequence
+           1.5s   - Play power-on sound
+           1.5s   - Screen flash effect
+           5.0s   - Hide boot sequence, show index page
+           
+           Total time from click to codex: ~5 seconds
+           ============================================ */
+        function initiateBoot() {
+            if (hasBooted) return;  // Prevent multiple boots
+            hasBooted = true;
+            
+            // Create audio context (must be after user interaction)
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // STAGE 1: Fade out click-to-start screen (0.3s)
+            const clickScreen = document.getElementById('clickToBoot');
+            clickScreen.classList.add('fade-out');
+            
+            setTimeout(() => {
+                clickScreen.classList.remove('active');
+                clickScreen.style.display = 'none';
+                
+                // STAGE 2: Show rollout animation and play sounds (1.2s)
+                const rollout = document.getElementById('displayRollout');
+                rollout.classList.add('active');
+                playRolloutSounds();
+                
+                // STAGE 3: After rollout, show boot sequence
+                setTimeout(() => {
+                    rollout.classList.remove('active');
+                    
+                    const bootScreen = document.getElementById('boot');
+                    bootScreen.classList.add('active');
+                    
+                    // Play the power-on sound at boot sequence start
+                    playBootSound();
+                    
+                    // Add screen flash effect
+                    const screen = document.querySelector('.screen');
+                    const originalAnimation = screen.style.animation;
+                    screen.style.animation = 'screenFlicker 0.15s infinite, bootFlash 0.5s';
+                    
+                    // Remove boot flash after it completes
+                    setTimeout(() => {
+                        screen.style.animation = originalAnimation;
+                    }, 500);
+                    
+                    // STAGE 4: After boot sequence, show index (3.5s)
+                    setTimeout(() => {
+                        bootScreen.classList.remove('active');
+                        showPage(0);  // Start at index
+                    }, 3500);
+                    
+                }, 1200);  // Rollout animation duration
+                
+            }, 300);  // Fade out duration
+        }
+        
+        // Add click listener to entire content area
+        document.addEventListener('click', function bootClickListener(e) {
+            if (document.getElementById('clickToBoot').classList.contains('active')) {
+                initiateBoot();
+                // Remove listener after boot
+                document.removeEventListener('click', bootClickListener);
+            }
+        });
+        
+        // Also allow Enter/Space to boot
+        document.addEventListener('keydown', function bootKeyListener(e) {
+            if (document.getElementById('clickToBoot').classList.contains('active')) {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    initiateBoot();
+                    // Remove listener after boot
+                    document.removeEventListener('keydown', bootKeyListener);
+                }
+            }
+        });
+
+        /* ============================================
+           PAGE NAVIGATION
+           Core function to switch between pages
+           ============================================ */
+        function showPage(pageNum) {
+            // Bounds checking prevents errors
+            if (pageNum < 0) pageNum = 0;
+            if (pageNum > totalPages) pageNum = totalPages;
+            
+            // Remove active class from all pages
+            document.querySelectorAll('.page').forEach(page => {
+                page.classList.remove('active');
+            });
+            
+            // Activate requested page
+            const page = document.getElementById('page' + pageNum);
+            if (page) {
+                page.classList.add('active');
+                currentPage = pageNum;
+                updatePageIndicator();
+                
+                // Reset scroll position for consistent UX
+                document.querySelector('.content').scrollTop = 0;
+                
+                // Accessibility: Announce page change to screen readers
+                announcePageChange();
+            }
+        }
+
+        /* ============================================
+           ACCESSIBILITY HELPER
+           Announce page changes to screen readers
+           ============================================ */
+        function announcePageChange() {
+            const liveRegion = document.getElementById('aria-live');
+            if (currentPage === 0) {
+                liveRegion.textContent = 'Navigated to Index';
+            } else {
+                liveRegion.textContent = `Navigated to page ${currentPage} of ${totalPages}`;
+            }
+        }
+
+        /* ============================================
+           UI FEEDBACK
+           Update page indicator in top-right corner
+           ============================================ */
+        function updatePageIndicator() {
+            const indicator = document.getElementById('pageIndicator');
+            if (currentPage === 0) {
+                indicator.textContent = 'INDEX';
+            } else {
+                indicator.textContent = `PAGE ${currentPage}/${totalPages}`;
+            }
+        }
+
+        /* ============================================
+           KEYBOARD NAVIGATION
+           Comprehensive keyboard shortcuts for power users
+           ============================================ */
+        document.addEventListener('keydown', (e) => {
+            // Skip boot sequence if it's playing (but not click-to-boot screen)
+            if (document.getElementById('boot').classList.contains('active')) {
+                document.getElementById('boot').classList.remove('active');
+                showPage(0);
+                return;
+            }
+
+            // Skip if modifier keys are pressed (reserved for markdown shortcuts)
+            if (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) {
+                return;
+            }
+
+            // 'M' key toggles markdown viewer (only on wide screens)
+            if ((e.key === 'm' || e.key === 'M') && window.innerWidth >= 1200) {
+                e.preventDefault();
+                toggleMarkdown();
+                return;
+            }
+
+            // Arrow key navigation (sequential)
+            if (e.key === 'ArrowRight') {
+                if (currentPage < totalPages) {
+                    showPage(currentPage + 1);
+                }
+            } else if (e.key === 'ArrowLeft') {
+                if (currentPage > 0) {
+                    showPage(currentPage - 1);
+                }
+            }
+            // Number key navigation (direct jump)
+            // Supports 0-9, maps to pages 0-9
+            else if (e.key >= '0' && e.key <= '9') {
+                const pageNum = parseInt(e.key);
+                if (pageNum <= totalPages) {
+                    showPage(pageNum);
+                }
+            }
+            // 'i' or 'I' for index (mnemonic shortcut)
+            else if (e.key === 'i' || e.key === 'I') {
+                showPage(0);
+            }
+            // Home key goes to index
+            else if (e.key === 'Home') {
+                showPage(0);
+            }
+            // End key goes to last page
+            else if (e.key === 'End') {
+                showPage(totalPages);
+            }
+        });
+
+        /* ============================================
+           INITIALIZATION
+           Run on page load
+           ============================================ */
+        updatePageIndicator();  // Set initial indicator state
+        
+        /* ============================================
+           MARKDOWN VIEWER FUNCTIONALITY
+           Toggle, load, and display markdown files
+           ============================================ */
+        
+        let markdownVisible = false;
+        
+        // Toggle markdown viewer visibility
+        function toggleMarkdown() {
+            const viewer = document.getElementById('markdownViewer');
+            const toggleText = document.getElementById('md-toggle-text');
+            
+            markdownVisible = !markdownVisible;
+            
+            if (markdownVisible) {
+                viewer.classList.add('active');
+                toggleText.textContent = 'M: HIDE MARKDOWN';
+            } else {
+                viewer.classList.remove('active');
+                toggleText.textContent = 'M: SHOW MARKDOWN';
+            }
+        }
+        
+        // Load markdown from text
+        function loadMarkdown(markdownText) {
+            const content = document.getElementById('markdownContent');
+            
+            // Configure marked.js for security
+            marked.setOptions({
+                breaks: true,
+                gfm: true,
+                sanitize: false,  // We trust our own content
+                highlight: null
+            });
+            
+            // Parse and render markdown
+            content.innerHTML = marked.parse(markdownText);
+            
+            // Show the viewer if not already visible
+            if (!markdownVisible && window.innerWidth >= 1200) {
+                toggleMarkdown();
+            }
+        }
+        
+        // Example markdown files for different topics
+        const exampleMarkdown = {
+            fft: `# FFT Implementation Guide
+
+## Overview
+Fast Fourier Transform (FFT) is the cornerstone of frequency-domain signal processing.
+
+## Theory
+The FFT algorithm reduces the complexity of the Discrete Fourier Transform from O(n²) to O(n log n) using the Cooley-Tukey divide-and-conquer approach.
+
+### Mathematical Foundation
+\`\`\`
+X[k] = Σ x[n] * e^(-j2πkn/N)
+\`\`\`
+
+## Implementation Checklist
+- [ ] Power-of-2 buffer sizes
+- [ ] Proper windowing function
+- [ ] Zero-padding for better frequency resolution
+- [ ] Anti-aliasing on input
+- [ ] Overlap-add for continuous processing
+
+## Code Example
+\`\`\`cpp
+class FFTProcessor {
+    fftw_plan plan;
+    double* input;
+    fftw_complex* output;
+    
+public:
+    FFTProcessor(int size) {
+        input = fftw_alloc_real(size);
+        output = fftw_alloc_complex(size/2 + 1);
+        plan = fftw_plan_dft_r2c_1d(size, input, output, FFTW_MEASURE);
+    }
+    
+    void process() {
+        fftw_execute(plan);
+    }
+};
+\`\`\`
+
+## Performance Notes
+- Use FFTW_MEASURE for optimal plan selection
+- Pre-compute window coefficients
+- Consider fixed-point for embedded systems
+- Profile with actual audio loads
+
+## Common Pitfalls
+> ⚠️ **Spectral Leakage**: Always apply a window function to reduce leakage
+> 
+> ⚠️ **Aliasing**: Ensure proper anti-aliasing filters before FFT
+> 
+> ⚠️ **Memory Alignment**: FFTW requires 16-byte aligned buffers for SIMD
+
+## References
+- Cooley & Tukey (1965) - Original FFT paper
+- FFTW3 Documentation
+- Oppenheim & Schafer - Discrete-Time Signal Processing
+`,
+            
+            filters: `# Digital Filter Design
+
+## Types of Filters
+
+### FIR (Finite Impulse Response)
+**Advantages:**
+- Linear phase response
+- Always stable
+- Easy to implement
+
+**Disadvantages:**
+- Higher order required for sharp cutoffs
+- More memory and computation
+
+### IIR (Infinite Impulse Response)
+**Advantages:**
+- Efficient (lower order)
+- Sharp frequency response
+
+**Disadvantages:**
+- Potential instability
+- Nonlinear phase
+
+## Design Process
+
+1. **Specify Requirements**
+   - Passband frequency
+   - Stopband frequency
+   - Ripple tolerance
+   - Sample rate
+
+2. **Choose Filter Type**
+   - Butterworth (maximally flat)
+   - Chebyshev (equiripple)
+   - Elliptic (steepest rolloff)
+
+3. **Calculate Coefficients**
+   \`\`\`python
+   from scipy import signal
+   
+   # Design lowpass filter
+   b, a = signal.butter(4, 1000, 'low', fs=48000)
+   \`\`\`
+
+4. **Validate**
+   - Frequency response
+   - Phase response
+   - Step response
+
+## Implementation
+\`\`\`cpp
+class BiquadFilter {
+    double b0, b1, b2, a1, a2;
+    double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    
+public:
+    double process(double input) {
+        double output = b0*input + b1*x1 + b2*x2 
+                       - a1*y1 - a2*y2;
+        
+        x2 = x1; x1 = input;
+        y2 = y1; y1 = output;
+        
+        return output;
+    }
+};
+\`\`\`
+`,
+            
+            startup: `# DSP Startup Checklist
+
+## Phase 1: Validation (Weeks 1-4)
+
+### Technical Validation
+- [ ] Core algorithm prototyped in MATLAB/Python
+- [ ] Real-time feasibility proven (latency < 10ms)
+- [ ] Hardware requirements defined
+- [ ] Power/thermal constraints validated
+
+### Market Validation
+- [ ] 10+ customer interviews completed
+- [ ] Pricing model tested
+- [ ] Competitive analysis done
+- [ ] Beachhead market identified
+
+## Phase 2: MVP Development (Weeks 5-12)
+
+### Hardware
+- [ ] PCB designed and ordered
+- [ ] Component sourcing confirmed
+- [ ] Power supply designed
+- [ ] Thermal management plan
+
+### Software
+- [ ] Core DSP functions implemented
+- [ ] Real-time OS configured
+- [ ] Hardware abstraction layer
+- [ ] Basic UI/controls
+
+### Testing
+- [ ] Unit tests for all DSP blocks
+- [ ] Integration tests with hardware
+- [ ] Performance profiling
+- [ ] Field testing with beta users
+
+## Phase 3: Legal & IP (Ongoing)
+
+- [ ] Entity formed (LLC/C-Corp)
+- [ ] Provisional patent filed
+- [ ] Trademark registered
+- [ ] Open source license audit
+- [ ] Terms of service drafted
+
+## Phase 4: Go-to-Market (Weeks 13-16)
+
+- [ ] Website/landing page live
+- [ ] Documentation completed
+- [ ] Support channels setup
+- [ ] First 5 paying customers
+- [ ] Feedback loop established
+
+## Resources Required
+
+**Human:**
+- You (founder) - 100%
+- Hardware consultant - 20 hrs
+- Legal counsel - 10 hrs
+
+**Financial:**
+- Prototype hardware: $2-5K
+- Legal/filing fees: $2-3K
+- Software tools: $1K
+- Marketing: $500
+
+**Time:**
+- 16 weeks to first customer
+- 6 months to product-market fit
+- 12 months to scaling
+
+## Success Metrics
+
+- [ ] 20 active beta users
+- [ ] <5% return rate
+- [ ] 80%+ would recommend
+- [ ] $10K+ MRR
+`
+        };
+        
+        // Keyboard shortcuts for loading example markdown files
+        document.addEventListener('keydown', (e) => {
+            // Shift+F/L/S to load example markdown (only on wide screens)
+            if (window.innerWidth >= 1200 && e.shiftKey) {
+                if (e.key === 'F') {
+                    e.preventDefault();
+                    loadMarkdown(exampleMarkdown.fft);
+                } else if (e.key === 'L') {
+                    e.preventDefault();
+                    loadMarkdown(exampleMarkdown.filters);
+                } else if (e.key === 'S') {
+                    e.preventDefault();
+                    loadMarkdown(exampleMarkdown.startup);
+                }
+            }
+        });
+        
+        // File drag and drop support
+        const mdContent = document.getElementById('markdownContent');
+        
+        mdContent.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            mdContent.style.background = 'rgba(0, 255, 65, 0.1)';
+        });
+        
+        mdContent.addEventListener('dragleave', (e) => {
+            mdContent.style.background = '';
+        });
+        
+        mdContent.addEventListener('drop', (e) => {
+            e.preventDefault();
+            mdContent.style.background = '';
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                if (file.name.endsWith('.md')) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        loadMarkdown(event.target.result);
+                    };
+                    reader.readAsText(file);
+                }
+            }
+        });
+    </script>
+</body>
+</html>
