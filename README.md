@@ -5,7 +5,7 @@
 ![logo](Untitled.jpg)
 
 Oligarchy NixOS isn’t some boring distro hack.  
-It’s the **first personal OS in history** to unleash a **self-healing, real-time DSP coprocessor** that obliterates latency with **~0.38–0.58 ms round-trip** — forged straight from the same flake that rules your host. 
+It’s the **first personal OS in history** to unleash a **self-healing, real-time DSP coprocessor** that obliterates latency with **~0.38–2.66 ms round-trip** — forged straight from the same flake that rules your host. 
 
 ![](./assets/framework_rotating.gif) ![](./assets/demod.gif)
 
