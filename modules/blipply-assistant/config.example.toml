@@ -1,0 +1,133 @@
+# Blipply Assistant Configuration
+# Copyright (c) 2026 DeMoD LLC
+# Licensed under the MIT License
+#
+# Copy to ~/.config/blipply-assistant/config.toml and customize
+
+[general]
+# Ollama API endpoint
+ollama_url = "http://127.0.0.1:11434"
+
+# Global hotkey to show/hide assistant
+# Format: Modifier+Modifier+Key
+# Examples: "Super+Shift+A", "Ctrl+Alt+C", "Super+Space"
+hotkey = "Super+Shift+A"
+
+# First run setup completed flag
+first_run_complete = false
+
+# Active profile name
+active_profile = "default"
+
+[audio]
+# Whisper model size: tiny.en, base.en, small.en, medium.en, large
+# Larger = better accuracy, slower processing
+stt_model = "base.en"
+
+# Enable voice activity detection
+vad_enabled = true
+
+# VAD aggressiveness (0-3)
+# 0 = Quality mode (less aggressive, may miss speech)
+# 1 = Low bitrate
+# 2 = Aggressive (recommended)
+# 3 = Very aggressive (may trigger on background noise)
+vad_aggressiveness = 2
+
+# Audio sample rate (Hz)
+# Must be 8000, 16000, 32000, or 48000 for VAD
+sample_rate = 16000
+
+# Enable push-to-talk mode (requires hotkey)
+push_to_talk = false
+
+# Silence duration before ending speech (milliseconds)
+silence_duration_ms = 1000
+
+[pipewire]
+# Input device name or "auto" for default
+input_device = "auto"
+
+# Output device name or "auto" for default
+output_device = "auto"
+
+# Audio buffer size (samples)
+# Lower = less latency, higher CPU usage
+# 480 samples = 30ms at 16kHz
+buffer_size = 480
+
+# Profile: Default
+[profiles.default]
+name = "Blipply Classic"
+model = "llama3.2:3b"
+personality = "helpful"
+avatar_path = "/usr/share/blipply/clippy.gif"
+avatar_size_px = 96
+voice_model = "en_US-lessac-medium"
+tts_speed = 1.0
+tts_enabled = true
+
+# Profile: Technical Expert
+[profiles.technical]
+name = "Technical Expert"
+model = "codellama:7b"
+personality = "technical"
+avatar_path = "/usr/share/blipply/tech.png"
+avatar_size_px = 96
+voice_model = "en_GB-alan-medium"
+tts_speed = 0.95
+tts_enabled = true
+
+# Profile: Sassy Assistant
+[profiles.sassy]
+name = "Sassy Assistant"
+model = "mistral:7b"
+personality = "sassy"
+avatar_path = "/usr/share/blipply/sassy.svg"
+avatar_size_px = 96
+voice_model = "en_US-amy-medium"
+tts_speed = 1.1
+tts_enabled = true
+
+# Profile: Concise Helper
+[profiles.concise]
+name = "Concise Helper"
+model = "llama3.2:3b"
+personality = "concise"
+avatar_path = "/usr/share/blipply/minimal.png"
+avatar_size_px = 64
+voice_model = "en_US-lessac-medium"
+tts_speed = 1.2
+tts_enabled = false
+
+# Custom Profile Example
+# [profiles.my_custom]
+# name = "My Custom Assistant"
+# model = "llama3.2:3b"
+# personality = "helpful"
+# avatar_path = "/home/user/my-avatar.gif"
+# avatar_size_px = 96
+# voice_model = "my_voice"  # Your custom trained voice
+# tts_speed = 1.0
+# tts_enabled = true
+
+# Personality Options:
+# - helpful: Friendly, concise, balanced
+# - sassy: Witty, fun, personality-driven
+# - technical: Detailed, precise, code-focused
+# - concise: Minimal, direct, no fluff
+# - custom: Define your own in the code
+
+# Supported Voice Models:
+# Pre-trained (download via scripts/download-models.sh):
+# - en_US-lessac-medium (American English, male)
+# - en_US-amy-medium (American English, female)
+# - en_GB-alan-medium (British English, male)
+# 
+# Custom: Place your .onnx and .json files in:
+# ~/.local/share/blipply-assistant/models/piper/
+
+# Supported Avatar Formats:
+# - .gif (animated)
+# - .svg (scalable)
+# - .png, .jpg (static)

@@ -1,0 +1,36 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+result
+result-*
+
+# Nix
+.direnv/
+.envrc
+
+# Local config (for testing)
+config.toml
+*.local
+
+# Models (too large for git)
+models/
+*.bin
+*.onnx
+*.onnx.json

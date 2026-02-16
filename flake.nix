@@ -140,6 +140,11 @@
         boot-intro.nixosModules.boot-intro
         boot-intro.nixosModules.boot-intro-tui
         boot-intro.nixosModules.boot-intro-api
+        
+        # Blipply Assistant - AI Voice Assistant (integrated from local source)
+        ./modules/blipply-assistant/flake.nix
+        ./modules/blipply-integration.nix
+        
         # Uncomment when archibaldos input is available:
         # ./modules/archibaldos-dsp-vm.nix
       ];
