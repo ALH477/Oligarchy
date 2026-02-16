@@ -56,7 +56,7 @@
     };
     
     os = lib.mkOption {
-      type = lib.types.enum [ "arch" "debian" "fedora" "kali" "ubuntu" "windows" "macos" ];
+      type = lib.types.enum [ "arch" "debian" "fedora" "kali" "ubuntu" "windows" "macos" "openwrt" ];
       default = "arch";
       description = "Operating system for quickemu defaults.";
     };
@@ -157,6 +157,26 @@
       default = false;
       description = "Enable CPU pinning for the VM.";
     };
+    
+    network = {
+      type = lib.mkOption {
+        type = lib.types.enum [ "nat" "bridge" "host" ];
+        default = "nat";
+        description = "Network type: nat, bridged, or host-only.";
+      };
+      
+      bridge = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Bridge interface for bridged networking (e.g., br0).";
+      };
+      
+      macAddress = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "MAC address for the VM's network interface.";
+      };
+    };
   };
 
   config = let
@@ -218,6 +238,9 @@
           preallocation=${cfg.preallocation}
           ${lib.optionalString cfg.tpm "tpm=on"}
           ${lib.optionalString cfg.secureboot "secureboot=on"}
+          ${lib.optionalString (cfg.network.type == "bridge" && cfg.network.bridge != null) "bridge=${cfg.network.bridge}"}
+          ${lib.optionalString (cfg.network.macAddress != null) "mac=${cfg.network.macAddress}"}
+          ${lib.optionalString (cfg.network.type == "host") "network=host"}
           EOF
           
           cd "$VM_DIR"

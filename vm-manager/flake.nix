@@ -20,6 +20,7 @@
         # Pre-configured VM instances
         coding-sandbox = import ./config/sandbox.nix;
         kali-linux = import ./config/kali.nix;
+        openwrt-router = import ./config/openwrt-router.nix;
       };
 
       packages.${system} = {
