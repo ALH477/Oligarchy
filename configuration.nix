@@ -7,10 +7,10 @@
 
   imports = [
     ./modules/audio.nix
+	./modules/boot-intro.nix
     ./modules/dcf-community-node.nix
     ./modules/dcf-identity.nix
     ./modules/dcf-tray.nix
-    ./modules/security/strict-egress.nix
   ];
 
   options = {
@@ -18,119 +18,36 @@
   };
 
   config = {
-  # ============================================================================
-  # SOPS Secrets Management
-  # ============================================================================
-  sops = {
-    defaultSopsFile = ./secrets/secrets.yaml;
-    defaultSopsFormat = "yaml";
-    age.keyFile = "/etc/sops/age/keys.txt";
-  };
-
   # ──────────────────────────────────────────────────────────────────────────
   # DeMoD Boot Intro
   # ──────────────────────────────────────────────────────────────────────────
   services.boot-intro = {
     enable = true;
 
-    # Source type: generate | database | file
-    # "generate" - FFmpeg generation from audio (default, backward compatible)
-    # "database" - StreamDB video storage
-    # "file" - Pre-rendered video file
-    source = "generate";
-
     # Theme selection — pick your DeMoD palette
     # Options: classic, amber, cyan, magenta, red, white, oligarchy, archibald
     theme = "oligarchy";
 
     # Branding
-    titleText = "Oligarchy";
-    bottomText = "Design ≠ Marketing";
+    titleText = "Initiating Oligarchy";
+    bottomText = "A NixOS distro";
 
     # Optional: Your logo (PNG or animated GIF)
-    logoImage = ./assets/demod-logo.png;
-    logoScale = 0.4;
+     logoImage = ./assets/modretro.png;
+     logoScale = 0.5;
 
     # Audio source — MIDI gets synthesized, audio files normalized
     # soundFile = ./assets/boot-chime.mid;
     # Or use a wav/mp3/flac:
-    soundFile = ./assets/boot-intro.wav;
-    volume = 40;
-
+     soundFile = ./assets/modretro.wav;
+	volume = 40;
     # Optional: Background video (loops behind waveform)
-    # backgroundVideo = ./assets/grid-animation.mp4;
+     backgroundVideo = ./assets/modretro.mp4;
 
     # Visual tuning
     resolution = "2560x1600";  # Match your Framework 16 display
     waveformOpacity = 0.7;
     fadeDuration = 2.0;
-
-    # NEW: GPU acceleration and quality options
-    # Enable NVIDIA GPU encoding (requires nvidia drivers)
-    # enableGpu = true;
-    
-    # Enable AMD GPU encoding (requires AMD VAAPI)
-    # enableAmdGpu = true;
-    
-    # Quality preset: fast | balanced | high | ultra
-    renderQuality = "balanced";
-
-    # Audio detection tuning
-    audioDetection = {
-      maxRetries = 5;
-      retryDelay = 0.2;
-      timeout = 2;
-    };
-
-    # NEW: Optional TUI and API (for future video management)
-    # enableTui = true;
-    # enableApi = true;
-    # apiPort = 8080;
-  };
-
-  # ──────────────────────────────────────────────────────────────────────────
-  # Oligarchy Greeting - The War Room TUI
-  # ──────────────────────────────────────────────────────────────────────────
-  services.oligarchyGreeting = {
-    enable = true;
-    
-    # Show both banner (16:9 visual) and logo (square icon)
-    layout = "adaptive";
-    
-    # Image settings
-    images.banner.enabled = true;
-    images.banner.maxHeight = 20;
-    
-    images.logo.enabled = true;
-    images.logo.maxSize = 15;
-    
-    # Show system info
-    showSystemInfo = true;
-    
-    # Welcome message
-    welcomeMessage = "Welcome to Oligarchy — The War Machine";
-    
-    # Custom links
-    customLinks = [
-      { name = "Documentation"; url = "https://github.com/ALH477/Oligarchy"; }
-      { name = "NixOS Manual"; url = "https://nixos.org/manual/nixos/stable/"; }
-      { name = "Package Search"; url = "https://search.nixos.org/packages"; }
-    ];
-    
-    # Tips
-    tips = [
-      "Press Super+L to lock screen (hyprlock)"
-      "Use 'sudo nixos-rebuild switch --flake .' to update system"
-      "Run 'nix-collect-garbage -d' to clean old generations"
-      "Use 'theme-switcher.sh' to change color palette"
-    ];
-    
-    # TUI settings
-    tui = {
-      enable = true;
-      showLauncher = true;
-      launchCommand = "hyprctl dispatch exec kitty";
-    };
   };
 
 
@@ -140,19 +57,20 @@
 
     # Community Node - Set your actual node ID
     custom.dcfCommunityNode = {
-      enable = true;
+      enable = false;
       nodeId = "alh477";  # Your actual node ID
       openFirewall = true;
     };
-    # Identity Service - Enable for production (requires secrets to be set up via sops-nix)
+    # Identity Service - Enable for production
     custom.dcfIdentity = {
       enable = false;
       domain = "dcf.demod.ltd";
       port = 4000;
       dataDir = "/var/lib/demod-identity";
+      secretsFile = "/etc/nixos/secrets/dcf-id.env";
     };
-    # System Tray Controller (disable if DCF is disabled)
-    services.dcf-tray.enable = lib.mkIf config.custom.dcfIdentity.enable true;
+    # System Tray Controller
+    services.dcf-tray.enable = false;
 
     # ──────────────────────────────────────────────────────────────────────────
     # Local AI Stack (Ollama)
@@ -177,54 +95,6 @@
         { source = "github:openclaw/peekaboo"; }
       ];
     };
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Blipply AI Voice Assistant (integrated with OpenClaw)
-    # Disabled for now - needs fixing
-    # config.oligarchy.blipply = {
-    #   enable = true;
-    #   
-    #   # Use OpenClaw gateway for AI (with plugin context)
-    #   ai = {
-    #     model = "llama3.2:3b";  # Can use any model loaded in ai-stack
-    #   };
-    #   
-    #   # Inherit Oligarchy DeMoD theming
-    #   theme = {
-    #     inheritPalette = true;
-    #     avatar = "./assets/blipply-avatar.gif";
-    #     avatarSize = 96;
-    #   };
-    #   
-    #   # Voice settings
-    #   voice = {
-    #     model = "en_US-lessac-medium";
-    #     ttsSpeed = 1.0;
-    #     ttsEnabled = true;
-    #     vadEnabled = true;
-    #   };
-    #   
-    #   # Hotkeys integrated with Oligarchy system
-    #   hotkeys = {
-    #     toggle = "Super+Shift+A";
-    #     pushToTalk = null;  # Set to "Super+Shift+M" for PTT mode
-    #   };
-    #   
-    #   # Default profile
-    #   profiles = {
-    #     active = "default";
-    #     default = {
-    #       name = "Blipply";
-    #       personality = "helpful";
-    #     };
-    #   };
-    #   
-    #   # Context awareness (off by default for privacy)
-    #   context = {
-    #     awareness = false;
-    #     audioDucking = true;  # Lower other audio when speaking
-    #   };
-    # };
 
     # ──────────────────────────────────────────────────────────────────────────
     # Audio Configuration — Pure PipeWire (no X11-based audio remnants)
@@ -307,6 +177,9 @@
     };
     hardware.steam-hardware.enable = lib.mkIf config.custom.steam.enable true;
     programs.gamemode.enable = lib.mkIf config.custom.steam.enable true;
+    
+    # Use mkForce to resolve SSH askPassword conflicts (prefer KDE solution)
+    programs.ssh.askPassword = lib.mkForce "${pkgs.kdePackages.ksshaskpass}/bin/ksshaskpass";
 
     # ──────────────────────────────────────────────────────────────────────────
     # Boot Configuration
@@ -351,14 +224,162 @@
     # ──────────────────────────────────────────────────────────────────────────
     # Display & Desktop Environment
     # ──────────────────────────────────────────────────────────────────────────
-    services.xserver.enable = false;
+    services.xserver = {
+      enable = true;  # Enable X11 for IceWM backup system
+      
+      # Keyboard configuration (matches Wayland setup)
+      xkb = {
+        layout = "us";
+        variant = "";
+        options = "caps:escape";
+      };
+      
+      # Exclude unnecessary X11 packages
+      excludePackages = [ pkgs.xterm ];
+      
+      # Window managers
+      windowManager.icewm.enable = true;
+    };
 
+    # IceWM custom configuration
+    environment.etc."icewm/preferences".text = ''
+      # IceWM Configuration for Backup System
+      # Optimized for minimal resource usage and stability
+      
+      # Focus and Behavior
+      ClickToFocus=1
+      FocusOnAppRaise=1
+      RequestFocusOnAppRaise=1
+      RaiseOnFocus=0
+      RaiseOnClickClient=1
+      PassFirstClickToClient=1
+      
+      # Task Bar
+      ShowTaskBar=1
+      TaskBarAtTop=0
+      TaskBarKeepBelow=0
+      TaskBarAutoHide=0
+      TaskBarShowClock=1
+      TaskBarShowAPMStatus=0
+      TaskBarShowCPUStatus=1
+      TaskBarShowMemStatus=1
+      TaskBarShowNetStatus=1
+      
+      # Menu
+      MenuMouseTracking=1
+      ShowProgramsMenu=1
+      ShowSettingsMenu=1
+      ShowHelpMenu=1
+      ShowRunMenu=1
+      ShowLogoutMenu=1
+      ShowLogoutSubMenu=1
+      
+      # Window Behavior
+      SmartWindowPlacement=1
+      AutoWindowArrange=1
+      HideTitleBarWhenMaximized=0
+      MenuMaximizedWidth=640
+      Opacity=100
+      
+      # Performance
+      GrabServerToAvoidRace=1
+      DelayedFocusChange=1
+      DelayedWindowMove=1
+      
+      # Workspaces
+      WorkspaceNames=" 1 ", " 2 ", " 3 ", " 4 "
+      LimitToWorkarea=1
+      
+      # Fonts
+      TitleBarFontName="-*-sans-medium-r-*-*-12-*-*-*-*-*-*-*"
+      MenuFontName="-*-sans-medium-r-*-*-12-*-*-*-*-*-*-*"
+      StatusFontName="-*-sans-medium-r-*-*-12-*-*-*-*-*-*-*"
+      QuickSwitchFontName="-*-sans-medium-r-*-*-12-*-*-*-*-*-*-*"
+      NormalButtonFontName="-*-sans-medium-r-*-*-12-*-*-*-*-*-*-*"
+      ActiveButtonFontName="-*-sans-bold-r-*-*-12-*-*-*-*-*-*-*"
+      NormalTaskBarFontName="-*-sans-medium-r-*-*-12-*-*-*-*-*-*-*"
+      ActiveTaskBarFontName="-*-sans-bold-r-*-*-12-*-*-*-*-*-*-*"
+      MinimizedWindowFontName="-*-sans-medium-r-*-*-12-*-*-*-*-*-*-*"
+      ListBoxFontName="-*-sans-medium-r-*-*-12-*-*-*-*-*-*-*"
+      ToolTipFontName="-*-sans-medium-r-*-*-10-*-*-*-*-*-*-*"
+      ClockFontName="-*-sans-bold-r-*-*-12-*-*-*-*-*-*-*"
+      ApmFontName="-*-sans-medium-r-*-*-12-*-*-*-*-*-*-*"
+      InputFontName="-*-monospace-medium-r-*-*-12-*-*-*-*-*-*-*"
+      LabelFontName="-*-sans-bold-r-*-*-12-*-*-*-*-*-*-*"
+      
+      # Colors (fallback if theme doesn't provide)
+      ColorNormalTitleBar="rgb:40/40/40"
+      ColorActiveTitleBar="rgb:00/40/80"
+      ColorNormalBorder="rgb:60/60/60"
+      ColorActiveBorder="rgb:00/80/FF"
+      
+      # Paths
+      DesktopBackgroundCenter=1
+      DesktopBackgroundColor="rgb:20/20/20"
+      DesktopBackgroundImage=""
+      
+      # Auto-restart if crashed (important for backup system)
+      RestartOnFailure=1
+    '';
+
+    environment.etc."icewm/menu".text = ''
+      # IceWM Menu Configuration
+      # Basic applications menu for backup system
+      
+      prog Terminal terminal "/run/current-system/sw/bin/kitty"
+      prog File Manager folder "/run/current-system/sw/bin/thunar"
+      prog Web Browser browser "/run/current-system/sw/bin/firefox"
+      prog Text Editor editor "/run/current-system/sw/bin/kate"
+      prog System Monitor monitor "/run/current-system/sw/bin/htop"
+      
+      separator
+      menu System {
+        prog "Audio Settings" settings "/run/current-system/sw/bin/easyeffects"
+        prog "Display Settings" display "/run/current-system/sw/bin/systemsettings5"
+        prog "Network Settings" network "/run/current-system/sw/bin/nm-connection-editor"
+        separator
+        prog "NixOS Config" terminal "kitty -e sudo nano /etc/nixos/configuration.nix"
+        prog "Rebuild System" terminal "kitty -e sudo nixos-rebuild switch"
+        separator
+        prog "Logout" logout "icewm-session --logout"
+        prog "Reboot" reboot "systemctl reboot"
+        prog "Shutdown" shutdown "systemctl poweroff"
+      }
+      
+      separator
+      menu Development {
+        prog "Vim" terminal "kitty -e vim"
+        prog "Git" terminal "kitty -e git"
+        prog "Python" terminal "kitty -e python3"
+      }
+      
+      separator
+      menu Multimedia {
+        prog "VLC" vlc "/run/current-system/sw/bin/vlc"
+        prog "Audacity" audacity "/run/current-system/sw/bin/audacity"
+        prog "OBS Studio" obs "/run/current-system/sw/bin/obs"
+      }
+      
+      separator
+      menu Graphics {
+        prog "GIMP" gimp "/run/current-system/sw/bin/gimp"
+        prog "Inkscape" inkscape "/run/current-system/sw/bin/inkscape"
+        prog "Blender" blender "/run/current-system/sw/bin/blender"
+      }
+      
+      separator
+      menu Games {
+        prog "Steam" steam "/run/current-system/sw/bin/steam"
+        prog "Doom 3" dhewm3 "/run/current-system/sw/bin/dhewm3"
+      }
+    '';
+ 
     services.displayManager = {
       sddm = {
         enable = true;
         wayland.enable = true;
       };
-      defaultSession = "plasma";
+      defaultSession = "plasma";  # Keep Plasma (Wayland) as default
     };
 
     services.desktopManager.plasma6.enable = true;
@@ -604,6 +625,8 @@
         sddm = { enableGnomeKeyring = true; };
         hyprlock = { fprintAuth = true; enableGnomeKeyring = true; };
       };
+      
+
 
       pam.loginLimits = [
         { domain = "@audio"; type = "-"; item = "rtprio"; value = "99"; }
@@ -707,8 +730,6 @@
       vim docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress
       dmidecode util-linux gparted usbutils
 
-      st  # Suckless terminal - lightweight terminal emulator
-
       (python3.withPackages (ps: with ps; [
         pip virtualenv cryptography pycryptodome grpcio grpcio-tools
         protobuf numpy matplotlib python-snappy tkinter
@@ -730,16 +751,15 @@
 
       inputs.minecraft.packages.${pkgs.stdenv.hostPlatform.system}.default
 
-      (brave.override { commandLineArgs = "--password-store=gnome-libsecret"; })
       vlc pandoc kdePackages.okular floorp-bin thunderbird
-      kdePackages.xdg-desktop-portal-kde
+      kdePackages.xdg-desktop-portal-kde brave vscode
 
       blueberry legcord font-awesome fastfetch gnugrep kitty wofi waybar
       hyprpaper brightnessctl zip unzip obsidian
 
       gimp kdePackages.kdenlive inkscape blender libreoffice krita synfigstudio
 
-      thunar thunar-volman gvfs udiskie polkit_gnome framework-tool
+      gvfs udiskie polkit_gnome framework-tool blucontrol 
 
       wl-clipboard grim slurp v4l-utils cliphist hyprpicker wlogout playerctl jq
       hyprlock hypridle libnotify swappy hyprshot satty kdePackages.spectacle
@@ -747,11 +767,20 @@
 
       mininet
 
+	rtl-sdr gnuradio gqrx soapysdr cubicsdr
+	
+	qjackctl adlplug chuck csound
+
+	ghc 
+
       ollama opencode open-webui alpaca aichat aider-chat
 
-      (perl.withPackages (ps: with ps; [
-        JSON GetoptLong CursesUI ModulePluggable Appcpanminus
-      ]))
+      # IceWM backup system
+      icewm
+
+      #(perl.withPackages (ps: with ps; [
+      #  JSON GetoptLong CursesUI ModulePluggable Appcpanminus
+      #]))
 
       # sbcl.withPackages (ps: with ps; [
       #   cffi cl-ppcre cl-json cl-csv usocket bordeaux-threads log4cl
@@ -767,13 +796,16 @@
     ];
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Environment (pure Wayland)
+    # Environment (Wayland-optimized variables)
     # ──────────────────────────────────────────────────────────────────────────
     environment.sessionVariables = {
-      QT_QPA_PLATFORM = "wayland";
-      NIXOS_OZONE_WL = "1";
+      # Core variables that work in both environments
       OBS_USE_EGL = "1";
       QT_QPA_PLATFORMTHEME = "kde";
+      
+      # Wayland-specific variables (will be overridden by session scripts)
+      QT_QPA_PLATFORM = "wayland";
+      NIXOS_OZONE_WL = "1";
       GDK_BACKEND = "wayland";
       SDL_VIDEODRIVER = "wayland";
       CLUTTER_BACKEND = "wayland";
