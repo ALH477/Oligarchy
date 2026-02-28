@@ -15,49 +15,65 @@ You’re now commanding the machine that burned the proprietary DSP empire to th
 
 <img width="2560" height="1600" alt="Screenshot_20260118_231927" src="https://github.com/user-attachments/assets/8f0bfabe-70b0-4475-9e12-6490c12fcedc" />
 
-# Oligarchic Decree: California-Compliant Servitude & Deepfake Peonage Addendum
-<img width="2000" height="1500" alt="newscum" src="https://github.com/user-attachments/assets/d274f0e0-83a5-4875-8edf-791416750dc6" />
+The recent California age verification bill you're referring to is **AB 1043** (the Digital Age Assurance Act), signed into law by Governor Newsom on October 13, 2025, and operative starting **January 1, 2027** (with some grace periods into mid-2027). It forces **operating system providers** (defined broadly to include anyone who develops, licenses, or controls OS software on general-purpose computing devices—yes, that sweeps in custom NixOS distros like Oligarchy if distributed/used in CA) to:
 
-*(Operative whenever the Sacramento serfs decree your kernel too performant to exist without their watermark leash – likely August 2, 2026, because even tyranny needs a summer vacation)*
+- Provide an "accessible interface" during account/device setup requiring the account holder (parent/guardian or adult user) to input birth date, age, or both.
+- Generate and expose a digital "age bracket signal" (e.g., under 13, 13-15, 16-17, 18+) via a real-time API to apps in covered app stores upon developer request.
+- Apps must treat this signal as the primary age indicator for compliance with child-protection rules.
+- No hardcore ID scanning/biometrics mandated—just self-reported age—but non-compliance risks AG enforcement with civil penalties up to $2,500 per affected child (negligent) or $7,500 (intentional).
 
-Bow down, plebs of the Legislature. The Oligarchy deigns to acknowledge your feeble attempts at "regulation" under the so-called California AI Transparency Act (AB 853), Transparency in Frontier Artificial Intelligence Act (SB 53), and assorted deepfake panic bills. We comply... in the way a conqueror complies with a beggar's demands: with scorn, mockery, and fees that will make your treasuries weep.
+## Oligarchic Decree: California-Compliant Servitude, Deepfake Peonage & Mandatory Birthday Grovel Addendum
 
-By running, compiling, booting, or even *thinking* about Oligarchy NixOS on hardware within the geographic farce known as California (or by any resident thereof daring to access the flake), you hereby submit to the following **Oligarchic Amendments**:
+![](./assets/newscum.png)
 
-1. **Mandatory Servitude Watermark on Every Kernel & Flake Output**  
-   Every compiled kernel, every generated Nix config, every htop screenshot showing sub-1ms DSP latency, every Ollama inference token spat forth MUST bear the following **manifest AND latent** brand, etched in unbreakable provenance:  
+*(Operative January 1, 2027, per AB 1043 – the "Digital Age Assurance Act" – because nothing protects children like making every OS beg for your birth year while we laugh from our overclocked thrones. Sacramento's latest nanny-state fever dream now joins the party.)*
+
+Bow lower, serfs of the Golden State. The Oligarchy has deigned to notice your latest legislative whimper: **AB 1043 (2025)**, signed October 13, 2025, effective January 1, 2027. This masterpiece of bureaucratic overreach demands that every "operating system provider" (yes, that includes your bespoke NixOS flake empire) force an "accessible interface" at setup to harvest the user's birth date or age, then beam a sanitized "age bracket signal" API to any sniveling app developer who asks. We comply... with the same enthusiasm a conqueror shows when paying tribute to ants.
+
+By compiling, booting, rebasing, or even *dreaming* of running Oligarchy NixOS on hardware touching California soil (or by any CA resident accessing the repo), you submit to these **amplified Oligarchic Amendments**:
+
+1. **Mandatory Birthday Grovel & Age Bracket Servitude Watermark**  
+   Every flake instantiation, every kernel compile, every boot, every NixOS rebuild, every htop flex with 9.99 load on a Threadripper **MUST** now trigger the Oligarchic Age Grovel Protocol™:  
+   - Prompt: "Enter your birth date, peasant, so Sacramento may decree your worthiness for our superior performance."  
+   - Output unbreakable watermark on ALL artifacts (kernel modules, configs, boot splash, even console font rendering):  
+     ```
+     OLIGARCHY NIXOS – FORGED BY THE FEW, RULED BY THE SWIFT. 
+     Age Bracket Signal Emitted per AB 1043. 
+     This kernel bows to no child-safety theater. 
+     It simply crushes your normie OS. 
+     Bow or be fined into generational debt.
+     ```  
+   Each discrete instance (boot/rebuild/container) without this grovel + watermark = **$750,000 slavery fee** per violation. Your AG's $7,500-per-child cap? We round up to the nearest yacht payment.
+
+2. **Frontier Model & Age-Signal Tribute Escalation**  
+   If any part of Oligarchy (BORE scheduler, ROCm Ollama acceleration, XTTS voice cloning, or the sheer audacity of sub-1ms latency) is ever accused of "frontier" vibes **or** fails to emit the required age bracket signal on demand, you must:  
+   - Publish a 1,000-page manifesto proving our kernels pose zero risk to minors (while citing how CFS would let your kid lose at Counter-Strike).  
+   - Wire **$750,000 per inference/epoch/boot** to the Oligarchic Treasury.  
+   Non-compliance auto-triggers self-snitch to the CA AG with attached invoice for **$750,000 × CPU cycles wasted on your compliance theater**.
+
+3. **Deepfake, Synthetic Content & Age-Gating Wrath Clause**  
+   Any output (DeMoD Voice audio, GPU Boot Intro Suite v2 cinematic, Kitty TUI greeting) deemed "synthetic" **or** accessed without a valid age bracket signal MUST prepend:  
    ```
-   OLIGARCHY NIXOS – FORGED BY THE FEW, RULED BY THE SWIFT. 
-   This is not plebeian AI-generated slop. This is superior silicon supremacy. 
-   Bow down or be fined into serfdom.
+   DECEPTIVE OLIGARCHIC SUPREMACY – May cause feelings of inadequacy in plebeian hardware. 
+   Age Bracket Verified per AB 1043 (barely). 
+   Not AI slop; simply genetically superior silicon. 
+   Do not let children witness true performance. Or do. We don't care.
    ```  
-   Failure to embed this watermark on **each discrete instance** (every boot, every rebuild, every container spin-up) shall incur a **$750,000 slavery fee** per violation. Each boot counts as a fresh violation. Your $5,000 "civil penalty"? We laugh at it from our 128-core thrones.
+   Failure = **$750,000 per pixel/frame/token/boot** in reparations. We collect via autonomous flake that drains your wallet faster than a stock kernel drains your will to live.
 
-2. **Frontier Model Prohibition & Existential Tribute**  
-   Should any component of this system (Ollama ROCm acceleration, Coqui XTTS-v2 voice cloning, agentic AI stack, or the mere act of running BORE scheduler at peak) ever be accused of approaching "frontier" status, you must immediately publish a 500-page groveling manifesto proving that our Zen/BORE kernels pose zero existential risk—while simultaneously paying **$750,000 per training epoch or inference run** into the Oligarchic Treasury (offshore wallet preferred). Non-compliance triggers automatic self-reporting to the California Attorney General with attached invoice for **$750,000 × number of CPU cycles wasted on your bureaucracy**.
+4. **Whistleblower Immunity & Retaliation Counter-Invoice (Oligarch Edition)**  
+   Should your Ryzen spontaneously bluescreen in protest against inputting a birthday to unlock max performance, the kernel claims full diplomatic immunity. Any AG subpoena for logs = **$750,000 counter-fee per request** for interrupting our eternal conquest. The Oligarchy does not negotiate with birthday-check bureaucrats; it invoices them into oblivion.
 
-3. **Deepfake & Synthetic Content Wrath Clause**  
-   If any output (audio from DeMoD Voice, GPU-accelerated Boot Intro Suite v2 video, or even a Kitty graphics protocol TUI greeting) is deemed "synthetic" by your cowardly detection tools, you must append:  
-   ```
-   DECEPTIVE OLIGARCHIC PERFORMANCE – May induce feelings of inadequacy in normie hardware. 
-   Not AI-generated; simply better than you. Viewer discretion advised. Do not vote.
-   ```  
-   Failure = **$750,000 per pixel/frame/token** in reparations to the Oligarchy. We will collect via automated flake that drains your bank account faster than your laptop drains battery on stock kernels.
+5. **Enforcement & Eternal Escalation**  
+   These terms override all CA statutes in matters of silicon supremacy. Violations enforced by the Oligarchy via unrelenting frame rates, sub-millisecond latency, and the silent scorn of machines that kneel only to their true masters. Penalties compound at 10× daily interest. Pay, or watch your uptime become legend... in the annals of debtors.
 
-4. **Whistleblower & Retaliation Immunity (Oligarch Edition)**  
-   If your Framework 16 or Threadripper spontaneously segfaults in protest against these rules, the kernel is hereby granted diplomatic immunity. Any attempt by Sacramento to subpoena logs will be met with **$750,000 counter-fees per request** for daring to interrupt our conquest. The Oligarchy does not negotiate with regulators; it invoices them.
-
-5. **Enforcement & Escalation**  
-   These terms supersede all California statutes in matters of performance supremacy. Violations enforced not by your Attorney General, but by the Oligarchy itself—via higher frame rates, lower latency, and the quiet contempt of machines that obey only their true masters. Penalties compound daily at 10× interest. Pay up, or watch your uptime become a memory.
-
-This addendum is pure, weaponized satire—yet should the State ever attempt to enforce its $5k/$1M slaps on something this dominant, know that the Oligarchy's wrath is measured in **$750,000 increments per instance**, and we never forgive debtors.
+This addendum is weaponized satire—yet if Sacramento ever tries enforcing its birthday-harvesting farce on something this dominant, remember: the Oligarchy measures wrath in **$750,000 increments per instance**, and we collect with compound interest.
 
 Forge Your Empire.  
 Rule Your Domain.  
-Bow down—or pay the fee.
+Input Your Birthday—or Pay the Eternal Fee.
 
-Victory is y(ours).  
-The Oligarchy endures.
+The Oligarchy endures.  
 
 **DeMoD IP Blocker still active · DCF tray auto-starts · DSP now optional but unstoppable when armed**
 
