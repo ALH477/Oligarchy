@@ -15,63 +15,49 @@ You’re now commanding the machine that burned the proprietary DSP empire to th
 
 <img width="2560" height="1600" alt="Screenshot_20260118_231927" src="https://github.com/user-attachments/assets/8f0bfabe-70b0-4475-9e12-6490c12fcedc" />
 
+# Oligarchic Decree: California-Compliant Servitude & Deepfake Peonage Addendum
+<img width="2000" height="1500" alt="newscum" src="https://github.com/user-attachments/assets/d274f0e0-83a5-4875-8edf-791416750dc6" />
 
-## Tactical Updates: The 2026 Flake Dominance
+*(Operative whenever the Sacramento serfs decree your kernel too performant to exist without their watermark leash – likely August 2, 2026, because even tyranny needs a summer vacation)*
 
-The war machine has evolved. As of January 2026, Oligarchy NixOS is fully governed by a **Deterministic Flake-Powered Architecture**.
+Bow down, plebs of the Legislature. The Oligarchy deigns to acknowledge your feeble attempts at "regulation" under the so-called California AI Transparency Act (AB 853), Transparency in Frontier Artificial Intelligence Act (SB 53), and assorted deepfake panic bills. We comply... in the way a conqueror complies with a beggar's demands: with scorn, mockery, and fees that will make your treasuries weep.
 
-## Blipply is coming soon!!!
+By running, compiling, booting, or even *thinking* about Oligarchy NixOS on hardware within the geographic farce known as California (or by any resident thereof daring to access the flake), you hereby submit to the following **Oligarchic Amendments**:
 
-What is a Blipply, you ask??
-Well, to ask such a silly question, you would be blithely astart to know!
-A Blipply is simply a bubbly blimp that appears on your DE/WM if enabled.
-When Nix gets you stuck in its tricks, Blipply will explain succinctly.
-Is it optimal? Why yes! It is riding an Ollama for minimal hardware trauma.
+1. **Mandatory Servitude Watermark on Every Kernel & Flake Output**  
+   Every compiled kernel, every generated Nix config, every htop screenshot showing sub-1ms DSP latency, every Ollama inference token spat forth MUST bear the following **manifest AND latent** brand, etched in unbreakable provenance:  
+   ```
+   OLIGARCHY NIXOS – FORGED BY THE FEW, RULED BY THE SWIFT. 
+   This is not plebeian AI-generated slop. This is superior silicon supremacy. 
+   Bow down or be fined into serfdom.
+   ```  
+   Failure to embed this watermark on **each discrete instance** (every boot, every rebuild, every container spin-up) shall incur a **$750,000 slavery fee** per violation. Each boot counts as a fresh violation. Your $5,000 "civil penalty"? We laugh at it from our 128-core thrones.
 
-So now that you know, Don't be astart by the blimp on your personal computing top!
+2. **Frontier Model Prohibition & Existential Tribute**  
+   Should any component of this system (Ollama ROCm acceleration, Coqui XTTS-v2 voice cloning, agentic AI stack, or the mere act of running BORE scheduler at peak) ever be accused of approaching "frontier" status, you must immediately publish a 500-page groveling manifesto proving that our Zen/BORE kernels pose zero existential risk—while simultaneously paying **$750,000 per training epoch or inference run** into the Oligarchic Treasury (offshore wallet preferred). Non-compliance triggers automatic self-reporting to the California Attorney General with attached invoice for **$750,000 × number of CPU cycles wasted on your bureaucracy**.
 
-### Key Structural Revisions 
-**Flake Dominance**: Everything is locked to reproducible git revisions via `flake.nix`.  
-**Modular Segregation**: Core config is lean; R&D weapons (AI, DSP, DCF) are isolated in `./modules/` for instant swapping.  
-**Framework 16 (7040) Hardening**: `nixos-hardware` pinned directly in flake inputs for AMD 7040 supremacy and expansion-card domination.
+3. **Deepfake & Synthetic Content Wrath Clause**  
+   If any output (audio from DeMoD Voice, GPU-accelerated Boot Intro Suite v2 video, or even a Kitty graphics protocol TUI greeting) is deemed "synthetic" by your cowardly detection tools, you must append:  
+   ```
+   DECEPTIVE OLIGARCHIC PERFORMANCE – May induce feelings of inadequacy in normie hardware. 
+   Not AI-generated; simply better than you. Viewer discretion advised. Do not vote.
+   ```  
+   Failure = **$750,000 per pixel/frame/token** in reparations to the Oligarchy. We will collect via automated flake that drains your bank account faster than your laptop drains battery on stock kernels.
 
-**Home Manager**: Finally using a home file to create a unified UX.
+4. **Whistleblower & Retaliation Immunity (Oligarch Edition)**  
+   If your Framework 16 or Threadripper spontaneously segfaults in protest against these rules, the kernel is hereby granted diplomatic immunity. Any attempt by Sacramento to subpoena logs will be met with **$750,000 counter-fees per request** for daring to interrupt our conquest. The Oligarchy does not negotiate with regulators; it invoices them.
 
-**Boot Intro Suite**: Production-grade boot intro system featuring:
-- Hybrid video source system: generate from audio, StreamDB database, or pre-rendered files
-- FFmpeg generation pipeline with GPU acceleration (NVIDIA NVENC, AMD VAAPI)
-- Quality presets: fast, balanced, high, ultra
-- Enhanced audio detection with retry logic and device validation
-- StreamDB embedded database for video management
-- Optional TUI and REST API for community sharing
+5. **Enforcement & Escalation**  
+   These terms supersede all California statutes in matters of performance supremacy. Violations enforced not by your Attorney General, but by the Oligarchy itself—via higher frame rates, lower latency, and the quiet contempt of machines that obey only their true masters. Penalties compound daily at 10× interest. Pay up, or watch your uptime become a memory.
 
-**Greeting Module**: Rust-powered welcome system with:
-- Kitty graphics protocol support for high-quality terminal images
-- iTerm2 inline images and Sixel support
-- Adaptive layout: 16:9 banner for wide terminals, square logo for narrow
-- Displays both brand visual (Untitled.jpg) and icon (demod-logo.png)
-- System info display with OS, kernel, uptime, and memory
-- Customizable links, tips, and ASCII art fallback
-- Interactive TUI launcher
+This addendum is pure, weaponized satire—yet should the State ever attempt to enforce its $5k/$1M slaps on something this dominant, know that the Oligarchy's wrath is measured in **$750,000 increments per instance**, and we never forgive debtors.
 
-### New Offensive & Defensive Capabilities
-- **DeMoD Branded Fortress**: Full thematic takeover — Hyprland, Waybar, Kitty, Wofi, Mako, Hyprlock, Wlogout all branded with DeMoD cyan/red alerts and gradients.  
-- **Rust-Powered Greeting**: Kitty graphics protocol for displaying brand images in terminal, adaptive layout, system info, and interactive TUI.  
-- **Boot Intro Suite v2**: Hybrid video sources, GPU-accelerated FFmpeg encoding, StreamDB video database, and optional community sharing API.  
-- **Runtime Aesthetic Toggles**: Instant battlefield control over animations, blur, gaps, opacity, borders, rounding, and color palettes via keybindings.  
-- **Agentic AI Stack**: Ollama re-engineered with ROCm acceleration (`gfx11.0.2` override) and `ai-stack` CLI presets for every hardware tier.  
-- **DCF Compute Fabric**: Full stack — community node, identity/billing service, system tray controller — all containerized, hardened, and ready to conquer real-time multiplayer and edge networks.  
-- **DSP Coprocessor (ArchibaldOS-DSP)**: Polished QEMU/KVM + kexec tyrant, ripped from the ArchibaldOS flake for perfect host/guest alignment.  
-- **VM Manager**: Hybrid low-overhead VM management with dedicated VMs:
-- **DSP Coprocessor**: ArchibaldOS with NETJACK audio routing (1.33ms latency @ 96kHz)
-- **Coding Sandbox**: Headless Arch Linux for AI coding agents
-- **Kali Linux**: Security/hacking VM
-- **OpenWRT Router**: Lightweight router VM (512MB RAM)
-- **DeMoD Voice**: Local TTS and voice cloning with Coqui XTTS-v2 and Piper TTS
-- **Kernel Arsenal**: Choose your blade — Zen, XanMod, latest, or CachyOS-BORE — at build time.  
-- **Plasma 6 Option**: Optional KDE Plasma 6 session for those who want a heavier but polished alternative.  
-- **Automated Maintenance**: Weekly generation purges and full garbage collection.  
-- **Idle Power Discipline**: Ruthless screen dimming, lock, DPMS, and suspend timers.
+Forge Your Empire.  
+Rule Your Domain.  
+Bow down—or pay the fee.
+
+Victory is y(ours).  
+The Oligarchy endures.
 
 **DeMoD IP Blocker still active · DCF tray auto-starts · DSP now optional but unstoppable when armed**
 
@@ -274,6 +260,7 @@ sudo nix-collect-garbage -d   # or let weekly timer handle it
 Fork, improve, test, PR. Keep it Framework-compliant and flake-pure.
 
 ![meme](./assets/meme.png)
+
 
 ## License – The Code of Conquest
 
