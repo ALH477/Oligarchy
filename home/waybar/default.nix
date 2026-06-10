@@ -16,6 +16,7 @@ let
     
     right = lib.flatten [
       "custom/media"
+      (lib.optional (features.enableAudio or false) "custom/dsp")
       (lib.optional (features.enableAudio or false) "group/audio")
       (lib.optional (features.hasBacklight or false) "backlight")
       (lib.optional (features.hasBattery or false) "battery")
@@ -231,6 +232,15 @@ in {
         tooltip = true;
         tooltip-format = "Caffeine — idle inhibitor\\nClick to toggle (Super+F10)";
         on-click = "caffeine toggle";
+      };
+
+      "custom/dsp" = {
+        format = "🎛 {}";
+        exec = "dsp-latency";
+        interval = 3;
+        tooltip = true;
+        tooltip-format = "DSP latency · active rig\\nClick: open the patchbay (qpwgraph)";
+        on-click = "qpwgraph";
       };
     };
 

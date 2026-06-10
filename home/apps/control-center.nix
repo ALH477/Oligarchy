@@ -27,4 +27,8 @@
     source = ./control-center/dsp-bench.sh;
     executable = true;
   };
+  home.file.".local/bin/oligarchy-warroom" = {
+    source = ./control-center/oligarchy-warroom.sh;
+    executable = true;
+  };
 }

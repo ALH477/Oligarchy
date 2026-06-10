@@ -151,6 +151,7 @@
       ./configuration.nix
       ./modules/kernel.nix
       ./modules/personas.nix
+      ./modules/dsp-rigs.nix
       ./modules/secure-boot.nix
       ./modules/agentic-local-ai.nix
       ./modules/oligarchy-mcp.nix

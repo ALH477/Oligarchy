@@ -20,24 +20,28 @@ let
       description = "Studio — DSP coprocessor armed, AI idle, lowest audio latency.";
       kernel = "zen"; dsp = true;  aiEnable = false; aiPreset = "cpu-fallback";
       quantum = 64;   minQuantum = 32;  gamemode = false; power = "performance";
+      apps = [ "1|guitarix" "2|qpwgraph" ];
     };
     # Maximum FPS.
     gaming = {
       description = "Gaming — gamemode + performance governor, full AI.";
       kernel = "zen"; dsp = false; aiEnable = true;  aiPreset = "pewdiepie";
       quantum = 256;  minQuantum = 64;  gamemode = true;  power = "performance";
+      apps = [ ];
     };
     # Daily driver — reproduces the prior hardcoded defaults.
     dev = {
       description = "Dev — capable AI, balanced power (the everyday baseline).";
       kernel = "zen"; dsp = false; aiEnable = true;  aiPreset = "pewdiepie";
       quantum = 256;  minQuantum = 64;  gamemode = false; power = "balanced";
+      apps = [ "1|kitty" "2|code" ];
     };
     # Maximum endurance.
     battery = {
       description = "Battery — AI and DSP off, power-saver, high quantum.";
       kernel = "zen"; dsp = false; aiEnable = false; aiPreset = "cpu-fallback";
       quantum = 512;  minQuantum = 256; gamemode = false; power = "power-saver";
+      apps = [ ];
     };
   };
 
@@ -86,7 +90,13 @@ in
       };
     };
 
-    # Surface the active persona for the control center / scripts.
-    environment.etc."oligarchy/persona".text = cfg.active;
+    # Surface the active persona + each persona's app set for the control center.
+    environment.etc = {
+      "oligarchy/persona".text = cfg.active;
+    } // (mapAttrs'
+      (n: pdef: nameValuePair "oligarchy/persona-apps/${n}" {
+        text = concatStringsSep "\n" pdef.apps;
+      })
+      personas);
   };
 }

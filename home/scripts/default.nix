@@ -185,6 +185,20 @@ in {
     source = ./caffeine.sh;
   };
 
+  # Panic/privacy mode + window-layout save/restore (on PATH for binds + UI).
+  home.file.".local/bin/panic" = {
+    executable = true;
+    source = ./panic.sh;
+  };
+  home.file.".local/bin/persona-layout" = {
+    executable = true;
+    source = ./persona-layout.sh;
+  };
+  home.file.".local/bin/dsp-latency" = {
+    executable = true;
+    source = ./dsp-latency.sh;
+  };
+
   # ════════════════════════════════════════════════════════════════════════════
   # Screen Recording Script — gpu-screen-recorder, hardware accelerated
   # (Replaces the broken draft: `-w "$extra_args"` passed an EMPTY QUOTED

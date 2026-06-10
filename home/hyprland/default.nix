@@ -408,6 +408,8 @@ in {
         # System
         "$mod, M, exec, gnome-system-monitor"
         "$mod, equal, exec, gnome-calculator"
+        "$mod, F2, exec, $terminal --class warroom -e oligarchy-warroom"
+        "$mod SHIFT, Delete, exec, panic"
         
         # Battery/sleep (laptop only)
         (lib.optional (features.hasBattery or false) "$mod, F12, exec, ~/.config/hypr/scripts/lid.sh toggle")

@@ -61,6 +61,7 @@ dcf|🛰 DCF Fabric
 network|🌐 Network
 power|⚡ Power
 persona|🎚 Persona
+rig|🎸 DSP Rig
 system|⚙ System & Kernel
 EOF
 }
@@ -95,7 +96,18 @@ persona-studio|Studio — DSP, lowest latency
 persona-gaming|Gaming — FPS + gamemode
 persona-dev|Dev — balanced, AI on
 persona-battery|Battery — endurance
+persona-apps|Launch this persona's app set
+layout-save|Save window layout
+layout-restore|Restore window layout
 EOF
+      ;;
+    rig)
+      echo "rig-status|Current rig"
+      if command -v dsp-rig >/dev/null 2>&1; then
+        dsp-rig list 2>/dev/null | while read -r r; do echo "rig-$r|→ $r"; done
+      else
+        echo "rig-na|DSP rigs not enabled (set custom.dsp.enable)"
+      fi
       ;;
     dcf) cat <<'EOF'
 dcf-status|Mesh status
@@ -120,6 +132,7 @@ EOF
       ;;
     system) cat <<'EOF'
 sys-status|Show system status
+warroom|War Room dashboard
 kernel-zen|Kernel → zen
 kernel-xanmod|Kernel → xanmod
 kernel-latest|Kernel → latest
@@ -195,6 +208,19 @@ apply_persona() { # $1=name $2=powerprofile $3=anims(0|1) $4=quantum
   note "Persona → $1 (runtime applied; rebuild for kernel/DSP/AI/gamemode)."
 }
 
+# Launch the active persona's app set (/etc/oligarchy/persona-apps/<name>:
+# "workspace|command" lines) onto their workspaces.
+launch_persona_apps() {
+  local active f ws cmd
+  active="$(cat /etc/oligarchy/persona 2>/dev/null || echo dev)"
+  f="/etc/oligarchy/persona-apps/$active"
+  [ -r "$f" ] || { note "no app set for $active"; return 0; }
+  while IFS='|' read -r ws cmd; do
+    [ -n "${cmd:-}" ] && hyprctl dispatch exec "[workspace $ws silent] $cmd" >/dev/null 2>&1 || true
+  done < "$f"
+  note "launched the $active app set"
+}
+
 run() {
   case "$1" in
     theme-menu)     "$HOME/.config/hypr/scripts/theme-switcher.sh" menu ;;
@@ -242,6 +268,15 @@ run() {
     persona-gaming)  apply_persona gaming  performance 1 256 ;;
     persona-dev)     apply_persona dev     balanced    1 256 ;;
     persona-battery) apply_persona battery power-saver 0 512 ;;
+    persona-apps)    launch_persona_apps ;;
+    layout-save)     visible persona-layout save ;;
+    layout-restore)  visible persona-layout restore ;;
+
+    warroom)         in_term oligarchy-warroom ;;
+
+    rig-status)      visible bash -c 'dsp-rig status' ;;
+    rig-na)          note "Enable custom.dsp in your config to use DSP rigs" ;;
+    rig-*)           dsp-rig switch "${1#rig-}" && note "rig → ${1#rig-}" ;;
 
     *) note "Unknown action: $1"; return 1 ;;
   esac
