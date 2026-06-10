@@ -88,6 +88,8 @@ The Oligarchy endures.
 | Host OS                          | Oligarchy NixOS (CachyOS/Zen/XanMod/BORE kernel, Hyprland primary, Plasma 6 optional)  |
 | Boot Experience                  | CRT boot cinematic — FFmpeg-forged scanlines/chromatic-aberration/grain, mpv on tty1 (StreamDB/TUI/API pretenders executed) |
 | Welcome Experience               | Rust-powered greeting — Kitty graphics, adaptive images, terminal-native TUI            |
+| Control Center                   | `Super+D` Wofi war-room hub + `oligarchy-control` TUI — every toggle, service & switch on one surface |
+| Personas                         | studio / gaming / dev / battery — one switch re-arms kernel, DSP, AI tier, audio quantum & power |
 | VM Manager                       | 4 dedicated VMs: DSP, Coding Sandbox, Kali, OpenWRT                                   |
 | DSP Coprocessor                  | ArchibaldOS-DSP QEMU/KVM + NETJACK — 1.33ms @ 96kHz                                   |
 | Voice AI                         | DeMoD Voice — Local TTS and voice cloning (Coqui XTTS-v2, Piper)                      |
@@ -97,6 +99,7 @@ The Oligarchy endures.
 | Recovery time                    | 180–350 ms via kexec (laughs at $80 000 proprietary failures)                          |
 | Host impact                      | Zero. Crush Doom Eternal at 300+ FPS while the DSP resurrects 40× per second            |
 | AI Stack                         | Ollama + ROCm / CUDA / CPU (whichever silicon you conscript), `ai-stack` CLI, presets  |
+| Agent Surface                    | Local **read-only** MCP (the insecure OpenClaw gateway was executed); Blipply voice assistant consumes it over stdio |
 | Networking Fabric                | DeMoD Compute Fabric (DCF) — community node, identity service, tray controller        |
 | Distribution                     | Everything forged from pinned flakes — no GitHub chaos, only victory                    |
 
@@ -115,6 +118,19 @@ One flake, three configurations — each forged to dominate its own silicon. No 
 | `nixos-optimus` | `nixos-rebuild switch --flake .#nixos-optimus`  | Intel iGPU + Nvidia dGPU (PRIME offload) | Ollama + CUDA     |
 
 Flip one knob — `custom.platform.{gpu,cpu,framework}` — and the flake re-forges the GPU stack, kernel modules, power policy, and AI acceleration to match. The Nvidia dGPU stays asleep until you summon it for war (`nvidia-offload <cmd>`); CUDA wakes it for the local AI stack. Fill in your disks (and, for Optimus, your PCI bus ids) in `hosts/<target>/hardware-configuration.nix`.
+
+## Personas — One Switch, Four War Footings
+
+The machine has no single mood. Pick a persona and the whole rig re-arms in one motion — kernel, the DSP coprocessor, the AI tier, audio quantum, gamemode and power policy. Strike it from the Control Center (`Super+D → Persona`) or the command line (`oligarchy-ctl run persona-studio`):
+
+| Persona   | DSP coprocessor | Local AI         | Audio quantum         | Power        |
+|-----------|-----------------|------------------|-----------------------|--------------|
+| `studio`  | **armed**       | stood down       | 64 (lowest latency)   | performance  |
+| `gaming`  | off             | full (pewdiepie) | 256                   | performance  |
+| `dev`     | off             | on               | 256                   | balanced     |
+| `battery` | off             | off              | 512                   | power-saver  |
+
+Runtime knobs (power profile, animations, live PipeWire quantum) flip **instantly**; the build-time pieces (kernel, DSP, AI tier) are written to `oligarchy-local.nix` and applied on the next `nixos-rebuild`. `dev` is the default and reproduces the everyday baseline. Arm `studio` and prove the latency yourself with `dsp-bench`.
 
 ## DeMoD Branded Fortress
 
@@ -150,6 +166,7 @@ The entire desktop is now a DeMoD war room:
 | `Super + F6`            | Cycle rounding (default → square → subtle)  |
 | `Super + F7`            | Cycle color palette forward                 |
 | `Super + Shift + F7`    | Cycle color palette backward                |
+| `Super + D`             | Open the Control Center (Wofi war-room hub) |
 | `Super + Escape`        | Open power menu (wlogout)                   |
 | `Super + L`             | Lock screen (hyprlock)                      |
 
@@ -191,6 +208,7 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 - **Rust Greeting System**: Kitty graphics protocol for displaying brand images directly in terminal, adaptive layout based on terminal size, system info display, and interactive TUI launcher.
 - **Boot Intro Suite v2**: A software-forged CRT war-cinematic — FFmpeg renders your audio into mirrored waveforms drowned in scanlines, chromatic aberration, bloom and analog grain, then mpv slams it onto tty1 before the display manager ever draws breath. Generate from any audio file or supply your own pre-rendered clip; nine theme palettes; fast→ultra quality presets. (The StreamDB/TUI/API "suite" pretenders were taken out back — they were `mpv --help` in a trenchcoat.)
 - **Three War Machines, One Flake**: GPU-agnostic `custom.platform` module — forge the same empire for AMD (ROCm), pure Intel (CPU), or Intel + Nvidia Optimus (PRIME offload + CUDA). Flip one enum and the flake re-forges drivers, kernel modules, power policy, and AI acceleration. Conquest, portable.
+- **One War Room**: a unified Control Center (`Super+D` Wofi hub + `oligarchy-control` TUI) over every toggle, service, status and switch — plus **personas** (studio/gaming/dev/battery) that re-arm the kernel, DSP coprocessor, AI tier, audio quantum and power in a single motion.
 - **Virtual DSP Coprocessor**: Soundproof clean-room RT guest inside the chaotic host party bus — a technical masterpiece.
 
 ![wallpaper-color](https://github.com/user-attachments/assets/6c5754c8-21d6-45c1-a775-b77a871bf517)
@@ -201,6 +219,8 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 - DCF services run in hardened Docker containers with least-privilege secrets management.
 - Identity database daily backups.
 - DeMoD IP Blocker refreshes blacklists every 24 hours.
+- **Secure Boot** (opt-in via `custom.secureBoot.enable`): a signed boot chain via lanzaboote + `sbctl`, with an optional TPM2-sealed LUKS unlock. Off by default so it can never brick an un-enrolled machine — see the runbook in `modules/secure-boot.nix`.
+- **Zero-trust local agent**: the AI's hands on the system are a **read-only**, stdio-only MCP — no network listener, no auth token, no remote-plugin fetch. It executed and replaced OpenClaw, which fetched `github:*` plugins at runtime, bound `0.0.0.0`, and shipped a publicly-derivable gateway token.
 
 ## Building – Forge Your Empire
 
@@ -235,6 +255,7 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 
 - **Hyprland** (default): SDDM → Waybar with DCF/Ollama status → `SUPER+Space` for Wofi → full keybinding control.
 - **Plasma 6**: Select at SDDM for KDE experience.
+- **Control Center** (`Super+D`): one Wofi hub for appearance, AI, DSP, DCF, network, power, **personas** and the system/kernel switches — or drive the identical action set from any terminal/TTY/SSH with `oligarchy-control`.
 - **DCF Control**: Tray auto-starts → click for panel, right-click for toggles.
 - **Ollama AI**:
   ```bash
@@ -265,10 +286,10 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
   - `source = "generate"` (FFmpeg from your `soundFile`) or `"file"` (pre-rendered)
   - Config: `services.boot-intro`
 
-- **DSP Coprocessor** (optional, enable in flake):
+- **DSP Coprocessor** (arm it with the `studio` persona, or `services.dsp-vm.enable`):
   - Enable IOMMU in BIOS.
   - Set audio PCI ID.
-  - `dsp-status` to verify.
+  - `dsp-status` to verify; `dsp-bench` to measure the round-trip yourself (`jack_iodelay` across the NETJACK bridge).
 
 ## Troubleshooting – Crush the Resistance
 
