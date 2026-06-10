@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 mod config;
 mod profiles;
 mod ollama;
+mod mcp;
 mod audio;
 mod ui;
 mod hotkeys;

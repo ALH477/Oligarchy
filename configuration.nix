@@ -106,6 +106,10 @@
     # is the agentic action surface; Blipply consumes it via stdio.
     custom.oligarchyMcp.enable = true;
 
+    # Blipply local voice assistant (Whisper -> ollama -> Piper). Calls the MCP
+    # over stdio for read-only system tools. NOTE: a heavy Rust build.
+    oligarchy.blipply.enable = true;
+
     # ──────────────────────────────────────────────────────────────────────────
     # Audio Configuration — Pure PipeWire (no X11-based audio remnants)
     # ──────────────────────────────────────────────────────────────────────────

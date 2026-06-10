@@ -13,6 +13,44 @@ pub struct Config {
     pub audio: AudioConfig,
     pub pipewire: PipewireConfig,
     pub profiles: HashMap<String, ProfileConfig>,
+    #[serde(default)]
+    pub mcp: McpConfig,
+}
+
+/// Connection to the local read-only Oligarchy MCP server (replaces OpenClaw).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_mcp_command")]
+    pub command: String,
+    /// Comma-separated allowlist of tool names (empty = allow all advertised).
+    #[serde(default)]
+    pub allowed_tools: String,
+}
+
+fn default_mcp_command() -> String {
+    "oligarchy-mcp".to_string()
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            command: default_mcp_command(),
+            allowed_tools: String::new(),
+        }
+    }
+}
+
+impl McpConfig {
+    pub fn allowed(&self) -> Vec<String> {
+        self.allowed_tools
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +128,7 @@ impl Default for Config {
                 buffer_size: 480,
             },
             profiles,
+            mcp: McpConfig::default(),
         }
     }
 }
