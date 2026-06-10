@@ -52,8 +52,8 @@
       kdePackages.qtstyleplugin-kvantum   # Qt6 Kvantum theme
       papirus-icon-theme
       bibata-cursors
-      adwaita-qt
-      adwaita-qt6
+      # adwaita-qt / adwaita-qt6 removed: abandoned upstream, marked broken /
+      # dropped in current nixpkgs. Kvantum + qt6ct above cover Qt theming.
     ]
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -141,10 +141,10 @@
         XDG_SCREENSHOTS_DIR = "${config.home.homeDirectory}/Pictures/Screenshots";
       };
     };
-    portal = {
-      enable = true;
-      extraPortals = [ pkgs.xdg-desktop-portal-hyprland pkgs.xdg-desktop-portal-gtk ];
-      config.common.default = [ "hyprland" "gtk" ];
-    };
+    # xdg.portal removed at the HM level: the user-scope portals.conf it
+    # generates takes precedence over the system config in EVERY session, so
+    # forcing [hyprland gtk] here broke portals (screenshots, file pickers,
+    # screen share) inside Plasma. The system-level xdg.portal in
+    # configuration.nix already declares kde + hyprland + gtk per-desktop.
   };
 }

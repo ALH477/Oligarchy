@@ -2,32 +2,36 @@
   description = "Production NixOS – Framework 16 AMD with CachyOS/Zen kernel, DCF Stack, and DSP VM";
 
   inputs = {
-    # Core nixpkgs - using unstable for 25.11
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Core nixpkgs — pinned to the current stable release (25.11).
+    # nixpkgs-unstable stays available for cherry-picks via the `unstable` overlay.
+    # Revert knob: point nixpkgs back at nixos-unstable if a package you need
+    # hasn't landed in 25.11 and you don't want to use the overlay.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
-    
+
     # Determinate Systems enhancements
     determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/*";
-    
+
     # Hardware support
     nixos-hardware.url = "github:NixOS/nixos-hardware";
-    
+
     # Framework fan control
     fw-fanctrl.url = "github:TamtamHero/fw-fanctrl/packaging/nix";
-    
+
     # Custom modules
     demod-ip-blocker.url = "git+https://github.com/ALH477/DeMoD-IP-Blocker.git";
     minecraft.url = "github:ALH477/NixOS-MineCraft";
-    
+
     # OpenClaw AI assistant gateway
     nix-openclaw.url = "github:openclaw/nix-openclaw";
-    
-    # Home Manager for user-level configuration
+
+    # Home Manager for user-level configuration — pinned to the release branch
+    # matching nixpkgs. HM master tracks unstable and will drift from 25.11.
     home-manager = {
-      url = "github:nix-community/home-manager";
+      url = "github:nix-community/home-manager/release-25.11";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    
+
     # ISO generation
     nixos-generators = {
       url = "github:nix-community/nixos-generators";
@@ -39,16 +43,16 @@
       url = "github:Mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    
+
     # Oligarchy Greeting - War Room TUI
-    greeting.url = path:./modules/greeting;
+    greeting.url = "path:./modules/greeting";
 
     # DeMoD Boot Intro Suite
-    boot-intro.url = path:./modules/boot-intro;
-    
+    boot-intro.url = "path:./modules/boot-intro";
+
     # Blipply Assistant - AI Voice Assistant (as flake input)
-    blipply-assistant.url = path:./modules/blipply-assistant;
-    
+    blipply-assistant.url = "path:./modules/blipply-assistant";
+
     # ArchibaldOS DSP coprocessor (uncomment when available)
     # archibaldos = {
     #   url = "github:YOUR_ORG/archibaldos";
@@ -56,10 +60,10 @@
     # };
 
     # VM Manager - Hybrid VM management
-    vm-manager.url = path:./vm-manager;
-    
+    vm-manager.url = "path:./vm-manager";
+
     # DeMoD Voice - Local TTS and Voice Cloning
-    demod-voice.url = path:./modules/demod-voice;
+    demod-voice.url = "path:./modules/demod-voice";
   };
 
   outputs = {
@@ -86,47 +90,94 @@
 
   let
     system = "x86_64-linux";
-    
+
     # Shared pkgs configuration
+    # allowBroken removed: it silently lets known-broken packages into the
+    # closure on a production machine. Override per-package if ever needed.
     pkgsConfig = {
       allowUnfree = true;
-      allowBroken = true;
       permittedInsecurePackages = [];
     };
-    
+
     # Evaluation pkgs for ISO generation
     pkgs = import nixpkgs {
       inherit system;
       config = pkgsConfig;
     };
-    
+
     # Common specialArgs passed to all modules
-    specialArgs = { 
-      inherit inputs nixpkgs-unstable; 
+    specialArgs = {
+      inherit inputs nixpkgs-unstable;
       # Uncomment when archibaldos is available:
       # inherit archibaldos;
       inherit vm-manager;
     };
-    
+
+    # ════════════════════════════════════════════════════════════════════════
+    # Shared module set — single source of truth for system AND ISO.
+    # configuration.nix sets services.ollamaAgentic, services.openclaw-agent,
+    # and the ISO overrides networking.firewall.strictEgress; the modules that
+    # DECLARE those options must therefore be present in every evaluation that
+    # includes configuration.nix, or eval fails with "option does not exist".
+    # Previously the ISO list omitted them — that's why the ISO didn't build.
+    # ════════════════════════════════════════════════════════════════════════
+    commonModules = [
+      # Package configuration
+      { nixpkgs.config = pkgsConfig; }
+
+      # Third-party modules
+      determinate.nixosModules.default
+      sops-nix.nixosModules.sops
+      nixos-hardware.nixosModules.framework-16-7040-amd
+      fw-fanctrl.nixosModules.default
+      demod-ip-blocker.nixosModules.default
+
+      # Local modules - order matters! Options must be defined before config uses them
+      # Boot intro options
+      boot-intro.nixosModules.boot-intro
+      boot-intro.nixosModules.boot-intro-tui
+      boot-intro.nixosModules.boot-intro-api
+
+      # Blipply integration (defines oligarchy.blipply options)
+      ./modules/blipply-integration.nix
+
+      # Main configuration (uses options defined above).
+      # Note: configuration.nix itself imports modules/audio.nix,
+      # modules/boot-intro.nix and the three dcf-*.nix modules, so those
+      # travel with it and are intentionally not repeated here.
+      ./configuration.nix
+      ./modules/hardware-configuration.nix
+      ./modules/kernel.nix
+      ./modules/agentic-local-ai.nix
+      ./modules/openclaw-agent.nix
+      ./modules/secrets.nix
+      ./modules/security/strict-egress.nix
+      greeting.nixosModules.greeting
+
+      # Blipply Assistant - AI Voice Assistant (integrated from local source)
+      blipply-assistant.nixosModules.default
+
+      # VM Manager - Hybrid VM management
+      vm-manager.nixosModules.quickemu-vm
+      vm-manager.nixosModules.dsp-vm
+
+      # DeMoD Voice - Local TTS and Voice Cloning
+      ./modules/demod-voice/nixos-module.nix
+
+      # Uncomment when archibaldos input is available:
+      # ./modules/archibaldos-dsp-vm.nix
+    ];
+
   in {
     # ════════════════════════════════════════════════════════════════════════
     # Main System Configuration
     # ════════════════════════════════════════════════════════════════════════
     nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
       inherit system specialArgs;
-      
-      modules = [
-        # Package configuration
-        { nixpkgs.config = pkgsConfig; }
-        
-        # Third-party modules
-        determinate.nixosModules.default
-        sops-nix.nixosModules.sops
-        nixos-hardware.nixosModules.framework-16-7040-amd
-        fw-fanctrl.nixosModules.default
-        demod-ip-blocker.nixosModules.default
-        
-        # Home Manager integration
+
+      modules = commonModules ++ [
+        # Home Manager integration (system only — the ISO's live user is
+        # created by the installer profile, not by HM)
         home-manager.nixosModules.home-manager
         {
           home-manager = {
@@ -137,41 +188,6 @@
             extraSpecialArgs = specialArgs;
           };
         }
-        
-        # Local modules - order matters! Options must be defined before config uses them
-        # Boot intro options
-        boot-intro.nixosModules.boot-intro
-        boot-intro.nixosModules.boot-intro-tui
-        boot-intro.nixosModules.boot-intro-api
-        
-        # Blipply integration (defines oligarchy.blipply options)
-        ./modules/blipply-integration.nix
-        
-        # Main configuration (uses options defined above)
-        ./configuration.nix
-        ./modules/hardware-configuration.nix
-        ./modules/kernel.nix
-        ./modules/agentic-local-ai.nix
-        ./modules/openclaw-agent.nix
-        ./modules/dcf-community-node.nix
-        ./modules/dcf-identity.nix
-        ./modules/dcf-tray.nix
-        ./modules/secrets.nix
-        ./modules/security/strict-egress.nix
-        greeting.nixosModules.greeting
-        
-        # Blipply Assistant - AI Voice Assistant (integrated from local source)
-        blipply-assistant.nixosModules.default
-        
-        # VM Manager - Hybrid VM management
-        vm-manager.nixosModules.quickemu-vm
-        vm-manager.nixosModules.dsp-vm
-        
-        # DeMoD Voice - Local TTS and Voice Cloning
-        ./modules/demod-voice/nixos-module.nix
-        
-        # Uncomment when archibaldos input is available:
-        # ./modules/archibaldos-dsp-vm.nix
       ];
     };
 
@@ -184,47 +200,40 @@
         inherit pkgs;
         format = "install-iso";
         specialArgs = builtins.removeAttrs specialArgs [ "archibaldos" ];
-        
-        modules = [
-          determinate.nixosModules.default
-          nixos-hardware.nixosModules.framework-16-7040-amd
-          fw-fanctrl.nixosModules.default
-          demod-ip-blocker.nixosModules.default
-          ./configuration.nix
-          ./modules/hardware-configuration.nix
-          ./modules/kernel.nix
-          
+
+        modules = commonModules ++ [
           "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-plasma6.nix"
-          
+
           ({ lib, ... }: {
             # ISO-specific overrides
             services.displayManager.sddm.enable = lib.mkForce true;
             services.displayManager.sddm.wayland.enable = lib.mkForce true;
             services.desktopManager.plasma6.enable = lib.mkForce true;
-            
+
             # Disable production services in ISO
             services.ollamaAgentic.enable = lib.mkForce false;
+            services.openclaw-agent.enable = lib.mkForce false;
             custom.dcfCommunityNode.enable = lib.mkForce false;
             custom.dcfIdentity.enable = lib.mkForce false;
             services.dcf-tray.enable = lib.mkForce false;
             networking.firewall.strictEgress.enable = lib.mkForce false;
-            
-            boot.supportedFilesystems = lib.mkForce [ 
-              "btrfs" "reiserfs" "vfat" "f2fs" "xfs" "ntfs" "cifs" 
+
+            boot.supportedFilesystems = lib.mkForce [
+              "btrfs" "reiserfs" "vfat" "f2fs" "xfs" "ntfs" "cifs"
             ];
-            
+
             users.users.nixos = {
               isNormalUser = true;
               extraGroups = [ "wheel" "networkmanager" "video" "audio" ];
               initialPassword = "nixos";
             };
-            
+
             services.getty.autologinUser = "nixos";
             services.displayManager.autoLogin = {
               enable = true;
               user = "nixos";
             };
-            
+
             services.openssh = {
               enable = true;
               settings = {
@@ -232,16 +241,29 @@
                 PasswordAuthentication = true;
               };
             };
-            
+
             documentation.enable = false;
             documentation.nixos.enable = false;
           })
         ];
       };
-      
+
       default = self.packages.${system}.iso;
     };
-    
+
+    # ════════════════════════════════════════════════════════════════════════
+    # Checks & Formatter
+    # `nix flake check` now evaluates AND builds the full system closure —
+    # the same artifact nixos-rebuild would produce. Heavy but honest.
+    # For a fast eval-only smoke test use:
+    #   nixos-rebuild dry-build --flake .#nixos
+    # ════════════════════════════════════════════════════════════════════════
+    checks.${system} = {
+      system = self.nixosConfigurations.nixos.config.system.build.toplevel;
+    };
+
+    formatter.${system} = pkgs.nixfmt-rfc-style;
+
     # ════════════════════════════════════════════════════════════════════════
     # Development Shell with Testing Tools
     # ════════════════════════════════════════════════════════════════════════
@@ -250,63 +272,51 @@
         # Core Nix development
         nil  # Nix LSP
         nixpkgs-fmt
-        nix-tree
+        nixfmt-rfc-style
+        nix-tree  # Explore Nix store
+        nix-diff  # Compare Nix derivations
         nvd  # NixOS version diff
-        
-        # Testing tools
-        testers  # NixOS test framework
+
+        # VM / virtualization tools
         qemu  # Full QEMU (for manual VM testing)
         virt-manager  # GUI for VM management
         libvirt  # Virtualization library
         virt-viewer  # Minimal SPICE client
-        
-        # TUI tools for testing
-        nix-tree  # Explore Nix store
-        nix-diff  # Compare Nix derivations
-        nix-show-derivation  # View derivation info
-        nix-visualize-derivation  # Visualize derivation graph
-        
+
         # Network testing
         nmap  # Network scanner
         iperf3  # Network bandwidth tester
         tcpdump  # Packet analyzer
-        wiresharkCLI  # CLI Wireshark
-        
+        wireshark-cli  # CLI Wireshark (tshark)
+
         # Debugging
         gdb  # Debugger
         strace  # System call tracer
         ltrace  # Library call tracer
         lsof  # List open files
         netstat-nat  # NAT connections
-        
+
         # System analysis
         htop  # Process viewer
         iftop  # Network traffic monitor
         iotop  # I/O monitor
         atop  # Advanced system monitor
       ];
-      
+
       shellHook = ''
-        echo "╔═══════════════════════════════════════════════════════════════╗"
-        echo "║         Oligarchy NixOS Development Shell                    ║"
-        echo "╠═══════════════════════════════════════════════════════════════╣"
-        echo "║ Testing Commands:                                              ║"
-        echo "║   nix flake check          - Run all automated tests          ║"
-        echo "║   nix run .#test          - Run specific test (see below)    ║"
-        echo "║   nix build .#oligarchy-boot - Build boot test VM              ║"
-        echo "║   nix build .#strict-egress - Build strict-egress test        ║"
+        echo "╔════════════════════════════════════════════════════════════════╗"
+        echo "║              Oligarchy NixOS Development Shell                 ║"
+        echo "╠════════════════════════════════════════════════════════════════╣"
+        echo "║ Commands:                                                      ║"
+        echo "║   nix flake check                  - eval + build system       ║"
+        echo "║   nixos-rebuild dry-build \\                                    ║"
+        echo "║     --flake .#nixos                - fast eval smoke test      ║"
+        echo "║   nix build .#iso                  - build installer ISO       ║"
+        echo "║   nix fmt                          - format Nix sources        ║"
+        echo "║   nvd diff /run/current-system ./result - diff closures        ║"
         echo "║                                                                ║"
-        echo "║ Available Tests:                                               ║"
-        echo "║   oligarchy-boot    - Basic boot + connectivity test          ║"
-        echo "║   strict-egress    - Firewall module test                     ║"
-        echo "║   config-eval     - Configuration evaluation test            ║"
-        echo "║                                                                ║"
-        echo "║ TUI Tools:                                                     ║"
-        echo "║   tui             - Terminal UI for Nix                      ║"
-        echo "║   nix-tree        - Explore Nix store                        ║"
-        echo "║   htop            - Process monitor                          ║"
-        echo "║   iftop           - Network monitor                          ║"
-        echo "╚═══════════════════════════════════════════════════════════════╝"
+        echo "║ Tools: nix-tree, nix-diff, htop, iftop, tshark, qemu           ║"
+        echo "╚════════════════════════════════════════════════════════════════╝"
       '';
     };
   };

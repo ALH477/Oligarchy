@@ -7,7 +7,7 @@
 
   imports = [
     ./modules/audio.nix
-	./modules/boot-intro.nix
+    ./modules/boot-intro.nix
     ./modules/dcf-community-node.nix
     ./modules/dcf-identity.nix
     ./modules/dcf-tray.nix
@@ -40,7 +40,7 @@
     # soundFile = ./assets/boot-chime.mid;
     # Or use a wav/mp3/flac:
      soundFile = ./assets/modretro.wav;
-	volume = 40;
+    volume = 40;
     # Optional: Background video (loops behind waveform)
      backgroundVideo = ./assets/modretro.mp4;
 
@@ -117,11 +117,14 @@
       };
 
       # Low-latency settings (replicates former lowLatency.enable)
+      # min-quantum 64 ≈ 1.3 ms @ 48 kHz — a guitar rig must be ALLOWED to go
+      # low. Default stays 256 so desktop apps don't burn CPU; only clients
+      # that explicitly request a small quantum (guitarix, JACK apps) get it.
       extraConfig.pipewire."20-low-latency" = {
         "context.properties" = {
           "default.clock.rate" = 48000;
           "default.clock.quantum" = 256;
-          "default.clock.min-quantum" = 256;
+          "default.clock.min-quantum" = 64;
           "default.clock.max-quantum" = 512;
         };
       };
@@ -147,8 +150,25 @@
     # ──────────────────────────────────────────────────────────────────────────
     swapDevices = [
       { device = "/swapfile";
-        size = 32680; }  # 32 GiB
+        size = 32768; }  # 32 GiB (was 32680 — 88 MiB short of the label)
     ];
+
+    # ── Hibernate support ────────────────────────────────────────────────────
+    # upower.criticalPowerAction below is "Hibernate". Without resumeDevice +
+    # resume_offset the kernel writes a hibernation image it can NEVER resume
+    # from: critical battery = hard crash + lost session on next boot.
+    # Fill these in on the running machine, then uncomment:
+    #
+    #   findmnt -no UUID -T /swapfile
+    #     → boot.resumeDevice = "/dev/disk/by-uuid/<UUID>";
+    #   sudo filefrag -v /swapfile | awk '$1=="0:" {print substr($4,1,length($4)-2)}'
+    #     → add "resume_offset=<N>" to boot.kernelParams
+    #
+    # boot.resumeDevice = "/dev/disk/by-uuid/CHANGE-ME";
+    # boot.kernelParams = [ "resume_offset=CHANGE-ME" ];  # merge into list above
+    warnings = lib.optional (config.boot.resumeDevice == "")
+      "Oligarchy: upower criticalPowerAction is Hibernate but boot.resumeDevice is unset — hibernation cannot resume. See the hibernate block near swapDevices in configuration.nix.";
+
     boot.kernel.sysctl = {
       "vm.swappiness" = 10;
       "vm.dirty_ratio" = 10;
@@ -177,7 +197,7 @@
     };
     hardware.steam-hardware.enable = lib.mkIf config.custom.steam.enable true;
     programs.gamemode.enable = lib.mkIf config.custom.steam.enable true;
-    
+
     # Use mkForce to resolve SSH askPassword conflicts (prefer KDE solution)
     programs.ssh.askPassword = lib.mkForce "${pkgs.kdePackages.ksshaskpass}/bin/ksshaskpass";
 
@@ -185,8 +205,8 @@
     # Boot Configuration
     # ──────────────────────────────────────────────────────────────────────────
     boot = {
-      # Cross-compilation support
-      binfmt.emulatedSystems = [ "aarch64-linux" ];
+      # Cross-compilation support — riscv64 added for ArchibaldOS / StarFive JH7110 work
+      binfmt.emulatedSystems = [ "aarch64-linux" "riscv64-linux" ];
       loader = {
         systemd-boot.enable = true;
         efi.canTouchEfiVariables = true;
@@ -202,6 +222,7 @@
         "usb-storage.quirks=:u"
         "amd_pstate=active"
         "pcie_aspm=off"
+        "threadirqs"  # threaded IRQs — lets rtkit prioritize audio IRQ handlers
       ];
       initrd.kernelModules = [ "amdgpu" "thunderbolt" ];
 
@@ -226,17 +247,17 @@
     # ──────────────────────────────────────────────────────────────────────────
     services.xserver = {
       enable = true;  # Enable X11 for IceWM backup system
-      
+
       # Keyboard configuration (matches Wayland setup)
       xkb = {
         layout = "us";
         variant = "";
         options = "caps:escape";
       };
-      
+
       # Exclude unnecessary X11 packages
       excludePackages = [ pkgs.xterm ];
-      
+
       # Window managers
       windowManager.icewm.enable = true;
     };
@@ -245,7 +266,7 @@
     environment.etc."icewm/preferences".text = ''
       # IceWM Configuration for Backup System
       # Optimized for minimal resource usage and stability
-      
+
       # Focus and Behavior
       ClickToFocus=1
       FocusOnAppRaise=1
@@ -253,7 +274,7 @@
       RaiseOnFocus=0
       RaiseOnClickClient=1
       PassFirstClickToClient=1
-      
+
       # Task Bar
       ShowTaskBar=1
       TaskBarAtTop=0
@@ -264,7 +285,7 @@
       TaskBarShowCPUStatus=1
       TaskBarShowMemStatus=1
       TaskBarShowNetStatus=1
-      
+
       # Menu
       MenuMouseTracking=1
       ShowProgramsMenu=1
@@ -273,23 +294,23 @@
       ShowRunMenu=1
       ShowLogoutMenu=1
       ShowLogoutSubMenu=1
-      
+
       # Window Behavior
       SmartWindowPlacement=1
       AutoWindowArrange=1
       HideTitleBarWhenMaximized=0
       MenuMaximizedWidth=640
       Opacity=100
-      
+
       # Performance
       GrabServerToAvoidRace=1
       DelayedFocusChange=1
       DelayedWindowMove=1
-      
+
       # Workspaces
       WorkspaceNames=" 1 ", " 2 ", " 3 ", " 4 "
       LimitToWorkarea=1
-      
+
       # Fonts
       TitleBarFontName="-*-sans-medium-r-*-*-12-*-*-*-*-*-*-*"
       MenuFontName="-*-sans-medium-r-*-*-12-*-*-*-*-*-*-*"
@@ -306,18 +327,18 @@
       ApmFontName="-*-sans-medium-r-*-*-12-*-*-*-*-*-*-*"
       InputFontName="-*-monospace-medium-r-*-*-12-*-*-*-*-*-*-*"
       LabelFontName="-*-sans-bold-r-*-*-12-*-*-*-*-*-*-*"
-      
+
       # Colors (fallback if theme doesn't provide)
       ColorNormalTitleBar="rgb:40/40/40"
       ColorActiveTitleBar="rgb:00/40/80"
       ColorNormalBorder="rgb:60/60/60"
       ColorActiveBorder="rgb:00/80/FF"
-      
+
       # Paths
       DesktopBackgroundCenter=1
       DesktopBackgroundColor="rgb:20/20/20"
       DesktopBackgroundImage=""
-      
+
       # Auto-restart if crashed (important for backup system)
       RestartOnFailure=1
     '';
@@ -325,13 +346,13 @@
     environment.etc."icewm/menu".text = ''
       # IceWM Menu Configuration
       # Basic applications menu for backup system
-      
+
       prog Terminal terminal "/run/current-system/sw/bin/kitty"
       prog File Manager folder "/run/current-system/sw/bin/thunar"
       prog Web Browser browser "/run/current-system/sw/bin/firefox"
       prog Text Editor editor "/run/current-system/sw/bin/kate"
       prog System Monitor monitor "/run/current-system/sw/bin/htop"
-      
+
       separator
       menu System {
         prog "Audio Settings" settings "/run/current-system/sw/bin/easyeffects"
@@ -345,35 +366,35 @@
         prog "Reboot" reboot "systemctl reboot"
         prog "Shutdown" shutdown "systemctl poweroff"
       }
-      
+
       separator
       menu Development {
         prog "Vim" terminal "kitty -e vim"
         prog "Git" terminal "kitty -e git"
         prog "Python" terminal "kitty -e python3"
       }
-      
+
       separator
       menu Multimedia {
         prog "VLC" vlc "/run/current-system/sw/bin/vlc"
         prog "Audacity" audacity "/run/current-system/sw/bin/audacity"
         prog "OBS Studio" obs "/run/current-system/sw/bin/obs"
       }
-      
+
       separator
       menu Graphics {
         prog "GIMP" gimp "/run/current-system/sw/bin/gimp"
         prog "Inkscape" inkscape "/run/current-system/sw/bin/inkscape"
         prog "Blender" blender "/run/current-system/sw/bin/blender"
       }
-      
+
       separator
       menu Games {
         prog "Steam" steam "/run/current-system/sw/bin/steam"
         prog "Doom 3" dhewm3 "/run/current-system/sw/bin/dhewm3"
       }
     '';
- 
+
     services.displayManager = {
       sddm = {
         enable = true;
@@ -451,7 +472,9 @@
         logRefusedConnections = false;
       };
       useDHCP = lib.mkDefault false;
-      wireless.enable = lib.mkForce true;
+      # NOTE: networking.wireless.enable removed — it ran a second, unmanaged
+      # wpa_supplicant alongside NetworkManager's own (wifi.backend above),
+      # which trips a NixOS assertion / causes the two to fight over the radio.
     };
 
     services.resolved = {
@@ -572,7 +595,8 @@
 
       power-profiles-daemon.enable = true;
       tlp.enable = lib.mkForce false;
-      thermald.enable = true;
+      # thermald removed: it is Intel-only and exits immediately on AMD silicon.
+      # power-profiles-daemon + amd_pstate handle thermals on the Framework 16.
 
       upower = {
         enable = true;
@@ -625,7 +649,7 @@
         sddm = { enableGnomeKeyring = true; };
         hyprlock = { fprintAuth = true; enableGnomeKeyring = true; };
       };
-      
+
 
 
       pam.loginLimits = [
@@ -759,7 +783,7 @@
 
       gimp kdePackages.kdenlive inkscape blender libreoffice krita synfigstudio
 
-      gvfs udiskie polkit_gnome framework-tool blucontrol 
+      gvfs udiskie polkit_gnome framework-tool blucontrol
 
       wl-clipboard grim slurp v4l-utils cliphist hyprpicker wlogout playerctl jq
       hyprlock hypridle libnotify swappy hyprshot satty kdePackages.spectacle
@@ -767,11 +791,11 @@
 
       mininet
 
-	rtl-sdr gnuradio gqrx soapysdr cubicsdr
-	
-	qjackctl adlplug chuck csound
+      rtl-sdr gnuradio gqrx soapysdr cubicsdr
 
-	ghc 
+      qjackctl adlplug chuck csound
+
+      ghc
 
       ollama opencode open-webui alpaca aichat aider-chat
 
@@ -802,16 +826,18 @@
       # Core variables that work in both environments
       OBS_USE_EGL = "1";
       QT_QPA_PLATFORMTHEME = "kde";
-      
-      # Wayland-specific variables (will be overridden by session scripts)
-      QT_QPA_PLATFORM = "wayland";
+
+      # Wayland-preferred with X11 fallback. The old hard "wayland" values
+      # sabotaged the IceWM backup session: Qt/GTK/SDL apps refused to start
+      # under X11 because no Wayland display existed. Fallback lists let each
+      # toolkit pick whichever display server is actually running.
+      QT_QPA_PLATFORM = "wayland;xcb";
       NIXOS_OZONE_WL = "1";
-      GDK_BACKEND = "wayland";
-      SDL_VIDEODRIVER = "wayland";
-      CLUTTER_BACKEND = "wayland";
+      GDK_BACKEND = "wayland,x11,*";
+      SDL_VIDEODRIVER = "wayland,x11";
       MOZ_ENABLE_WAYLAND = "1";
     };
 
     system.stateVersion = "25.11";
   };
-}	
+}

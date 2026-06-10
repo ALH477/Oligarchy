@@ -178,7 +178,11 @@ in {
   };
 
   # ════════════════════════════════════════════════════════════════════════════
-  # Screen Recording Script
+  # Screen Recording Script — gpu-screen-recorder, hardware accelerated
+  # (Replaces the broken draft: `-w "$extra_args"` passed an EMPTY QUOTED
+  # string as the window argument so recording never started, and save-replay
+  # only sent a notification. This is the proven implementation from the
+  # monolith: PID+mode tracking, SIGINT graceful stop, real SIGUSR1 replay.)
   # ════════════════════════════════════════════════════════════════════════════
   home.file."${scriptsDir}/record.sh" = {
     executable = true;
@@ -186,79 +190,170 @@ in {
       #!/usr/bin/env bash
       set -euo pipefail
 
-      RECORDINGS_DIR="$HOME/Videos/Recordings"
-      REPLAYS_DIR="$HOME/Videos/Replays"
-      SCRIPTS_DIR="$(dirname "$0")"
+      DIR="$HOME/Videos/Recordings"
+      REPLAY_DIR="$HOME/Videos/Replays"
+      PIDFILE="/tmp/gpu-recorder.pid"
+      MODEFILE="/tmp/gpu-recorder.mode"
+      REPLAY_DURATION=60  # seconds
 
-      mkdir -p "$RECORDINGS_DIR" "$REPLAYS_DIR"
+      mkdir -p "$DIR" "$REPLAY_DIR"
 
-      get_active_monitor() {
-          hyprctl -j activewindow | jq -r '"\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"' 2>/dev/null || echo ""
+      notify() {
+        notify-send -t 3000 -i camera-video "󰑋  Recording" "$1" 2>/dev/null || true
       }
 
-      start_recording() {
-          local output="$RECORDINGS_DIR/$(date +%Y%m%d_%H%M%S).mp4"
-          local extra_args=""
-          
-          case "''${1:-screen}" in
-              screen)
-                  extra_args=""
-                  ;;
-              region)
-                  extra_args="-g $(slurp)"
-                  ;;
-              *)
-                  echo "Usage: $0 {screen|region|toggle|save-replay}"
-                  exit 1
-                  ;;
-          esac
-          
-          gpu-screen-recorder -w "$extra_args" -f 60 -c mp4 -o "$output" &
-          echo $! > /tmp/recording.pid
-          notify-send "Recording" "Started: $output"
+      error_notify() {
+        notify-send -t 3000 -u critical "󰑋  Recording" "Failed: $1" 2>/dev/null || true
+      }
+
+      is_recording() {
+        [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+      }
+
+      get_mode() {
+        [[ -f "$MODEFILE" ]] && cat "$MODEFILE" || echo "none"
       }
 
       stop_recording() {
-          if [[ -f /tmp/recording.pid ]]; then
-              kill $(cat /tmp/recording.pid) 2>/dev/null || true
-              rm /tmp/recording.pid
-              notify-send "Recording" "Stopped"
+        if is_recording; then
+          local pid=$(cat "$PIDFILE")
+          local mode=$(get_mode)
+
+          # SIGINT = graceful stop (gpu-screen-recorder finalizes on SIGINT)
+          kill -INT "$pid" 2>/dev/null || true
+
+          for i in {1..30}; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.1
+          done
+
+          rm -f "$PIDFILE" "$MODEFILE"
+
+          if [[ "$mode" == "record" ]]; then
+            notify "Recording saved to Videos/Recordings"
           fi
+          return 0
+        fi
+        return 1
+      }
+
+      start_recording() {
+        local output="$DIR/$(date +'%Y-%m-%d_%H%M%S').mp4"
+
+        gpu-screen-recorder \
+          -w screen \
+          -f 60 \
+          -a default_output \
+          -c mp4 \
+          -q very_high \
+          -o "$output" &
+
+        local pid=$!
+        echo "$pid" > "$PIDFILE"
+        echo "record" > "$MODEFILE"
+        notify "Recording started (Super+R to stop)"
+      }
+
+      start_region_recording() {
+        local selection
+        selection=$(slurp -d 2>/dev/null) || { error_notify "Selection cancelled"; exit 0; }
+
+        local output="$DIR/region_$(date +'%Y-%m-%d_%H%M%S').mp4"
+
+        gpu-screen-recorder \
+          -w screen \
+          -s "$selection" \
+          -f 60 \
+          -a default_output \
+          -c mp4 \
+          -q very_high \
+          -o "$output" &
+
+        local pid=$!
+        echo "$pid" > "$PIDFILE"
+        echo "record" > "$MODEFILE"
+        notify "Region recording started"
+      }
+
+      start_replay_buffer() {
+        # Continuously records the last N seconds; SIGUSR1 dumps the buffer.
+        gpu-screen-recorder \
+          -w screen \
+          -f 60 \
+          -a default_output \
+          -c mp4 \
+          -q very_high \
+          -r "$REPLAY_DURATION" \
+          -o "$REPLAY_DIR" &
+
+        local pid=$!
+        echo "$pid" > "$PIDFILE"
+        echo "replay" > "$MODEFILE"
+        notify "Replay buffer active (''${REPLAY_DURATION}s)"
       }
 
       save_replay() {
-          local output="$REPLAYS_DIR/replay_$(date +%Y%m%d_%H%M%S).mp4"
-          # Implementation depends on game-specific replay system
-          notify-send "Replay" "Saved to $output"
+        if is_recording && [[ "$(get_mode)" == "replay" ]]; then
+          local pid=$(cat "$PIDFILE")
+          kill -USR1 "$pid" 2>/dev/null
+          notify "Replay saved to Videos/Replays"
+        else
+          error_notify "No replay buffer active"
+        fi
       }
 
-      case "''${1:-}" in
-          toggle)
-              if [[ -f /tmp/recording.pid ]]; then
-                  stop_recording
-              else
-                  start_recording screen
-              fi
-              ;;
-          screen|region)
-              start_recording "''$1"
-              ;;
-          save-replay)
-              save_replay
-              ;;
-          replay-toggle)
-              notify-send "Replay" "Replay toggle not implemented"
-              ;;
-          *)
-              echo "Usage: $0 {toggle|screen|region|save-replay|replay-toggle}"
-              exit 1
-              ;;
+      # Waybar status output (JSON)
+      output_status() {
+        if is_recording; then
+          local mode=$(get_mode)
+          if [[ "$mode" == "record" ]]; then
+            echo '{"text": "󰑋 REC", "class": "recording", "tooltip": "Recording active\nClick: Stop | Right: Save Replay"}'
+          else
+            echo '{"text": "󰃽 REPLAY", "class": "replay", "tooltip": "Replay buffer active ('"$REPLAY_DURATION"'s)\nClick: Stop | Right: Save Replay"}'
+          fi
+        else
+          echo '{"text": "", "class": "idle", "tooltip": "Screen Recording\nClick: Start | Middle: Replay Mode"}'
+        fi
+      }
+
+      case "''${1:-status}" in
+        toggle)
+          if is_recording; then
+            stop_recording
+          else
+            start_recording
+          fi
+          ;;
+        region)
+          stop_recording 2>/dev/null || true
+          start_region_recording
+          ;;
+        replay-toggle)
+          if is_recording; then
+            stop_recording
+          else
+            start_replay_buffer
+          fi
+          ;;
+        save-replay)
+          save_replay
+          ;;
+        stop)
+          stop_recording || error_notify "Not recording"
+          ;;
+        status)
+          output_status
+          ;;
+        *)
+          echo "Usage: $0 {toggle|region|replay-toggle|save-replay|stop|status}"
+          exit 1
+          ;;
       esac
     '';
   };
 
   # ══════════════════════════════════════════════════════════════════════════
-  # Gamemode Toggle Script (for gaming performance optimization)
+# Gamemode Toggle Script (for gaming performance optimization)
   # ══════════════════════════════════════════════════════════════════════════
   home.file."${scriptsDir}/gamemode.sh" = lib.mkIf (features.enableGaming or false) {
     executable = true;
@@ -281,7 +376,7 @@ in {
         hyprctl --batch "\
           keyword animations:enabled 0; \
           keyword decoration:blur:enabled 0; \
-          keyword decoration:drop_shadow 0; \
+          keyword decoration:shadow:enabled 0; \
           keyword decoration:dim_inactive 0; \
           keyword misc:vfr 0; \
           keyword misc:vrr 2; \
@@ -301,7 +396,7 @@ in {
         hyprctl --batch "\
           keyword animations:enabled 1; \
           keyword decoration:blur:enabled 1; \
-          keyword decoration:drop_shadow 1; \
+          keyword decoration:shadow:enabled 1; \
           keyword decoration:dim_inactive 1; \
           keyword misc:vfr 1; \
           keyword misc:vrr 1; \

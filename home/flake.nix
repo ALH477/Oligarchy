@@ -1,91 +1,63 @@
 {
+  description = "DeMoD - Modular Nix Home Manager Configuration";
+
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    # Match the system flake's stable pin
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     home-manager = {
-      url = "github:nix-community/home-manager";
+      url = "github:nix-community/home-manager/release-25.11";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    hyprland.url = "github:hyprwm/Hyprland";
-    hyprland.inputs.nixpkgs.follows = "nixpkgs";
+    # NOTE: the hyprland flake input was removed — it was never referenced in
+    # outputs (the HM module uses pkgs.hyprland) and locked a huge dep tree.
   };
 
-  outputs = { self, nixpkgs, home-manager, ... } @ inputs:
+  outputs = { self, nixpkgs, home-manager, ... }:
     let
       lib = nixpkgs.lib;
-      description = "DeMoD - Modular Nix Home Manager Configuration";
-      
-      # System configurations
       systems = [ "x86_64-linux" "aarch64-linux" ];
-      
-      # Common overlay for all systems
-      overlay = final: prev: {
-        # Custom packages or overrides can go here
-      };
+      forAllSystems = lib.genAttrs systems;
     in
     {
-      # NixOS module for easy importing
-      nixosModules.demod = { config, pkgs, ... }:
+      # ── Standalone use ─────────────────────────────────────────────────────
+      #   home-manager switch --flake .#asher
+      # Previous version exported raw module imports here, which
+      # `home-manager switch` cannot consume. These are real activatable
+      # configurations built with homeManagerConfiguration.
+      homeConfigurations =
+        lib.listToAttrs (map (system: {
+          name = if system == "x86_64-linux" then "asher" else "asher-${system}";
+          value = home-manager.lib.homeManagerConfiguration {
+            pkgs = import nixpkgs {
+              inherit system;
+              config.allowUnfree = true;
+            };
+            modules = [ ./home.nix ];
+          };
+        }) systems);
+
+      # ── NixOS module use ───────────────────────────────────────────────────
+      # Host must also import home-manager.nixosModules.home-manager.
+      #   programs.demod.enable = true;
+      nixosModules.demod = { config, lib, ... }:
         let
           cfg = config.programs.demod;
         in
         {
           options.programs.demod = {
-            enable = lib.mkEnableOption "DeMoD home manager configuration";
-            
+            enable = lib.mkEnableOption "DeMoD home-manager configuration";
             username = lib.mkOption {
               type = lib.types.str;
               default = "asher";
-              description = "Username for the home configuration";
-            };
-            
-            features = lib.mkOption {
-              type = lib.types.attrsOf lib.types.bool;
-              default = {
-                enableDev = true;
-                enableGaming = false;
-                enableAudio = true;
-                enableDCF = false;
-                enableAIStack = false;
-                sessionType = "wayland";
-              };
-              description = "Feature flags for the configuration";
-            };
-            
-            theme = lib.mkOption {
-              type = lib.types.str;
-              default = "demod";
-              description = "Theme to use";
+              description = "User to attach the home configuration to.";
             };
           };
-          
+
           config = lib.mkIf cfg.enable {
-            home-manager.users.${cfg.username} = import ./home.nix {
-              inherit (inputs) nixpkgs;
-              username = cfg.username;
-              features = cfg.features;
-              theme = cfg.theme;
+            home-manager.users.${cfg.username} = {
+              imports = [ ./home.nix ];
             };
           };
         };
-      
-      # Home manager configurations for each system
-      homeConfigurations = lib.genAttrs systems (system:
-        let
-          pkgs = import nixpkgs {
-            inherit system;
-            overlays = [ overlay ];
-          };
-          
-          # Default configuration arguments
-          homeArgs = {
-            pkgs = pkgs;
-            lib = pkgs.lib;
-            inputs = inputs;
-            username = "asher";
-            # Allow feature overrides via extraArgs
-          };
-        in
-        import ./home.nix homeArgs
-      );
     };
 }

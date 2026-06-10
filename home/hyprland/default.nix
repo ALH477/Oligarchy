@@ -71,7 +71,9 @@ in {
       ];
 
       # Environment variables - comprehensive for all use cases
-      env = [
+      # lib.flatten + lib.optional: the old bare lib.optionals entries nested
+      # lists inside the list, which the HM hyprland serializer rejects.
+      env = lib.flatten [
         # Qt Theming
         "QT_QPA_PLATFORM,wayland;xcb"
         "QT_QPA_PLATFORMTHEME,qt5ct"
@@ -82,7 +84,7 @@ in {
         
         # GTK Theming
         "GTK_THEME,Adwaita:dark"
-        "GDK_BACKEND,wayland,x11,xkb"
+        "GDK_BACKEND,wayland,x11,*"
         
         # XDG & Desktop
         "XDG_CURRENT_DESKTOP,Hyprland"
@@ -103,23 +105,19 @@ in {
         "HYPRCURSOR_SIZE,24"
         "HYPRCURSOR_THEME,idTech4"
         
-        # XWayland Compatibility
-        "WLR_NO_HARDWARE_CURSORS,1"
-        
         # Gaming - VRR & Performance (only when gaming enabled)
-        (lib.optionals (features.enableGaming or false) "STEAM_FORCE_DESKTOPUI_SCALING,1")
-        (lib.optionals (features.enableGaming or false) "__GL_GSYNC_ALLOWED,1")
-        (lib.optionals (features.enableGaming or false) "__GL_VRR_ALLOWED,1")
-        (lib.optionals (features.enableGaming or false) "WLR_DRM_NO_ATOMIC,1")
+        (lib.optional (features.enableGaming or false) "STEAM_FORCE_DESKTOPUI_SCALING,1")
+        (lib.optional (features.enableGaming or false) "__GL_GSYNC_ALLOWED,1")
+        (lib.optional (features.enableGaming or false) "__GL_VRR_ALLOWED,1")
         
         # AMD Gaming
-        (lib.optionals (features.enableGaming or false) "AMD_VULKAN_ICD,RADV")
-        (lib.optionals (features.enableGaming or false) "RADV_PERFTEST,gpl")
+        (lib.optional (features.enableGaming or false) "AMD_VULKAN_ICD,RADV")
+        (lib.optional (features.enableGaming or false) "RADV_PERFTEST,gpl")
         
         # Wine/Proton Gaming
-        (lib.optionals (features.enableGaming or false) "WINE_FULLSCREEN_FSR,1")
-        (lib.optionals (features.enableGaming or false) "DXVK_ASYNC,1")
-        (lib.optionals (features.enableGaming or false) "GAMEMODERUNEXEC,env")
+        (lib.optional (features.enableGaming or false) "WINE_FULLSCREEN_FSR,1")
+        (lib.optional (features.enableGaming or false) "DXVK_ASYNC,1")
+        (lib.optional (features.enableGaming or false) "GAMEMODERUNEXEC,env")
         
         # SSH
         "SSH_AUTH_SOCK,$XDG_RUNTIME_DIR/gcr/ssh"
@@ -256,17 +254,12 @@ in {
         sync_gsettings_theme = true;
       };
 
-      # Gestures - touchpad configuration
-      gestures = lib.mkIf (features.hasTouchpad or false) {
-        workspace_swipe_direction_lock = true;
-        workspace_swipe_direction_lock_threshold = 10;
-        workspace_swipe_invert = false;
-        workspace_swipe_distance = 250;
-        workspace_swipe_cancel_ratio = 0.5;
-        workspace_swipe_min_speed_to_force = 30;
-        workspace_swipe_create_new = true;
-        workspace_swipe_forever = false;
-      };
+      # Touchpad workspace swipe — Hyprland ≥ 0.51 syntax. The old
+      # gestures:workspace_swipe_* options were removed upstream and now
+      # hard-fail config parsing; the unified `gesture` keyword replaces them.
+      gesture = lib.optionals (features.hasTouchpad or false) [
+        "3, horizontal, workspace"
+      ];
 
       # Workspace bindings
       binds = {
@@ -280,8 +273,8 @@ in {
       "$menu" = "wofi --show drun -I";
       "$browser" = "brave";
 
-      # Keybindings - complete set
-      bind = [
+      # Keybindings - complete set (flattened: lib.optional entries nest lists)
+      bind = lib.flatten [
         # Help & Core
         "$mod, F1, exec, ~/.config/hypr/scripts/keybind-help.sh"
         "$mod, Return, exec, $terminal"

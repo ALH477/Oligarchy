@@ -106,11 +106,11 @@ in {
       "custom/media" = {
         format = "{icon} {}";
         format-icons = {
-          default = "";
-          playing = "";
-          paused = "";
+          default = "";
+          playing = "";
+          paused = "";
         };
-        exec = "playerctl -a metadata --format='{{title}} - {{artist}}' --follow 5>/dev/null | head -n-1";
+        exec = "playerctl -a metadata --format='{{title}} - {{artist}}' --follow 2>/dev/null | head -n-1";
         exec-if = "pgrep playerctl";
         on-click = "playerctl play-pause";
         on-click-right = "playerctl next";
@@ -122,13 +122,16 @@ in {
       "group/audio" = {
         orientation = "inherit";
         modules = [ "wireplumber" "custom/wireplumber-microphone" ];
-        "custom/wireplumber-microphone" = {
-          format = "{format_source}";
-          format-source = "󰍬 {volume}%";
-          format-source-muted = "󰍭 Muted";
-          tooltip-format = "Microphone: {volume}%";
-          on-click = "wpctl set-source-mute @DEFAULT_SOURCE@ toggle";
-        };
+      };
+
+      # Top-level definition — waybar resolves group members by name from the
+      # root config; a definition nested inside the group block is ignored.
+      "custom/wireplumber-microphone" = {
+        format = "{format_source}";
+        format-source = "󰍬 {volume}%";
+        format-source-muted = "󰍭 Muted";
+        tooltip-format = "Microphone: {volume}%";
+        on-click = "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle";
       };
 
       "wireplumber" = {
@@ -150,7 +153,8 @@ in {
       };
 
       "backlight" = {
-        device = "intel_backlight";
+        # device omitted — auto-detects amdgpu_bl* on the Framework 16.
+        # The old hardcoded "intel_backlight" matched nothing on AMD.
         format = "{icon} {percent}%";
         format-icons = [ "󰃞" "󰃟" "󰃠" ];
         on-scroll-up = "brightnessctl set 5%+";
@@ -181,8 +185,8 @@ in {
       "network" = {
         format-wifi = "󰖩 {signalStrength}%";
         format-ethernet = "󰈀 {ifname}";
-        tooltip-format-wifi = "󰖩 {essid} ({signalStrength}%)\n {bandwidthDownBits} 󰕒 {bandwidthUpBits}";
-        tooltip-format-ethernet = "󰈀 {ifname}\n {bandwidthDownBits} 󰕒 {bandwidthUpBits}";
+        tooltip-format-wifi = "󰖩 {essid} ({signalStrength}%)\n {bandwidthDownBits} 󰕒 {bandwidthUpBits}";
+        tooltip-format-ethernet = "󰈀 {ifname}\n {bandwidthDownBits} 󰕒 {bandwidthUpBits}";
         format-linked = "󰖪 {ifname} (No IP)";
         format-disconnected = "󰖪 Disconnected";
         format-alt = "󰀂 {ifname}: {ipaddr}/{cidr}";
@@ -198,16 +202,6 @@ in {
         tooltip-format = "{}";
       };
 
-      # Theme signal handler (receives signals from Hyprland keybindings)
-      "custom/theme" = {
-        format = "";
-        exec = "echo";
-        interval = 0;
-        signal = true;
-        on-signal = "pkill -HUP waybar";
-        tooltip = false;
-      };
-
       "custom/power" = {
         format = "󰐥";
         tooltip = true;
@@ -217,7 +211,10 @@ in {
         on-click-middle = "shutdown now";
       };
 
-      "custom/gamemode" = lib.mkIf (features.enableGaming or false) {
+      # Always defined; only *referenced* in modules-right when enableGaming.
+      # (lib.mkIf inside JSON-serialized settings leaks _type/condition attrs
+      # into the generated config file — never use it here.)
+      "custom/gamemode" = {
         format = "{}";
         exec = "~/.config/hypr/scripts/gamemode.sh status";
         return-type = "json";
@@ -247,17 +244,17 @@ in {
       }
 
       /* Base module styling */
-      #custom/logo,
+      #custom-logo,
       #workspaces,
       #window,
       #clock,
-      #custom/media,
+      #custom-media,
       #pulseaudio,
       #backlight,
       #battery,
       #network,
       #tray,
-      #custom/power {
+      #custom-power {
         background: ${p.surface};
         color: ${p.text};
         padding: 0 16px;
@@ -268,7 +265,7 @@ in {
       }
 
       /* Logo module special styling */
-      #custom/logo {
+      #custom-logo {
         color: ${p.accent};
         font-size: 20px;
         padding: 0 14px;
@@ -486,7 +483,7 @@ in {
       }
 
       /* Power button styling */
-      #custom/power {
+      #custom-power {
         color: ${p.warning};
         border-color: ${p.warning};
         font-weight: 700;
@@ -549,7 +546,7 @@ in {
       }
 
       /* Hover effects for all modules */
-      #custom/media:hover,
+      #custom-media:hover,
       #pulseaudio:hover,
       #backlight:hover,
       #battery:hover,
@@ -561,23 +558,8 @@ in {
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
       }
 
-      /* Responsive adjustments */
-      @media (max-width: 1200px) {
-        #window {
-          max-length: 30px;
-        }
-      }
-
-      @media (max-width: 800px) {
-        #window {
-          display: none;
-        }
-        
-        #custom-logo {
-          font-size: 16px;
-          padding: 0 10px;
-        }
-      }
+      /* NOTE: @media queries removed — GTK CSS has no media-query support;
+         waybar logged parse errors and ignored those blocks anyway. */
     '';
   };
 }

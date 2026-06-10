@@ -69,8 +69,10 @@ in {
   # ════════════════════════════════════════════════════════════════════════════
   programs.git = {
     enable = true;
-    userName = username;
-    userEmail = "${username}@localhost";
+    userName = "Asher";
+    # was "${username}@localhost" — every commit authored on this box would
+    # carry an unroutable identity GitHub can't associate with your account.
+    userEmail = "demodllc@gmail.com";
     extraConfig = {
       init.defaultBranch = "main";
       pull.rebase = true;
