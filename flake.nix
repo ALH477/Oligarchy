@@ -125,12 +125,14 @@
       # Package configuration
       { nixpkgs.config = pkgsConfig; }
 
-      # Third-party modules
+      # Third-party modules (board-specific hardware modules live per-host below)
       determinate.nixosModules.default
       sops-nix.nixosModules.sops
-      nixos-hardware.nixosModules.framework-16-7040-amd
-      fw-fanctrl.nixosModules.default
       demod-ip-blocker.nixosModules.default
+
+      # Hardware platform abstraction (custom.platform.{gpu,cpu,framework,...}).
+      # Per-host modules set the gpu/cpu; default is the Framework 16 AMD config.
+      ./modules/platform.nix
 
       # Local modules - order matters! Options must be defined before config uses them
       # Boot intro options (single module; TUI/API/StreamDB stubs were removed)
@@ -140,11 +142,10 @@
       ./modules/blipply-integration.nix
 
       # Main configuration (uses options defined above).
-      # Note: configuration.nix itself imports modules/audio.nix,
-      # modules/boot-intro.nix and the three dcf-*.nix modules, so those
-      # travel with it and are intentionally not repeated here.
+      # Note: configuration.nix itself imports modules/audio.nix and the three
+      # dcf-*.nix modules, so those travel with it. hardware-configuration.nix
+      # and the nixos-hardware board module are per-host (see below).
       ./configuration.nix
-      ./modules/hardware-configuration.nix
       ./modules/kernel.nix
       ./modules/agentic-local-ai.nix
       ./modules/openclaw-agent.nix
@@ -166,28 +167,65 @@
       # ./modules/archibaldos-dsp-vm.nix
     ];
 
+    # Home Manager integration (system only — the ISO's live user is created by
+    # the installer profile, not by HM). Shared by every host.
+    hmModule = {
+      imports = [ home-manager.nixosModules.home-manager ];
+      home-manager = {
+        useGlobalPkgs = true;
+        useUserPackages = true;
+        backupFileExtension = "hm-backup";
+        users.asher = import ./home/home.nix;
+        extraSpecialArgs = specialArgs;
+      };
+    };
+
+    mkHost = hostModules: nixpkgs.lib.nixosSystem {
+      inherit system specialArgs;
+      modules = commonModules ++ [ hmModule ] ++ hostModules;
+    };
+
   in {
     # ════════════════════════════════════════════════════════════════════════
-    # Main System Configuration
+    # System Configurations (one per hardware target)
     # ════════════════════════════════════════════════════════════════════════
-    nixosConfigurations.nixos = nixpkgs.lib.nixosSystem {
-      inherit system specialArgs;
 
-      modules = commonModules ++ [
-        # Home Manager integration (system only — the ISO's live user is
-        # created by the installer profile, not by HM)
-        home-manager.nixosModules.home-manager
-        {
-          home-manager = {
-            useGlobalPkgs = true;
-            useUserPackages = true;
-            backupFileExtension = "hm-backup";
-            users.asher = import ./home/home.nix;
-            extraSpecialArgs = specialArgs;
-          };
-        }
-      ];
-    };
+    # Framework 16 AMD 7040 — the original target, behaviour unchanged.
+    nixosConfigurations.nixos = mkHost [
+      nixos-hardware.nixosModules.framework-16-7040-amd
+      fw-fanctrl.nixosModules.default
+      ./modules/hardware-configuration.nix
+      { custom.platform = { gpu = "amd"; cpu = "amd"; framework = true; }; }
+    ];
+
+    # Pure Intel laptop (iGPU only, CPU inference).
+    nixosConfigurations.nixos-intel = mkHost [
+      nixos-hardware.nixosModules.common-cpu-intel
+      nixos-hardware.nixosModules.common-gpu-intel
+      nixos-hardware.nixosModules.common-pc-laptop-ssd
+      ./hosts/intel/hardware-configuration.nix
+      { custom.platform = { gpu = "intel"; cpu = "intel"; framework = false; }; }
+    ];
+
+    # Intel + Nvidia Optimus laptop (PRIME render offload, CUDA AI stack).
+    # Fill in the PCI bus ids in hosts/optimus/hardware-configuration.nix or here.
+    nixosConfigurations.nixos-optimus = mkHost [
+      nixos-hardware.nixosModules.common-cpu-intel
+      nixos-hardware.nixosModules.common-gpu-intel   # iGPU (primary display under offload)
+      nixos-hardware.nixosModules.common-gpu-nvidia  # = prime.nix (offload)
+      nixos-hardware.nixosModules.common-pc-laptop-ssd
+      ./hosts/optimus/hardware-configuration.nix
+      {
+        custom.platform = {
+          gpu = "nvidia-optimus";
+          cpu = "intel";
+          framework = false;
+          # Obtain with: lspci | grep -E 'VGA|3D|Display'  ("01:00.0" -> "PCI:1:0:0")
+          nvidia.intelBusId = "PCI:0:2:0";
+          nvidia.nvidiaBusId = "PCI:1:0:0";
+        };
+      }
+    ];
 
     # ════════════════════════════════════════════════════════════════════════
     # Installation ISO & Tests
@@ -200,6 +238,13 @@
         specialArgs = builtins.removeAttrs specialArgs [ "archibaldos" ];
 
         modules = commonModules ++ [
+          # Installer image targets the Framework 16 AMD (status quo). Hardware
+          # modules are now per-host, so re-add them explicitly here.
+          nixos-hardware.nixosModules.framework-16-7040-amd
+          fw-fanctrl.nixosModules.default
+          ./modules/hardware-configuration.nix
+          { custom.platform = { gpu = "amd"; cpu = "amd"; framework = true; }; }
+
           "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-plasma6.nix"
 
           ({ lib, ... }: {

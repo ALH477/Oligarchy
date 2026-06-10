@@ -86,9 +86,8 @@
     services.ollamaAgentic = {
       enable = true;
       preset = "pewdiepie";  # High-performance preset
-      acceleration = "rocm";
-      advanced.rocm.gfxVersionOverride = "11.0.2";
-      # RDNA3
+      # acceleration + rocm.gfxVersionOverride are set per-GPU by
+      # modules/platform.nix (amd->rocm, intel->cpu, optimus->cuda).
     };
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -220,26 +219,18 @@
         efi.canTouchEfiVariables = true;
       };
 
+      # GPU (amdgpu.*), CPU pstate (amd_pstate) and Framework USB quirks now come
+      # from modules/platform.nix per custom.platform.{gpu,cpu,framework}.
       kernelParams = [
-        "amdgpu.abmlevel=0"
-        "amdgpu.sg_display=0"
-        "amdgpu.exp_hw_support=1"
-        "usbcore.autosuspend=-1"
-        "usbcore.use_both_schemes=y"
-        "xhci_hcd.quirks=0x40"
-        "usb-storage.quirks=:u"
-        "amd_pstate=active"
         "pcie_aspm=off"
         "threadirqs"  # threaded IRQs — lets rtkit prioritize audio IRQ handlers
       ];
-      initrd.kernelModules = [ "amdgpu" "thunderbolt" ];
+      initrd.kernelModules = [ "thunderbolt" ];
 
       kernelModules = [
-        "amdgpu"
         "v4l2loopback"
         "thunderbolt"
         "xhci_pci"
-        "kvm-amd"
       ];
       extraModulePackages = [ config.boot.kernelPackages.v4l2loopback ];
 
@@ -532,11 +523,11 @@
       graphics = {
         enable = true;
         enable32Bit = true;
+        # Vendor-neutral VAAPI/VDPAU bridges. GPU-specific userspace (ROCm for
+        # AMD, intel-media-driver for Intel) is added by modules/platform.nix.
         extraPackages = with pkgs; [
           libva-vdpau-driver
           libvdpau-va-gl
-          rocmPackages.clr
-          rocmPackages.clr.icd
         ];
       };
     };
