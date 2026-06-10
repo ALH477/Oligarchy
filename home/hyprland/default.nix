@@ -429,6 +429,11 @@ in {
         ", XF86AudioStop, exec, playerctl stop"
         "$mod, N, exec, playerctl previous"
         "$mod, COMMA, exec, playerctl next"
+
+        # Audio / DSP cockpit — Super+A enters the submap; quick I/O cycling direct
+        "$mod, A, submap, audio"
+        "$mod, period, exec, audio-dev next sink"
+        "$mod SHIFT, period, exec, audio-dev next source"
       ];
 
       # Volume/Brightness (with waybar reload)
@@ -557,6 +562,27 @@ in {
       binde = , h, resizeactive, -40 0
       binde = , k, resizeactive, 0 -40
       binde = , j, resizeactive, 0 40
+      bind = , escape, submap, reset
+      bind = , return, submap, reset
+      submap = reset
+
+      # Audio / DSP cockpit submap — enter with Super+A, exit with Esc/Enter.
+      # waybar shows "audio" while it's active.
+      submap = audio
+      bind = , o, exec, audio-dev next sink
+      bind = SHIFT, o, exec, audio-dev menu sink
+      bind = , i, exec, audio-dev next source
+      bind = SHIFT, i, exec, audio-dev menu source
+      bind = , m, exec, audio-dev mute sink
+      bind = SHIFT, m, exec, audio-dev mute source
+      bind = , bracketright, exec, dsp-quantum up
+      bind = , bracketleft,  exec, dsp-quantum down
+      bind = , r, exec, dsp-rig next
+      bind = SHIFT, r, exec, oligarchy-menu
+      bind = , d, exec, dsp-arm toggle
+      bind = , e, exec, easyeffects
+      bind = , g, exec, qpwgraph
+      bind = , h, exec, helvum
       bind = , escape, submap, reset
       bind = , return, submap, reset
       submap = reset

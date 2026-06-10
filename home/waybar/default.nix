@@ -239,8 +239,12 @@ in {
         exec = "dsp-latency";
         interval = 3;
         tooltip = true;
-        tooltip-format = "DSP latency · active rig\\nClick: open the patchbay (qpwgraph)";
-        on-click = "qpwgraph";
+        tooltip-format = "DSP latency · active rig\\nScroll: volume · Click: Control Center · Right: next output · Middle: mute";
+        on-click = "oligarchy-menu";
+        on-click-right = "audio-dev next sink";
+        on-click-middle = "audio-dev mute sink";
+        on-scroll-up = "swayosd-client --output-volume raise --max-volume 100";
+        on-scroll-down = "swayosd-client --output-volume lower";
       };
     };
 

@@ -90,8 +90,16 @@ let
     case "''${1:-}" in
       list)   ls "$RIGDIR" 2>/dev/null; exit 0 ;;
       status) cat "$STATE" 2>/dev/null || echo bypass; exit 0 ;;
+      next|prev)
+        mapfile -t rigs < <(ls "$RIGDIR" 2>/dev/null)
+        [ "''${#rigs[@]}" -gt 0 ] || exit 0
+        cur="$(cat "$STATE" 2>/dev/null || echo "''${rigs[0]}")"
+        idx=0; for k in "''${!rigs[@]}"; do [ "''${rigs[$k]}" = "$cur" ] && idx="$k"; done
+        if [ "$1" = "prev" ]; then n=$(( (idx - 1 + ''${#rigs[@]}) % ''${#rigs[@]} )); else n=$(( (idx + 1) % ''${#rigs[@]} )); fi
+        exec "$0" switch "''${rigs[$n]}"
+        ;;
       switch) ;;
-      *) echo "usage: dsp-rig {switch <name>|list|status}" >&2; exit 2 ;;
+      *) echo "usage: dsp-rig {switch <name>|next|prev|list|status}" >&2; exit 2 ;;
     esac
 
     name="''${2:-bypass}"
@@ -160,6 +168,21 @@ in
 
   config = mkIf cfg.enable {
     environment.systemPackages = [ runner pkgs.mod-host pkgs.lsp-plugins pkgs.qpwgraph pkgs.jack2 ];
+
+    # Let a wheel user arm/disarm the DSP coprocessor (the `dsp-arm` cockpit key)
+    # without a password — scoped to exactly those units.
+    security.polkit.extraConfig = ''
+      polkit.addRule(function(action, subject) {
+        if (action.id == "org.freedesktop.systemd1.manage-units" && subject.isInGroup("wheel")) {
+          var unit = action.lookup("unit");
+          if (unit == "${config.services.dsp-vm.name}.service" ||
+              unit == "dsp-netjack-bridge.service" ||
+              unit == "dsp-jack-bridge.service") {
+            return polkit.Result.YES;
+          }
+        }
+      });
+    '';
 
     # One metadata file per rig for the runtime runner / control center.
     environment.etc = mapAttrs' (n: r: nameValuePair "oligarchy/dsp-rigs/${n}" { text = rigMetaFor n r; }) cfg.rigs;

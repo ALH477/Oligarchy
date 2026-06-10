@@ -199,6 +199,20 @@ in {
     source = ./dsp-latency.sh;
   };
 
+  # DSP/audio cockpit engine: device switching, live latency, coprocessor arm.
+  home.file.".local/bin/audio-dev" = {
+    executable = true;
+    source = ./audio-dev.sh;
+  };
+  home.file.".local/bin/dsp-quantum" = {
+    executable = true;
+    source = ./dsp-quantum.sh;
+  };
+  home.file.".local/bin/dsp-arm" = {
+    executable = true;
+    source = ./dsp-arm.sh;
+  };
+
   # ════════════════════════════════════════════════════════════════════════════
   # Screen Recording Script — gpu-screen-recorder, hardware accelerated
   # (Replaces the broken draft: `-w "$extra_args"` passed an EMPTY QUOTED

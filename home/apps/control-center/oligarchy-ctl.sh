@@ -83,6 +83,18 @@ ai-pull|Pull a model…
 EOF
       ;;
     dsp) cat <<'EOF'
+out-cycle|🔊 Output → next device
+out-menu|🔊 Output → pick…
+in-cycle|🎙 Input → next device
+in-menu|🎙 Input → pick…
+mute-out|Mute output
+mute-mic|Mute mic
+lat-up|Latency ↑
+lat-down|Latency ↓
+arm-dsp|Arm / disarm coprocessor
+patchbay|Patchbay (qpwgraph)
+helvum-open|Patchbay (helvum)
+easyeffects-open|EasyEffects
 dsp-status|DSP status
 dsp-console|DSP console
 dsp-netjack|Restart NETJACK
@@ -237,6 +249,18 @@ run() {
     dsp-console)    in_term dsp-console ;;
     dsp-netjack)    visible dsp-netjack-restart ;;
     rt-check)       visible rt-check ;;
+    out-cycle)      audio-dev next sink ;;
+    out-menu)       audio-dev menu sink ;;
+    in-cycle)       audio-dev next source ;;
+    in-menu)        audio-dev menu source ;;
+    mute-out)       audio-dev mute sink ;;
+    mute-mic)       audio-dev mute source ;;
+    lat-up)         dsp-quantum up ;;
+    lat-down)       dsp-quantum down ;;
+    arm-dsp)        dsp-arm toggle ;;
+    patchbay)         setsid -f qpwgraph >/dev/null 2>&1 & ;;
+    helvum-open)      setsid -f helvum >/dev/null 2>&1 & ;;
+    easyeffects-open) setsid -f easyeffects >/dev/null 2>&1 & ;;
 
     dcf-status)     visible hydramesh-status ;;
     dcf-logs)       in_term hydramesh-logs ;;
