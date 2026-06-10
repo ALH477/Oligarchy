@@ -1,6 +1,6 @@
 # ![Oligarchy](./assets/oligarchy.gif) NixOS – The Unstoppable War Machine
 
-**Framework 16 Optimized · 13K+ LoC · AMD 7040 · NVIDIA · Hyprland · Plasma 6 · IceWM · LeftWM · X11/Wayland · CachyOS/Zen kernel · ~5–7 W idle · Nuclear-grade DSP coprocessor · Calamares Install · DeMoD Branded · DCF Compute Fabric**
+**Framework 16 Native · 13K+ LoC · AMD 7040 · Intel · Nvidia Optimus · Hyprland · Plasma 6 · IceWM · LeftWM · X11/Wayland · CachyOS/Zen kernel · ~5–7 W idle · Nuclear-grade DSP coprocessor · Calamares Install · DeMoD Branded · DCF Compute Fabric**
 
 ![logo](Untitled.jpg)
 
@@ -52,7 +52,7 @@ By compiling, booting, rebasing, or even *dreaming* of running Oligarchy NixOS o
    Non-compliance auto-triggers self-snitch to the CA AG with attached invoice for **$750,000 × CPU cycles wasted on your compliance theater**.
 
 3. **Deepfake, Synthetic Content & Age-Gating Wrath Clause**  
-   Any output (DeMoD Voice audio, GPU Boot Intro Suite v2 cinematic, Kitty TUI greeting) deemed "synthetic" **or** accessed without a valid age bracket signal MUST prepend:  
+   Any output (DeMoD Voice audio, CRT Boot Intro Suite v2 cinematic, Kitty TUI greeting) deemed "synthetic" **or** accessed without a valid age bracket signal MUST prepend:  
    ```
    DECEPTIVE OLIGARCHIC SUPREMACY – May cause feelings of inadequacy in plebeian hardware. 
    Age Bracket Verified per AB 1043 (barely). 
@@ -86,7 +86,7 @@ The Oligarchy endures.
 | Component                        | Reality (February 2026)                                                                  |
 |----------------------------------|----------------------------------------------------------------------------------------|
 | Host OS                          | Oligarchy NixOS (CachyOS/Zen/XanMod/BORE kernel, Hyprland primary, Plasma 6 optional)  |
-| Boot Experience                  | Boot Intro Suite v2 — GPU-accelerated video generation, StreamDB, TUI/API              |
+| Boot Experience                  | CRT boot cinematic — FFmpeg-forged scanlines/chromatic-aberration/grain, mpv on tty1 (StreamDB/TUI/API pretenders executed) |
 | Welcome Experience               | Rust-powered greeting — Kitty graphics, adaptive images, terminal-native TUI            |
 | VM Manager                       | 4 dedicated VMs: DSP, Coding Sandbox, Kali, OpenWRT                                   |
 | DSP Coprocessor                  | ArchibaldOS-DSP QEMU/KVM + NETJACK — 1.33ms @ 96kHz                                   |
@@ -96,13 +96,25 @@ The Oligarchy endures.
 | Latency                          | 0.38–0.58 ms @ 96 kHz / 32–64 samples (theoretical)                                     |
 | Recovery time                    | 180–350 ms via kexec (laughs at $80 000 proprietary failures)                          |
 | Host impact                      | Zero. Crush Doom Eternal at 300+ FPS while the DSP resurrects 40× per second            |
-| AI Stack                         | Ollama + ROCm, `ai-stack` CLI, hardware-tier presets                                   |
+| AI Stack                         | Ollama + ROCm / CUDA / CPU (whichever silicon you conscript), `ai-stack` CLI, presets  |
 | Networking Fabric                | DeMoD Compute Fabric (DCF) — community node, identity service, tray controller        |
 | Distribution                     | Everything forged from pinned flakes — no GitHub chaos, only victory                    |
 
 You now wield **Abbey Road monitoring latency**, local agentic AI supremacy, and DCF real-time fabric on a laptop that annihilates games at max settings. Bow down.
 
 <img width="1280" height="756" alt="Screenshot_20260118_231956" src="https://github.com/user-attachments/assets/b8afed41-52d9-4f32-84c2-5d7c73aefee7" />
+
+## Pick Your War Machine
+
+One flake, three configurations — each forged to dominate its own silicon. No throne, no favourites; conscript whichever transistors you happen to own:
+
+| Target          | Build                                           | Silicon                                  | War-AI            |
+|-----------------|-------------------------------------------------|------------------------------------------|-------------------|
+| `nixos`         | `nixos-rebuild switch --flake .#nixos`          | AMD 7040 + Radeon (Framework 16)         | Ollama + ROCm     |
+| `nixos-intel`   | `nixos-rebuild switch --flake .#nixos-intel`    | Pure Intel iGPU                          | Ollama on CPU     |
+| `nixos-optimus` | `nixos-rebuild switch --flake .#nixos-optimus`  | Intel iGPU + Nvidia dGPU (PRIME offload) | Ollama + CUDA     |
+
+Flip one knob — `custom.platform.{gpu,cpu,framework}` — and the flake re-forges the GPU stack, kernel modules, power policy, and AI acceleration to match. The Nvidia dGPU stays asleep until you summon it for war (`nvidia-offload <cmd>`); CUDA wakes it for the local AI stack. Fill in your disks (and, for Optimus, your PCI bus ids) in `hosts/<target>/hardware-configuration.nix`.
 
 ## DeMoD Branded Fortress
 
@@ -177,7 +189,8 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 - **DCF Compute Fabric**: Real-time multiplayer/edge fabric with community node, identity/billing, tray controller, and hardened containers.
 - **Virtual Camera**: `v4l2loopback` for streaming domination.
 - **Rust Greeting System**: Kitty graphics protocol for displaying brand images directly in terminal, adaptive layout based on terminal size, system info display, and interactive TUI launcher.
-- **Boot Intro Suite v2**: Hybrid architecture supporting generated videos from audio, StreamDB database, or pre-rendered files. GPU-accelerated encoding with quality presets.
+- **Boot Intro Suite v2**: A software-forged CRT war-cinematic — FFmpeg renders your audio into mirrored waveforms drowned in scanlines, chromatic aberration, bloom and analog grain, then mpv slams it onto tty1 before the display manager ever draws breath. Generate from any audio file or supply your own pre-rendered clip; nine theme palettes; fast→ultra quality presets. (The StreamDB/TUI/API "suite" pretenders were taken out back — they were `mpv --help` in a trenchcoat.)
+- **Three War Machines, One Flake**: GPU-agnostic `custom.platform` module — forge the same empire for AMD (ROCm), pure Intel (CPU), or Intel + Nvidia Optimus (PRIME offload + CUDA). Flip one enum and the flake re-forges drivers, kernel modules, power policy, and AI acceleration. Conquest, portable.
 - **Virtual DSP Coprocessor**: Soundproof clean-room RT guest inside the chaotic host party bus — a technical masterpiece.
 
 ![wallpaper-color](https://github.com/user-attachments/assets/6c5754c8-21d6-45c1-a775-b77a871bf517)
@@ -202,18 +215,20 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 
 3. **Build the ISO**:
    ```bash
-   nix build .#nixosConfigurations.iso.config.system.build.isoImage
+   nix build .#iso
    ```
 
 4. **Flash & Install**:
    - Flash `result/iso/nixos-*.iso` to USB.
    - Boot → Calamares → conquer disk, encryption, user setup → reboot into victory.
 
-5. **Existing System Quick Switch** (post-install):
+5. **Existing System Quick Switch** (post-install — pick your silicon):
    ```bash
    cd /etc/nixos
    sudo git pull
-   sudo nixos-rebuild switch --flake .
+   sudo nixos-rebuild switch --flake .#nixos          # AMD 7040 Framework
+   # or:  --flake .#nixos-intel     (pure Intel)
+   # or:  --flake .#nixos-optimus   (Intel + Nvidia Optimus; fill in PCI bus ids first)
    ```
 
 ## State Sanctioned Usage – Rule Your Domain
@@ -244,10 +259,10 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
   - Interactive TUI launcher with keyboard shortcuts
   - Configurable via `services.oligarchyGreeting`
   
-- **Boot Intro** (plays before login):
-  - `boot-intro` — Manual trigger
-  - Supports GPU encoding (NVENC/VA-API)
-  - StreamDB integration for video management
+- **Boot Intro** (auto-plays on tty1 before the display manager):
+  - Rendered once at build time; the cinematic lives at `/etc/demod/boot-intro.mp4`
+  - Tune the spectacle: `theme` (9 palettes), `renderQuality` (fast→ultra), `scanlines`, `scanlineIntensity`, `chromaticAberration`, `grain`
+  - `source = "generate"` (FFmpeg from your `soundFile`) or `"file"` (pre-rendered)
   - Config: `services.boot-intro`
 
 - **DSP Coprocessor** (optional, enable in flake):
@@ -259,7 +274,7 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 
 - **Network**: `net-status`, `net-fix`, `net-wifi list/connect`.
 - **Docker/DCF**: `docker-start`, `docker logs dcf-sdk`.
-- **Ollama GPU**: `rocm-smi`, check gfx override.
+- **Ollama GPU**: AMD — `rocm-smi`, check gfx override. Nvidia/Optimus — `nvidia-smi`, launch GPU work via `nvidia-offload`.
 - **USB drops**: Fixed in config; check `power/control` if needed.
 - **General**: `journalctl -u ...`, NixOS Wiki, GitHub issues.
 
@@ -278,11 +293,13 @@ Fork, improve, test, PR. Keep it Framework-compliant and flake-pure.
 ![meme](./assets/meme.png)
 
 
-## License – The Code of Conquest
+## License — The Tyranny You May Legally Clone
 
 BSD 3-Clause License (full text unchanged from original).
 
-ArchibaldOS BSD-3 | StreamDB LGPL | Core Oligarchy BSD-3.
+The throne's filthiest secret: the most despotic distro ever compiled is **BSD 3-Clause**. Fork the empire. Sell it. Rename it `Democracy` and ship it. Strip every DeMoD glyph and swear you forged it yourself — the license *permits regicide*. We just bet you can't out-optimize us after the coup. An oligarchy you can `git clone` is the only honest kind.
+
+ArchibaldOS BSD-3 | Core Oligarchy BSD-3.
 
 # Victory is y(ours).
 
