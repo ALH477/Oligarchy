@@ -325,9 +325,9 @@ in {
     users.users.${userName}.extraGroups = [ "docker" ]
       ++ optionals (effectiveAcceleration == "rocm") [ "video" ];
 
-    # Required packages
+    # Required packages (docker CLI comes from virtualisation.docker on PATH;
+    # listing pkgs.docker here pulled the insecure docker_28 default)
     environment.systemPackages = with pkgs; [
-      docker
       docker-compose
       aiStackScript
       curl

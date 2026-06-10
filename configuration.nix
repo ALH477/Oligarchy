@@ -7,7 +7,11 @@
 
   imports = [
     ./modules/audio.nix
-    ./modules/boot-intro.nix
+    # boot-intro options come from the boot-intro flake module
+    # (modules/boot-intro/modules/core.nix), wired in flake.nix. The standalone
+    # ./modules/boot-intro.nix is an older monolithic copy declaring the same
+    # services.boot-intro options — importing both is a duplicate-option eval
+    # error, so it is intentionally not imported here.
     ./modules/dcf-community-node.nix
     ./modules/dcf-identity.nix
     ./modules/dcf-tray.nix
@@ -33,8 +37,10 @@
     bottomText = "A NixOS distro";
 
     # Optional: Your logo (PNG or animated GIF)
-     logoImage = ./assets/modretro.png;
-     logoScale = 0.5;
+    # Re-enable once the asset is added & git-tracked (assets/modretro.png is
+    # absent from the repo, so referencing it fails pure flake eval).
+    # logoImage = ./assets/modretro.png;
+    # logoScale = 0.5;
 
     # Audio source — MIDI gets synthesized, audio files normalized
     # soundFile = ./assets/boot-chime.mid;
@@ -42,7 +48,9 @@
      soundFile = ./assets/modretro.wav;
     volume = 40;
     # Optional: Background video (loops behind waveform)
-     backgroundVideo = ./assets/modretro.mp4;
+    # Re-enable once assets/modretro.mp4 is added & git-tracked (absent from
+    # the repo, so referencing it fails pure flake eval).
+    # backgroundVideo = ./assets/modretro.mp4;
 
     # Visual tuning
     resolution = "2560x1600";  # Match your Framework 16 display
@@ -683,6 +691,9 @@
     # ──────────────────────────────────────────────────────────────────────────
     virtualisation.docker = {
       enable = true;
+      # Default docker (docker_28) is flagged insecure/unmaintained since
+      # Nov 2025; pin the maintained release rather than allow an insecure pkg.
+      package = pkgs.docker_29;
       enableOnBoot = true;
       storageDriver = "overlay2";
       autoPrune = {
@@ -751,7 +762,9 @@
     # System Packages (removed legacy audio tools)
     # ──────────────────────────────────────────────────────────────────────────
     environment.systemPackages = with pkgs; [
-      vim docker git git-lfs gh htop nvme-cli lm_sensors s-tui stress
+      # `docker` CLI is provided on PATH by virtualisation.docker (docker_29);
+      # listing pkgs.docker here pulled the insecure docker_28 default.
+      vim git git-lfs gh htop nvme-cli lm_sensors s-tui stress
       dmidecode util-linux gparted usbutils
 
       (python3.withPackages (ps: with ps; [

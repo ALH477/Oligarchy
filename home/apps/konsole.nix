@@ -9,7 +9,14 @@ let
     r = lib.substring 0 2 hex';
     g = lib.substring 2 2 hex';
     b = lib.substring 4 2 hex';
-    toDec = s: lib.toIntBase16 s;
+    # nixpkgs lib has no base-16 parser; fold chars over a hex-digit table.
+    toDec = s: lib.foldl'
+      (acc: c: acc * 16 + (builtins.getAttr (lib.toLower c) {
+        "0" = 0; "1" = 1; "2" = 2; "3" = 3; "4" = 4; "5" = 5; "6" = 6; "7" = 7;
+        "8" = 8; "9" = 9; "a" = 10; "b" = 11; "c" = 12; "d" = 13; "e" = 14; "f" = 15;
+      }))
+      0
+      (lib.stringToCharacters s);
   in "${toString (toDec r)},${toString (toDec g)},${toString (toDec b)}";
 in
 {

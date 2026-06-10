@@ -3,13 +3,21 @@
 let
   p = theme;
   
-  # Convert hex to KDE RGB format (R,G,B without commas)
+  # Convert hex to KDE RGB format (R,G,B). nixpkgs lib has no base-16 parser,
+  # so fold each 2-char group over a hex-digit lookup table.
+  hexDigits = {
+    "0" = 0; "1" = 1; "2" = 2; "3" = 3; "4" = 4; "5" = 5; "6" = 6; "7" = 7;
+    "8" = 8; "9" = 9; "a" = 10; "b" = 11; "c" = 12; "d" = 13; "e" = 14; "f" = 15;
+  };
+  toDec = s: lib.foldl'
+    (acc: c: acc * 16 + hexDigits.${lib.toLower c})
+    0
+    (lib.stringToCharacters s);
   hexToKde = hex: let
     hex' = lib.removePrefix "#" hex;
     r = lib.substring 0 2 hex';
     g = lib.substring 2 2 hex';
     b = lib.substring 4 2 hex';
-    toDec = s: lib.toIntBase16 s;
   in "${toString (toDec r)},${toString (toDec g)},${toString (toDec b)}";
 in
 {

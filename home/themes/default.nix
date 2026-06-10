@@ -1,6 +1,8 @@
 { lib }:
 
-{
+# rec: activePalette below references its siblings `palettes` and
+# `activeThemeName`, which only resolve when the attrset is recursive.
+rec {
   palettes = {
     # ══════════════════════════════════════════════════════════════════════════
     # DeMoD - Radical Retro-Tech Palette

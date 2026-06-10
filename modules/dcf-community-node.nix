@@ -173,14 +173,14 @@ in {
           set -e
           
           # Check if container is running
-          if ! ${pkgs.docker}/bin/docker ps --format '{{.Names}}' | grep -q '^dcf-sdk$'; then
+          if ! ${config.virtualisation.docker.package}/bin/docker ps --format '{{.Names}}' | grep -q '^dcf-sdk$'; then
             echo "DCF container not running, starting..."
             ${pkgs.systemd}/bin/systemctl start docker-dcf-sdk.service
             exit 0
           fi
           
           # Check container health
-          STATUS=$(${pkgs.docker}/bin/docker inspect --format='{{.State.Health.Status}}' dcf-sdk 2>/dev/null || echo "none")
+          STATUS=$(${config.virtualisation.docker.package}/bin/docker inspect --format='{{.State.Health.Status}}' dcf-sdk 2>/dev/null || echo "none")
           
           if [ "$STATUS" = "unhealthy" ]; then
             echo "DCF container unhealthy, restarting..."

@@ -537,7 +537,8 @@ in {
   };
 
   # Create demod config directory and theme.json (runtime theme switching support)
-  home.file.".config/demod".recursive = true;
+  # (The theme.json entry below creates the parent dir; a bare
+  # home.file.".config/demod".recursive without a source is invalid.)
   home.file.".config/demod/theme.json".text = ''
     {
       "name": "${p.name}",

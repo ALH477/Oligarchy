@@ -511,8 +511,8 @@ in {
     '';
   };
 
-  # Screenshot directory
-  home.file.".config/hypr/wallpapers".recursive = true;
+  # Wallpaper directory is created by the .keep file in home.nix; a bare
+  # home.file with only `recursive` and no source is invalid.
 
   # Hypridle configuration
   home.file.".config/hypr/hypridle.conf".text = ''
