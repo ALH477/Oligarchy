@@ -286,6 +286,16 @@ sudo nixos-rebuild switch --flake .
 sudo nix-collect-garbage -d   # or let weekly timer handle it
 ```
 
+## The Next Campaign — Forging in the War Room
+
+The Oligarchy does not rest on conquered territory. Now on the anvil, to be unleashed upon a future you are not ready for:
+
+- **Embedded DCF Client** — the DeMoD Compute Fabric, no longer summoned through terminal incantations but welded straight into the OS. A native client that joins the mesh on boot and answers to no `dmenu`.
+- **The DeMoD FX Bazaar** — a marketplace of audio effects, DSP weaponry traded in the open. Acquire, deploy, and dominate the signal chain without leaving the throne room.
+- **Terminus** — a bespoke UI framework forged in-house by **ALH477**, riding **Tauri** runtimes. Not Electron bloat, not yet-another-web-clone — a custom frame built for the war room. Both the embedded DCF client and the FX Bazaar will wear Terminus.
+
+Status: **in the forge.** Vaporware is for those who don't ship. The Oligarchy ships.
+
 ## Contributing – Join the Legion
 
 Fork, improve, test, PR. Keep it Framework-compliant and flake-pure.
