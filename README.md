@@ -130,7 +130,16 @@ The machine has no single mood. Pick a persona and the whole rig re-arms in one 
 | `dev`     | off             | on               | 256                   | balanced     |
 | `battery` | off             | off              | 512                   | power-saver  |
 
-Runtime knobs (power profile, animations, live PipeWire quantum) flip **instantly**; the build-time pieces (kernel, DSP, AI tier) are written to `oligarchy-local.nix` and applied on the next `nixos-rebuild`. `dev` is the default and reproduces the everyday baseline. Arm `studio` and prove the latency yourself with `dsp-bench`.
+Runtime knobs (power profile, animations, live PipeWire quantum) flip **instantly**; the build-time pieces (kernel, DSP, AI tier) are written to `oligarchy-local.nix` and applied on the next `nixos-rebuild`. `dev` is the default and reproduces the everyday baseline. Arm `studio` and prove the latency yourself with `dsp-bench`. Each persona can also **launch its app set** (studio → guitarix + qpwgraph; dev → editor + terminals), and `persona-layout save/restore` snapshots which workspace every window lives on. Watch the whole machine live in the **War Room** (`Super+F2`): persona, kernel, DSP latency, power, temps, AI and DCF nodes on one screen.
+
+## DSP Rigs — Pedalboard as Code
+
+The crown jewel goes declarative. A **rig** is an effect chain that runs as a JACK client and patches `guitar in → rig → DSP coprocessor → out` — switchable live from the Control Center (`Super+D → DSP Rig`) without touching a cable. Two flavours, opt-in via `custom.dsp.enable`:
+
+- **LV2 chains** — a declarative list of plugin URIs (LSP, Calf, guitarix), assembled and patched by a headless host. Real tones now, no DSP coding.
+- **Faust `.dsp`** — write the signal processing *as code*, compiled to a JACK client at build time. The seed of the forthcoming Terminus **FX Bazaar**.
+
+Your tone lives in your NixOS config and hot-swaps like a persona. The waybar shows the live round-trip latency; `dsp-bench` proves it.
 
 ## DeMoD Branded Fortress
 
@@ -156,19 +165,23 @@ The entire desktop is now a DeMoD war room:
 
 ## Runtime Toggles – Instant Tactical Control
 
-| Keybinding              | Action                                      |
-|-------------------------|---------------------------------------------|
-| `Super + F1`            | Toggle animations on/off                    |
-| `Super + F2`            | Toggle blur on/off                          |
-| `Super + F3`            | Cycle gaps (default → zero → minimal)       |
-| `Super + F4`            | Cycle opacity (default → solid → transparent)|
-| `Super + F5`            | Cycle borders (default → none → thin)       |
-| `Super + F6`            | Cycle rounding (default → square → subtle)  |
-| `Super + F7`            | Cycle color palette forward                 |
-| `Super + Shift + F7`    | Cycle color palette backward                |
-| `Super + D`             | Open the Control Center (Wofi war-room hub) |
-| `Super + Escape`        | Open power menu (wlogout)                   |
-| `Super + L`             | Lock screen (hyprlock)                      |
+| Keybinding                | Action                                            |
+|---------------------------|---------------------------------------------------|
+| `Super + D`               | Control Center — Wofi war-room hub                 |
+| `Super + Space`           | App launcher (Wofi)                                |
+| `Super + F2`              | War Room — live system cockpit                     |
+| `Super + grave` (`~`)     | Workspace overview (hyprexpo)                      |
+| `Super + T / Y / I`       | Dropdown scratchpads — terminal / notes / htop     |
+| `Super + Z`               | Resize submap (then `h j k l` / arrows)            |
+| `Super + Ctrl + arrows`   | Nudge-resize the focused window                    |
+| `Super + F7 / Shift + F7` | Cycle the DeMoD color palette                      |
+| `Super + F8`              | Theme switcher                                     |
+| `Super + F10`             | Caffeine — keep-awake toggle (☕ in the bar)       |
+| `Super + Escape`          | Power menu (wlogout)                               |
+| `Super + Ctrl + L`        | Lock screen (hyprlock)                             |
+| `Super + Shift + Delete`  | 🛡 Panic — mute mic, wipe clipboard, lock          |
+
+Volume/brightness keys show a **swayosd** on-screen display; the waybar carries live **DSP latency** and **caffeine** indicators.
 
 ## Color Palettes
 
@@ -208,7 +221,9 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 - **Rust Greeting System**: Kitty graphics protocol for displaying brand images directly in terminal, adaptive layout based on terminal size, system info display, and interactive TUI launcher.
 - **Boot Intro Suite v2**: A software-forged CRT war-cinematic — FFmpeg renders your audio into mirrored waveforms drowned in scanlines, chromatic aberration, bloom and analog grain, then mpv slams it onto tty1 before the display manager ever draws breath. Generate from any audio file or supply your own pre-rendered clip; nine theme palettes; fast→ultra quality presets. (The StreamDB/TUI/API "suite" pretenders were taken out back — they were `mpv --help` in a trenchcoat.)
 - **Three War Machines, One Flake**: GPU-agnostic `custom.platform` module — forge the same empire for AMD (ROCm), pure Intel (CPU), or Intel + Nvidia Optimus (PRIME offload + CUDA). Flip one enum and the flake re-forges drivers, kernel modules, power policy, and AI acceleration. Conquest, portable.
-- **One War Room**: a unified Control Center (`Super+D` Wofi hub + `oligarchy-control` TUI) over every toggle, service, status and switch — plus **personas** (studio/gaming/dev/battery) that re-arm the kernel, DSP coprocessor, AI tier, audio quantum and power in a single motion.
+- **One War Room**: a unified Control Center (`Super+D` Wofi hub + `oligarchy-control` TUI + the `Super+F2` live cockpit) over every toggle, service, status and switch — plus **personas** (studio/gaming/dev/battery) that re-arm the kernel, DSP coprocessor, AI tier, audio quantum and power in a single motion.
+- **DSP Rigs — Pedalboard as Code**: declarative LV2 chains *and* Faust `.dsp` programs for the coprocessor, hot-swapped like personas (`custom.dsp.enable`). Your guitar tone is a line in your NixOS config — the seed of the Terminus FX Bazaar.
+- **Hyprland, Sharpened**: dropdown scratchpads, a workspace overview (hyprexpo), keyboard resize, a caffeine keep-awake, swayosd OSDs, and a sane idle ladder (see the keybind table).
 - **Virtual DSP Coprocessor**: Soundproof clean-room RT guest inside the chaotic host party bus — a technical masterpiece.
 
 ![wallpaper-color](https://github.com/user-attachments/assets/6c5754c8-21d6-45c1-a775-b77a871bf517)
@@ -219,8 +234,9 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 - DCF services run in hardened Docker containers with least-privilege secrets management.
 - Identity database daily backups.
 - DeMoD IP Blocker refreshes blacklists every 24 hours.
+- **Panic mode** (`Super+Shift+Delete`): one motion mutes the mic, wipes the clipboard, optionally cuts every radio, and locks.
 - **Secure Boot** (opt-in via `custom.secureBoot.enable`): a signed boot chain via lanzaboote + `sbctl`, with an optional TPM2-sealed LUKS unlock. Off by default so it can never brick an un-enrolled machine — see the runbook in `modules/secure-boot.nix`.
-- **Zero-trust local agent**: the AI's hands on the system are a **read-only**, stdio-only MCP — no network listener, no auth token, no remote-plugin fetch. It executed and replaced OpenClaw, which fetched `github:*` plugins at runtime, bound `0.0.0.0`, and shipped a publicly-derivable gateway token.
+- **Zero-trust local agent**: the AI's hands on the system are a **read-only**, stdio-only MCP — no network listener, no auth token, no remote-plugin fetch. It executed and replaced OpenClaw (which fetched `github:*` plugins at runtime, bound `0.0.0.0`, and shipped a publicly-derivable token). The Blipply voice assistant speaks the same MCP, so even spoken commands can only *read and dry-run* — never silently mutate.
 
 ## Building – Forge Your Empire
 
