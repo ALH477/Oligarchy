@@ -23,4 +23,8 @@
     source = ./control-center/oligarchy-control.sh;
     executable = true;
   };
+  home.file.".local/bin/dsp-bench" = {
+    source = ./control-center/dsp-bench.sh;
+    executable = true;
+  };
 }

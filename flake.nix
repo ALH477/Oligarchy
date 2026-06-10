@@ -22,6 +22,13 @@
     demod-ip-blocker.url = "git+https://github.com/ALH477/DeMoD-IP-Blocker.git";
     minecraft.url = "github:ALH477/NixOS-MineCraft";
 
+    # Secure Boot (opt-in via custom.secureBoot.enable). Tracks the default
+    # branch for reliable locking; pin a release tag if you prefer.
+    lanzaboote = {
+      url = "github:nix-community/lanzaboote";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # Home Manager for user-level configuration — pinned to the release branch
     # matching nixpkgs. HM master tracks unstable and will drift from 25.11.
     home-manager = {
@@ -143,6 +150,8 @@
       # and the nixos-hardware board module are per-host (see below).
       ./configuration.nix
       ./modules/kernel.nix
+      ./modules/personas.nix
+      ./modules/secure-boot.nix
       ./modules/agentic-local-ai.nix
       ./modules/oligarchy-mcp.nix
       ./modules/secrets.nix

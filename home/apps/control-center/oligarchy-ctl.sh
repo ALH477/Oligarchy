@@ -18,7 +18,7 @@ STATE="$HOME/.config/oligarchy/state.json"
 TERM_CMD="${TERMINAL:-kitty}"
 
 mkdir -p "$(dirname "$STATE")"
-[ -f "$STATE" ] || echo '{"kernel":"zen","gpu":"amd"}' > "$STATE"
+[ -f "$STATE" ] || echo '{}' > "$STATE"
 
 note() {
   if command -v notify-send >/dev/null 2>&1; then notify-send "⌁ Oligarchy" "$1"; else echo "$1"; fi
@@ -40,6 +40,7 @@ in_term() { setsid -f "$TERM_CMD" -e "$@" >/dev/null 2>&1; }
 status() {
   echo "Kernel : $(uname -r)"
   echo "Host   : $HOST"
+  echo "Persona: $(cat /etc/oligarchy/persona 2>/dev/null || echo dev)"
   if command -v powerprofilesctl >/dev/null 2>&1; then
     echo "Power  : $(powerprofilesctl get 2>/dev/null || echo n/a)"
   fi
@@ -59,6 +60,7 @@ dsp|🎛 Audio / DSP
 dcf|🛰 DCF Fabric
 network|🌐 Network
 power|⚡ Power
+persona|🎚 Persona
 system|⚙ System & Kernel
 EOF
 }
@@ -84,6 +86,15 @@ dsp-status|DSP status
 dsp-console|DSP console
 dsp-netjack|Restart NETJACK
 rt-check|Realtime check
+dsp-bench|Benchmark DSP latency
+EOF
+      ;;
+    persona) cat <<'EOF'
+persona-show|Current persona
+persona-studio|Studio — DSP, lowest latency
+persona-gaming|Gaming — FPS + gamemode
+persona-dev|Dev — balanced, AI on
+persona-battery|Battery — endurance
 EOF
       ;;
     dcf) cat <<'EOF'
@@ -127,14 +138,24 @@ rebuild_cmd_copy() {
   note "Rebuild command copied: $cmd"
 }
 
-# Persist a kernel/gpu choice and regenerate the local override fragment.
+# Build the Nix override fragment from whatever keys are set in $STATE. Only keys
+# the user explicitly changed appear, so persona/kernel/gpu choices don't clobber
+# each other or the per-host platform settings.
+build_fragment() {
+  local frag="{ " v
+  v="$(jq -r '.kernel  // empty' "$STATE")"; [ -n "$v" ] && frag+="custom.kernel.variant = \"$v\"; "
+  v="$(jq -r '.gpu     // empty' "$STATE")"; [ -n "$v" ] && frag+="custom.platform.gpu = \"$v\"; "
+  v="$(jq -r '.persona // empty' "$STATE")"; [ -n "$v" ] && frag+="custom.persona.active = \"$v\"; "
+  frag+="}"
+  printf '%s' "$frag"
+}
+
+# Persist a choice (kernel/gpu/persona) and regenerate the local override fragment.
 set_local() { # $1=key $2=value
-  local tmp kernel gpu frag
+  local tmp frag
   tmp="$(mktemp)"
   jq --arg k "$1" --arg v "$2" '.[$k]=$v' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
-  kernel="$(jq -r '.kernel' "$STATE")"
-  gpu="$(jq -r '.gpu' "$STATE")"
-  frag="{ custom.kernel.variant = \"$kernel\"; custom.platform.gpu = \"$gpu\"; }"
+  frag="$(build_fragment)"
   if { [ -e "$LOCAL_FILE" ] && [ -w "$LOCAL_FILE" ]; } || [ -w "$FLAKE_DIR" ]; then
     printf '%s\n' "$frag" > "$LOCAL_FILE"
     git -C "$FLAKE_DIR" add oligarchy-local.nix >/dev/null 2>&1 || true
@@ -161,6 +182,17 @@ ai_pull() {
     m="$(printf '' | wofi --dmenu -p 'Model to pull')"
   fi
   [ -n "${m:-}" ] && visible ai-stack pull "$m"
+}
+
+# Switch persona: apply the runtime bits instantly (power, animations, live audio
+# quantum), then write custom.persona.active to oligarchy-local.nix for the
+# build-time bits (kernel/DSP/AI/gamemode) and surface the rebuild command.
+apply_persona() { # $1=name $2=powerprofile $3=anims(0|1) $4=quantum
+  command -v powerprofilesctl >/dev/null 2>&1 && powerprofilesctl set "$2" >/dev/null 2>&1 || true
+  command -v hyprctl >/dev/null 2>&1 && hyprctl keyword animations:enabled "$3" >/dev/null 2>&1 || true
+  command -v pw-metadata >/dev/null 2>&1 && pw-metadata -n settings 0 clock.force-quantum "$4" >/dev/null 2>&1 || true
+  set_local persona "$1"
+  note "Persona → $1 (runtime applied; rebuild for kernel/DSP/AI/gamemode)."
 }
 
 run() {
@@ -203,6 +235,13 @@ run() {
     gpu-intel)      set_local gpu intel ;;
     gpu-optimus)    set_local gpu nvidia-optimus ;;
     rebuild-cmd)    rebuild_cmd_copy ;;
+
+    dsp-bench)       visible dsp-bench ;;
+    persona-show)    note "Persona: $(cat /etc/oligarchy/persona 2>/dev/null || echo dev)" ;;
+    persona-studio)  apply_persona studio  performance 0 64 ;;
+    persona-gaming)  apply_persona gaming  performance 1 256 ;;
+    persona-dev)     apply_persona dev     balanced    1 256 ;;
+    persona-battery) apply_persona battery power-saver 0 512 ;;
 
     *) note "Unknown action: $1"; return 1 ;;
   esac
