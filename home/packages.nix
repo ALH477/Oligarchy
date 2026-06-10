@@ -28,6 +28,7 @@
       jq ripgrep fd eza bat fzf      # CLI tools
       libnotify wtype                # Notifications & typing
       wlr-randr xdg-utils            # Wayland utilities
+      swayosd                        # On-screen display for volume/brightness
       lm_sensors                     # Hardware monitoring
     ]
 

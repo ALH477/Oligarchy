@@ -37,7 +37,10 @@ let
 in {
   wayland.windowManager.hyprland = {
     enable = true;
-    
+
+    # Workspace overview plugin — bound to Super+grave; configured in extraConfig.
+    plugins = [ pkgs.hyprlandPlugins.hyprexpo ];
+
     settings = {
       # Monitor setup
       monitor = "${currentMonitor.name}, ${currentMonitor.resolution}, ${currentMonitor.position}, ${currentMonitor.scale}";
@@ -68,6 +71,14 @@ in {
         
         # Ensure XWayland has proper cursor
         [ "sleep 1 && hyprctl setcursor idTech4 24" ]
+
+        # OSD daemon (volume/brightness popups)
+        [ "swayosd-server" ]
+
+        # Dropdown scratchpads — pre-spawned hidden on their special workspaces
+        [ "[workspace special:term silent] kitty --class scratch-term" ]
+        [ "[workspace special:notes silent] kitty --class scratch-notes -e nvim ~/Documents/notes.md" ]
+        [ "[workspace special:mon silent] kitty --class scratch-mon -e htop" ]
       ];
 
       # Environment variables - comprehensive for all use cases
@@ -243,7 +254,9 @@ in {
 
       # Cursor Configuration
       cursor = {
-        no_hardware_cursors = true;
+        # Hardware cursors are smooth on aquamarine/AMD; forcing software
+        # cursors caused stutter under load.
+        no_hardware_cursors = false;
         no_break_fs_vrr = true;
         min_refresh_rate = 60;
         hotspot_padding = 0;
@@ -344,12 +357,28 @@ in {
         "$mod SHIFT, 9, movetoworkspace, 9"
         "$mod SHIFT, 0, movetoworkspace, 10"
         
-        # Special workspace / scratchpad
-        "$mod, grave, workspace, previous"
+        # Workspace overview (hyprexpo). grave was a redundant "workspace previous"
+        # — back_and_forth + the e-1/e+1 binds already cover that.
+        "$mod, grave, hyprexpo:expo, toggle"
         "$mod, bracketleft, workspace, e-1"
         "$mod, bracketright, workspace, e+1"
+
+        # Scratchpads — generic + three dropdowns
         "$mod, S, togglespecialworkspace, scratchpad"
         "$mod SHIFT, S, movetoworkspace, special:scratchpad"
+        "$mod, T, togglespecialworkspace, term"
+        "$mod, Y, togglespecialworkspace, notes"
+        "$mod, I, togglespecialworkspace, mon"
+
+        # Keyboard resize — quick nudge + sustained submap (Super+Z)
+        "$mod CTRL, left, resizeactive, -40 0"
+        "$mod CTRL, right, resizeactive, 40 0"
+        "$mod CTRL, up, resizeactive, 0 -40"
+        "$mod CTRL, down, resizeactive, 0 40"
+        "$mod, Z, submap, resize"
+
+        # Caffeine — toggle idle inhibition
+        "$mod, F10, exec, caffeine toggle"
 
         # Screenshots
         ", Print, exec, ~/.config/hypr/scripts/screenshot.sh screen"
@@ -401,13 +430,15 @@ in {
       ];
 
       # Volume/Brightness (with waybar reload)
+      # Volume/brightness via swayosd (on-screen display). Waybar's wireplumber
+      # module updates itself, so the old `pkill -HUP waybar` is gone.
       binde = [
-        ", XF86AudioRaiseVolume, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+ && pkill -HUP waybar"
-        ", XF86AudioLowerVolume, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%- && pkill -HUP waybar"
-        ", XF86AudioMute, exec, wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle && pkill -HUP waybar"
+        ", XF86AudioRaiseVolume, exec, swayosd-client --output-volume raise --max-volume 100"
+        ", XF86AudioLowerVolume, exec, swayosd-client --output-volume lower"
+        ", XF86AudioMute, exec, swayosd-client --output-volume mute-toggle"
       ] ++ lib.optionals (features.hasBacklight or false) [
-        ", XF86MonBrightnessUp, exec, brightnessctl set 5%+ && pkill -HUP waybar"
-        ", XF86MonBrightnessDown, exec, brightnessctl set 5%- && pkill -HUP waybar"
+        ", XF86MonBrightnessUp, exec, swayosd-client --brightness raise"
+        ", XF86MonBrightnessDown, exec, swayosd-client --brightness lower"
       ];
 
       # Mouse bindings
@@ -431,6 +462,11 @@ in {
         "float, title:^(Thermal Status|DCF Control|DCF Logs|AI Stack)$"
         "size 650 500, title:^(Thermal Status|DCF Control|DCF Logs|AI Stack)$"
         "center, title:^(Thermal Status|DCF Control|DCF Logs|AI Stack)$"
+
+        # Dropdown scratchpads (term / notes / monitor)
+        "float, class:^(scratch-term|scratch-notes|scratch-mon)$"
+        "size 65% 60%, class:^(scratch-term|scratch-notes|scratch-mon)$"
+        "center, class:^(scratch-term|scratch-notes|scratch-mon)$"
 
         # PiP support
         "float, title:^(Picture.in.[Pp]icture)$"
@@ -505,6 +541,37 @@ in {
     extraConfig = ''
       workspace = 1, default:true
       workspace = special:scratchpad, gapsout:60, gapsin:20
+      workspace = special:term,  gapsout:60, gapsin:20
+      workspace = special:notes, gapsout:60, gapsin:20
+      workspace = special:mon,   gapsout:60, gapsin:20
+
+      # Keyboard resize submap — enter with Super+Z, exit with Esc/Enter.
+      submap = resize
+      binde = , right, resizeactive, 40 0
+      binde = , left,  resizeactive, -40 0
+      binde = , up,    resizeactive, 0 -40
+      binde = , down,  resizeactive, 0 40
+      binde = , l, resizeactive, 40 0
+      binde = , h, resizeactive, -40 0
+      binde = , k, resizeactive, 0 -40
+      binde = , j, resizeactive, 0 40
+      bind = , escape, submap, reset
+      bind = , return, submap, reset
+      submap = reset
+
+      # Workspace overview (hyprexpo plugin) — bound to Super+grave.
+      plugin {
+        hyprexpo {
+          columns = 3
+          gap_size = 6
+          bg_col = rgb(1a1b26)
+          workspace_method = center current
+          enable_gesture = true
+          gesture_fingers = 4
+          gesture_distance = 300
+          gesture_positive = true
+        }
+      }
     '' + lib.optionalString (features.hasBattery or false) ''
       bindl = , switch:Lid Switch, exec, ~/.config/hypr/scripts/lid.sh close
       bindl = , switch:off:Lid Switch, exec, ~/.config/hypr/scripts/lid.sh open
@@ -514,16 +581,38 @@ in {
   # Wallpaper directory is created by the .keep file in home.nix; a bare
   # home.file with only `recursive` and no source is invalid.
 
-  # Hypridle configuration
+  # Hypridle — idle ladder: dim (5m) → lock (10m) → display off (11m) → suspend
+  # (30m). Honors idle inhibitors, so the Super+F10 caffeine toggle and
+  # fullscreen video pause all of it. (The old config blanked the screen after
+  # 60s and had no dim/suspend step.)
   home.file.".config/hypr/hypridle.conf".text = ''
     general {
       lock_cmd = pidof hyprlock || hyprlock
       before_sleep_cmd = loginctl lock-session
       after_sleep_cmd = hyprctl dispatch dpms on
+      ignore_dbus_inhibit = false
+      ignore_systemd_inhibit = false
     }
-    listener { timeout = 300; on-timeout = loginctl lock-session; }
-    listener { timeout = 360; on-timeout = hyprctl dispatch dpms off; on-resume = hyprctl dispatch dpms on; }
-    listener { timeout = 60; on-timeout = hyprctl dispatch dpms off; on-resume = hyprctl dispatch dpms on; }
+  '' + lib.optionalString (features.hasBacklight or false) ''
+    listener {
+      timeout = 300
+      on-timeout = brightnessctl -s set 10%
+      on-resume = brightnessctl -r
+    }
+  '' + ''
+    listener {
+      timeout = 600
+      on-timeout = loginctl lock-session
+    }
+    listener {
+      timeout = 660
+      on-timeout = hyprctl dispatch dpms off
+      on-resume = hyprctl dispatch dpms on
+    }
+    listener {
+      timeout = 1800
+      on-timeout = systemctl suspend
+    }
   '';
 
   # Hyprpaper configuration

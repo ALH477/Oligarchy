@@ -178,6 +178,14 @@ in {
   };
 
   # ════════════════════════════════════════════════════════════════════════════
+  # Caffeine — idle-inhibit toggle (on PATH for the Super+F10 bind + waybar)
+  # ════════════════════════════════════════════════════════════════════════════
+  home.file.".local/bin/caffeine" = {
+    executable = true;
+    source = ./caffeine.sh;
+  };
+
+  # ════════════════════════════════════════════════════════════════════════════
   # Screen Recording Script — gpu-screen-recorder, hardware accelerated
   # (Replaces the broken draft: `-w "$extra_args"` passed an EMPTY QUOTED
   # string as the window argument so recording never started, and save-replay

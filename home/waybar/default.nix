@@ -21,6 +21,7 @@ let
       (lib.optional (features.hasBattery or false) "battery")
       "group/network"
       (lib.optional (features.enableGaming or false) "custom/gamemode")
+      "custom/caffeine"
       "tray"
       "custom/power"
     ];
@@ -221,6 +222,15 @@ in {
         interval = 2;
         tooltip = true;
         on-click = "~/.config/hypr/scripts/gamemode.sh toggle";
+      };
+
+      "custom/caffeine" = {
+        format = "{}";
+        exec = "test \"$(caffeine status)\" = on && echo '󰅶' || echo '󰾪'";
+        interval = 2;
+        tooltip = true;
+        tooltip-format = "Caffeine — idle inhibitor\\nClick to toggle (Super+F10)";
+        on-click = "caffeine toggle";
       };
     };
 
