@@ -38,7 +38,9 @@ in {
       
       avatar = mkOption {
         type = types.path;
-        default = ./assets/blipply-avatar.gif;
+        # Falls back to a shipped DeMoD gif; modules/assets/blipply-avatar.gif
+        # does not exist, which would break pure eval when enabled.
+        default = ../assets/demod.gif;
         description = "Path to Blipply avatar (GIF, PNG, or SVG)";
       };
       
@@ -173,31 +175,34 @@ in {
 
   config = let
     cfg = config.oligarchy.blipply;
-    openclawUser = config.services.openclaw-agent.user;
+    blipplyHome = "/home/blipply";
   in mkIf cfg.enable (mkMerge [
     {
-      assertions = [
-        {
-          assertion = config.services.openclaw-agent.enable;
-          message = "OpenClaw agent must be enabled to use Blipply";
-        }
-      ];
-      
+      # Blipply is a self-contained local voice assistant. Its agentic action
+      # surface is the secure, read-only Oligarchy MCP (see [mcp] below), not the
+      # removed OpenClaw gateway.
       services.blipply-assistant = {
         enable = true;
-        user = openclawUser;
-        group = openclawUser;
-        homeDirectory = config.services.openclaw-agent.homeDirectory;
+        user = "blipply";
+        group = "blipply";
+        homeDirectory = blipplyHome;
       };
       
       environment.etc."blipply/config.toml".text = lib.generators.toINI {} {
         general = {
-          openclaw_url = "http://127.0.0.1:8080";
-          openclaw_token = config.services.openclaw-agent.gatewayToken;
           ollama_url = cfg.ai.ollamaUrl;
           hotkey = cfg.hotkeys.toggle;
           first_run_complete = false;
           active_profile = cfg.profiles.active;
+        };
+
+        # Secure local agent surface: Blipply launches the read-only Oligarchy
+        # MCP over stdio and offers its tools to the local LLM. Read-only by
+        # construction — voice can query/inspect/dry-build, never mutate.
+        mcp = {
+          enabled = true;
+          command = "oligarchy-mcp";
+          allowed_tools = "system_status,dcf_status,dsp_status,ai_status,service_status,journal_tail,list_modules,read_module,kernel_options,gpu_options,dry_build,flake_check";
         };
         
         audio = {
@@ -233,21 +238,18 @@ in {
         };
       };
       
-      users.users.${openclawUser}.extraGroups = [ "input" "audio" ];
-      
-      environment.systemPackages = [ 
-        (pkgs.callPackage ./blipply-assistant { })
+      users.users.blipply.extraGroups = [ "input" "audio" ];
+
+      # Use the package the blipply-assistant flake module already builds
+      # (there is no ./blipply-assistant/default.nix for callPackage).
+      environment.systemPackages = [
+        config.services.blipply-assistant.package
       ];
-      
+
       systemd.tmpfiles.rules = [
-        "d ${config.services.openclaw-agent.homeDirectory}/.config/blipply 0755 ${openclawUser} ${openclawUser} -"
+        "d ${blipplyHome}/.config/blipply 0755 blipply blipply -"
       ];
-      
-      systemd.user.services.blipply-assistant = {
-        after = [ "openclaw-gateway.service" ];
-        requires = [ "openclaw-gateway.service" ];
-      };
-      
+
       environment.etc."oligarchy/toggles/blipply.json".text = builtins.toJSON {
         name = "Blipply Assistant";
         description = "AI Voice Assistant";

@@ -99,17 +99,12 @@
     services.oligarchyGreeting.tui.launchCommand = lib.mkDefault "oligarchy-control";
 
     # ──────────────────────────────────────────────────────────────────────────
-    # OpenClaw AI Assistant Gateway
+    # Local AI agent surface
     # ──────────────────────────────────────────────────────────────────────────
-    services.openclaw-agent = {
-      enable = true;
-      lanAccess = true;  # Allow LAN access without opening firewall port
-      plugins = [
-        { source = "github:openclaw/summarize"; }
-        { source = "github:openclaw/oracle"; }
-        { source = "github:openclaw/peekaboo"; }
-      ];
-    };
+    # OpenClaw (insecure remote-plugin gateway, LAN-exposed, static token) was
+    # removed. The secure, local, read-only Oligarchy MCP (modules/oligarchy-mcp.nix)
+    # is the agentic action surface; Blipply consumes it via stdio.
+    custom.oligarchyMcp.enable = true;
 
     # ──────────────────────────────────────────────────────────────────────────
     # Audio Configuration — Pure PipeWire (no X11-based audio remnants)

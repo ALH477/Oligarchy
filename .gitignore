@@ -8,3 +8,7 @@ secrets/README.md
 
 # Keep sops.yaml in git (contains only public key, no secrets)
 !secrets/.sops.yaml
+
+# Python bytecode
+__pycache__/
+*.pyc

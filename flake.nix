@@ -22,9 +22,6 @@
     demod-ip-blocker.url = "git+https://github.com/ALH477/DeMoD-IP-Blocker.git";
     minecraft.url = "github:ALH477/NixOS-MineCraft";
 
-    # OpenClaw AI assistant gateway
-    nix-openclaw.url = "github:openclaw/nix-openclaw";
-
     # Home Manager for user-level configuration — pinned to the release branch
     # matching nixpkgs. HM master tracks unstable and will drift from 25.11.
     home-manager = {
@@ -75,7 +72,6 @@
     fw-fanctrl,
     demod-ip-blocker,
     minecraft,
-    nix-openclaw,
     greeting,
     boot-intro,
     blipply-assistant,
@@ -115,8 +111,8 @@
 
     # ════════════════════════════════════════════════════════════════════════
     # Shared module set — single source of truth for system AND ISO.
-    # configuration.nix sets services.ollamaAgentic, services.openclaw-agent,
-    # and the ISO overrides networking.firewall.strictEgress; the modules that
+    # configuration.nix sets services.ollamaAgentic and the ISO overrides
+    # networking.firewall.strictEgress; the modules that
     # DECLARE those options must therefore be present in every evaluation that
     # includes configuration.nix, or eval fails with "option does not exist".
     # Previously the ISO list omitted them — that's why the ISO didn't build.
@@ -148,7 +144,7 @@
       ./configuration.nix
       ./modules/kernel.nix
       ./modules/agentic-local-ai.nix
-      ./modules/openclaw-agent.nix
+      ./modules/oligarchy-mcp.nix
       ./modules/secrets.nix
       ./modules/security/strict-egress.nix
       greeting.nixosModules.greeting
@@ -261,7 +257,6 @@
 
             # Disable production services in ISO
             services.ollamaAgentic.enable = lib.mkForce false;
-            services.openclaw-agent.enable = lib.mkForce false;
             custom.dcfCommunityNode.enable = lib.mkForce false;
             custom.dcfIdentity.enable = lib.mkForce false;
             services.dcf-tray.enable = lib.mkForce false;

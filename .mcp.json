@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "oligarchy": {
+      "command": "oligarchy-mcp",
+      "args": []
+    }
+  }
+}
