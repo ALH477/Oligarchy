@@ -232,8 +232,14 @@
     # ════════════════════════════════════════════════════════════════════════
     packages.${system} = {
       # ISO installer
+      # Pass `system`, NOT `pkgs`: handing nixosGenerate an externally-built
+      # pkgs sets nixpkgs.pkgs, which collides with the `{ nixpkgs.config = … }`
+      # module in commonModules and trips the "externally created instance"
+      # assertion (nixpkgs lib/eval-config.nix only sets nixpkgs.pkgs when
+      # pkgs != null). With `system`, nixpkgs is built internally and honours
+      # nixpkgs.config.
       iso = nixos-generators.nixosGenerate {
-        inherit pkgs;
+        inherit system;
         format = "install-iso";
         specialArgs = builtins.removeAttrs specialArgs [ "archibaldos" ];
 
