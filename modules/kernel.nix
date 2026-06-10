@@ -20,8 +20,10 @@ let
   # ─────────────────────────────────────────────────────────────────────────
   # KERNEL SELECTION
   # ─────────────────────────────────────────────────────────────────────────
-  # Options: "zen" | "xanmod" | "cachyos-bore" | "latest"
-  kernelChoice = "zen";
+  # Variant is now a declarative option: custom.kernel.variant
+  # ("zen" | "xanmod" | "latest" | "cachyos-bore"). Set it in configuration.nix
+  # or via the control center (writes ./oligarchy-local.nix).
+  cfg = config.custom.kernel;
 
   # ─────────────────────────────────────────────────────────────────────────
   # CachyOS BORE Configuration (only if kernelChoice = "cachyos-bore")
@@ -97,26 +99,53 @@ let
     "cachyos-bore" = pkgs.linuxPackagesFor cachyos-kernel;
   };
 
-  selectedKernel = kernelPackagesMap.${kernelChoice};
+  selectedKernel = kernelPackagesMap.${cfg.variant};
 
 in {
-  # ─────────────────────────────────────────────────────────────────────────
-  # Apply Kernel
-  # ─────────────────────────────────────────────────────────────────────────
-  boot.kernelPackages = lib.mkForce selectedKernel;
-  
-  # KVM support for AMD
-  boot.kernelModules = lib.mkBefore [ "kvm-amd" ];
-  
-  # ─────────────────────────────────────────────────────────────────────────
-  # Thermal Management
-  # ─────────────────────────────────────────────────────────────────────────
-  services.thermald.enable = true;
-  
-  # ─────────────────────────────────────────────────────────────────────────
-  # Desktop/Gaming Optimized Sysctl
-  # ─────────────────────────────────────────────────────────────────────────
-  boot.kernel.sysctl = {
+  options.custom.kernel = {
+    variant = lib.mkOption {
+      type = lib.types.enum [ "zen" "xanmod" "latest" "cachyos-bore" ];
+      default = "zen";
+      description = ''
+        Kernel package set. zen/xanmod/latest are pre-built; cachyos-bore is
+        built from source (heavy) and requires allowCachyExperimental + real
+        hashes filled into the cachyos-* fetchers in this module.
+      '';
+    };
+
+    allowCachyExperimental = lib.mkEnableOption ''
+      building the CachyOS-BORE kernel from source. Off by default because the
+      cachyos-* fetchers in this module still carry placeholder sha256 hashes
+      and the build is very heavy
+    '';
+  };
+
+  config = {
+    assertions = [
+      {
+        assertion = cfg.variant != "cachyos-bore" || cfg.allowCachyExperimental;
+        message = ''
+          custom.kernel.variant = "cachyos-bore" requires
+          custom.kernel.allowCachyExperimental = true, and you must first replace
+          the placeholder sha256-AAAA… hashes in modules/kernel.nix
+          (cachyos-src / cachyos-config / cachyos-patches) with real ones.
+        '';
+      }
+    ];
+
+    # ───────────────────────────────────────────────────────────────────────
+    # Apply Kernel
+    # ───────────────────────────────────────────────────────────────────────
+    boot.kernelPackages = lib.mkForce selectedKernel;
+
+    # KVM modules live per-host in hardware-configuration.nix (kvm-amd on the
+    # AMD host, kvm-intel on the Intel/Optimus hosts). Thermal policy lives in
+    # modules/platform.nix (thermald for Intel CPUs; amd_pstate for AMD).
+
+    # ───────────────────────────────────────────────────────────────────────
+    # Desktop/Gaming Optimized Sysctl
+    # ───────────────────────────────────────────────────────────────────────
+    boot.kernel.sysctl = {
     # Memory management
     "vm.swappiness" = lib.mkDefault 10;
     "vm.dirty_ratio" = lib.mkDefault 10;
@@ -132,5 +161,6 @@ in {
     
     # Real-time audio
     "kernel.sched_rt_runtime_us" = lib.mkDefault 950000;
+    };
   };
 }

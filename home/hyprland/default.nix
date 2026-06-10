@@ -282,7 +282,7 @@ in {
         
         # App launchers
         "$mod, Space, exec, $menu"
-        "$mod, D, exec, wofi --show drun"
+        "$mod, D, exec, oligarchy-menu"   # unified control center (was a duplicate drun)
         "$mod, B, exec, $browser"
         "$mod, E, exec, thunar"
         (lib.optional (features.enableDev or false) "$mod, C, exec, code")
@@ -383,8 +383,8 @@ in {
         # Battery/sleep (laptop only)
         (lib.optional (features.hasBattery or false) "$mod, F12, exec, ~/.config/hypr/scripts/lid.sh toggle")
         
-        # DCF (DeMoD Communication Framework)
-        (lib.optional (features.enableDCF or false) "$mod, D, exec, $terminal --title 'DCF Control' -e dcf-control")
+        # DCF (DeMoD Communication Framework) — moved off Super+D (now the control center)
+        (lib.optional (features.enableDCF or false) "$mod SHIFT, D, exec, $terminal --title 'DCF Control' -e dcf-control")
         
         # Gaming - Full support
         (lib.optional (features.enableGaming or false) "$mod, F9, exec, ~/.config/hypr/scripts/gamemode.sh toggle")

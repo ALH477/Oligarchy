@@ -15,7 +15,10 @@
     ./modules/dcf-community-node.nix
     ./modules/dcf-identity.nix
     ./modules/dcf-tray.nix
-  ];
+  ]
+  # Optional local overrides written by the control center (kernel/platform
+  # selection). Must be git-tracked for the flake to see it; the UI runs `git add`.
+  ++ lib.optional (builtins.pathExists ./oligarchy-local.nix) ./oligarchy-local.nix;
 
   options = {
     custom.steam.enable = lib.mkEnableOption "Steam and gaming support";
@@ -89,6 +92,11 @@
       # acceleration + rocm.gfxVersionOverride are set per-GPU by
       # modules/platform.nix (amd->rocm, intel->cpu, optimus->cuda).
     };
+
+    # Greeting is opt-in (services.oligarchyGreeting.enable). If/when enabled,
+    # its "press any key" launches the unified control center instead of a bare
+    # terminal. mkDefault so it's harmless while the greeting is disabled.
+    services.oligarchyGreeting.tui.launchCommand = lib.mkDefault "oligarchy-control";
 
     # ──────────────────────────────────────────────────────────────────────────
     # OpenClaw AI Assistant Gateway
