@@ -1,1 +1,0 @@
-./boot-intro/modules/core.nix

@@ -133,10 +133,8 @@
       demod-ip-blocker.nixosModules.default
 
       # Local modules - order matters! Options must be defined before config uses them
-      # Boot intro options
+      # Boot intro options (single module; TUI/API/StreamDB stubs were removed)
       boot-intro.nixosModules.boot-intro
-      boot-intro.nixosModules.boot-intro-tui
-      boot-intro.nixosModules.boot-intro-api
 
       # Blipply integration (defines oligarchy.blipply options)
       ./modules/blipply-integration.nix
