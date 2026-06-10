@@ -7,36 +7,47 @@ use futures::Stream;
 use pin_project::pin_project;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::pin::Pin;
 use std::task::{Context as TaskContext, Poll};
 use tracing::{debug, error};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionCall {
+    pub name: String,
+    #[serde(default)]
+    pub arguments: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub function: FunctionCall,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub role: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 impl Message {
     pub fn user(content: impl Into<String>) -> Self {
-        Self {
-            role: "user".to_string(),
-            content: content.into(),
-        }
+        Self { role: "user".to_string(), content: content.into(), tool_calls: None }
     }
 
     pub fn assistant(content: impl Into<String>) -> Self {
-        Self {
-            role: "assistant".to_string(),
-            content: content.into(),
-        }
+        Self { role: "assistant".to_string(), content: content.into(), tool_calls: None }
     }
 
     pub fn system(content: impl Into<String>) -> Self {
-        Self {
-            role: "system".to_string(),
-            content: content.into(),
-        }
+        Self { role: "system".to_string(), content: content.into(), tool_calls: None }
+    }
+
+    /// A tool-result message fed back to the model.
+    pub fn tool(content: impl Into<String>) -> Self {
+        Self { role: "tool".to_string(), content: content.into(), tool_calls: None }
     }
 }
 
@@ -47,6 +58,8 @@ struct ChatRequest {
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     options: Option<GenerationOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<Value>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -112,10 +125,11 @@ impl OllamaClient {
                 temperature: 0.7,
                 num_ctx: 4096,
             }),
+            tools: None,
         };
 
         debug!("Sending chat request to Ollama");
-        
+
         let response = self.client
             .post(&url)
             .json(&request)
@@ -125,6 +139,39 @@ impl OllamaClient {
 
         let chat_response: ChatResponse = response.json().await?;
         Ok(chat_response.message.content)
+    }
+
+    /// Non-streaming chat that returns the full response message (content plus
+    /// any `tool_calls`), optionally advertising `tools` to the model. Used by
+    /// the MCP tool-resolution loop.
+    pub async fn chat_full(
+        &self,
+        model: &str,
+        messages: Vec<Message>,
+        tools: Option<Vec<Value>>,
+    ) -> Result<Message> {
+        let url = format!("{}/api/chat", self.base_url);
+
+        let request = ChatRequest {
+            model: model.to_string(),
+            messages,
+            stream: false,
+            options: Some(GenerationOptions {
+                temperature: 0.7,
+                num_ctx: 4096,
+            }),
+            tools,
+        };
+
+        let response = self.client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send tool chat request")?;
+
+        let chat_response: ChatResponse = response.json().await?;
+        Ok(chat_response.message)
     }
 
     pub fn chat_stream(
@@ -156,6 +203,7 @@ impl ChatStream {
                 temperature: 0.7,
                 num_ctx: 4096,
             }),
+            tools: None,
         };
 
         let stream = Box::pin(async_stream::stream! {

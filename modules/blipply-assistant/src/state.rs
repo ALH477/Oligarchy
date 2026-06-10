@@ -172,6 +172,12 @@ impl AppState {
             profiles.active_profile()?.model.clone()
         };
 
+        // Resolve any system tools via the secure, read-only MCP before
+        // answering. Failures are non-fatal — Blipply still replies normally.
+        if let Err(e) = self.resolve_tools(&model, &mut messages).await {
+            tracing::warn!("MCP tool resolution skipped: {}", e);
+        }
+
         // Stream response
         use futures::StreamExt;
         let mut stream = self.ollama.chat_stream(model, messages);
@@ -212,6 +218,52 @@ impl AppState {
             }
         }
 
+        Ok(())
+    }
+
+    /// Run a tool-calling loop against the read-only Oligarchy MCP: advertise its
+    /// tools to the model, execute any tool calls, and append the results to
+    /// `messages` so the streamed answer can use them. Read-only by construction;
+    /// any failure is non-fatal and Blipply answers without tools.
+    async fn resolve_tools(&self, model: &str, messages: &mut Vec<Message>) -> Result<()> {
+        let mcp_cfg = { self.config.read().mcp.clone() };
+        if !mcp_cfg.enabled {
+            return Ok(());
+        }
+        let allowed = mcp_cfg.allowed();
+
+        let mut client = match crate::mcp::McpClient::connect(&mcp_cfg.command).await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("MCP unavailable ({}); answering without tools", e);
+                return Ok(());
+            }
+        };
+
+        let tools = client.list_tools_ollama(&allowed).await.unwrap_or_default();
+        if tools.is_empty() {
+            return Ok(());
+        }
+
+        // Bounded loop so a misbehaving model can't spin forever.
+        for _ in 0..4 {
+            let response = self
+                .ollama
+                .chat_full(model, messages.clone(), Some(tools.clone()))
+                .await?;
+            let calls = response.tool_calls.clone().unwrap_or_default();
+            if calls.is_empty() {
+                break;
+            }
+            messages.push(response);
+            for call in calls {
+                let result = client
+                    .call_tool(&call.function.name, &call.function.arguments)
+                    .await
+                    .unwrap_or_else(|e| format!("[tool error] {e}"));
+                messages.push(Message::tool(result));
+            }
+        }
         Ok(())
     }
 
