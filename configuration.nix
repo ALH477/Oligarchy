@@ -86,12 +86,9 @@
     # ──────────────────────────────────────────────────────────────────────────
     # Local AI Stack (Ollama)
     # ──────────────────────────────────────────────────────────────────────────
-    services.ollamaAgentic = {
-      enable = true;
-      preset = "pewdiepie";  # High-performance preset
-      # acceleration + rocm.gfxVersionOverride are set per-GPU by
-      # modules/platform.nix (amd->rocm, intel->cpu, optimus->cuda).
-    };
+    # enable + preset are owned by the active persona (modules/personas.nix);
+    # acceleration is set per-GPU by modules/platform.nix. The system persona
+    # defaults to "dev" (AI on, pewdiepie), reproducing the prior behaviour.
 
     # Greeting is opt-in (services.oligarchyGreeting.enable). If/when enabled,
     # its "press any key" launches the unified control center instead of a bare
@@ -135,14 +132,8 @@
       # min-quantum 64 ≈ 1.3 ms @ 48 kHz — a guitar rig must be ALLOWED to go
       # low. Default stays 256 so desktop apps don't burn CPU; only clients
       # that explicitly request a small quantum (guitarix, JACK apps) get it.
-      extraConfig.pipewire."20-low-latency" = {
-        "context.properties" = {
-          "default.clock.rate" = 48000;
-          "default.clock.quantum" = 256;
-          "default.clock.min-quantum" = 64;
-          "default.clock.max-quantum" = 512;
-        };
-      };
+      # The "20-low-latency" clock block (rate/quantum/min/max) is owned entirely
+      # by the active persona — see modules/personas.nix.
 
       # High-quality Bluetooth codecs (replicates bluetooth.highQualityCodecs)
       wireplumber.extraConfig."50-high-quality-bt" = {
@@ -211,7 +202,7 @@
       extraCompatPackages = [ pkgs.proton-ge-bin ];
     };
     hardware.steam-hardware.enable = lib.mkIf config.custom.steam.enable true;
-    programs.gamemode.enable = lib.mkIf config.custom.steam.enable true;
+    # gamemode is owned by the active persona (on for the "gaming" persona).
 
     # Use mkForce to resolve SSH askPassword conflicts (prefer KDE solution)
     programs.ssh.askPassword = lib.mkForce "${pkgs.kdePackages.ksshaskpass}/bin/ksshaskpass";
