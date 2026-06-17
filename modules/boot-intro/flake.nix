@@ -4,7 +4,7 @@
   # No inputs needed: the module pulls everything from the host's pkgs.
   inputs = { };
 
-  outputs = { self }: {
+  outputs = { self, ... }: {
     # NixOS module exporting services.boot-intro.
     nixosModules = {
       boot-intro = ./modules/core.nix;
