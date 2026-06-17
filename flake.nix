@@ -161,7 +161,6 @@
       ./modules/secure-boot.nix
       ./modules/agentic-local-ai.nix
       ./modules/oligarchy-mcp.nix
-      ./modules/hermes-mcp.nix
       ./modules/secrets.nix
       ./modules/security/strict-egress.nix
       greeting.nixosModules.greeting
