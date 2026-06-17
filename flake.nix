@@ -354,7 +354,7 @@
         strace  # System call tracer
         ltrace  # Library call tracer
         lsof  # List open files
-        netstat-nat  # NAT connections
+        # netstat-nat removed (no longer in nixpkgs)
 
         # System analysis
         htop  # Process viewer
