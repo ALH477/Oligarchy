@@ -48,6 +48,7 @@ let
   p = personas.${cfg.active};
 in
 {
+  options.services.dsp-vm.enable = mkEnableOption "DSP VM";
   options.custom.persona.active = mkOption {
     type = types.enum (attrNames personas);
     default = "dev";
