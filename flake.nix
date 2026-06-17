@@ -93,7 +93,6 @@
     sops-nix,
     vm-manager,
     demod-voice,
-    hydra-mesh,
     # archibaldos,
     ...
   } @ inputs:
