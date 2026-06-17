@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "DCF Mesh Agent MCP client configuration for Hermes (or Claude Code / OpenCode).",
+    "Add this entire block under 'mcpServers' in your Hermes MCP config.",
+    "The 'dcf-mesh-mcp' binary is installed by services.dcf-mesh-agent when enabled.",
+    "Make sure DCF_PEERS points at the peer you want to talk to (or the responder's port)."
+  ],
+  "dcf-mesh": {
+    "command": "dcf-mesh-mcp",
+    "env": {
+      "DCF_AGENT_NAME": "hermes",
+      "DCF_AGENT_NODE_ID": "0x00A1",
+      "DCF_AGENT_UDP_PORT": "7801",
+      "DCF_PEERS": "127.0.0.1:7802",
+      "DCF_CHANNEL": "duet"
+    }
+  }
+}
