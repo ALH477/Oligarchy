@@ -15,6 +15,7 @@
     ./modules/dcf-community-node.nix
     ./modules/dcf-identity.nix
     ./modules/dcf-tray.nix
+    ./modules/dcf-mesh-agent.nix
   ]
   # Optional local overrides written by the control center (kernel/platform
   # selection). Must be git-tracked for the flake to see it; the UI runs `git add`.
@@ -82,6 +83,16 @@
     };
     # System Tray Controller
     services.dcf-tray.enable = false;
+    
+    # DCF Mesh Agent (commented by default — enable when peer mesh endpoint ready)
+    # services.dcf-mesh-agent = {
+    #   enable = true;
+    #   nodeId = "0x00A1";
+    #   channel = "duet";
+    #   udpPort = 7801;
+    #   peers = [ "127.0.0.1:7802" ];
+    #   agentName = "oligarchy-hermes";
+    # }; 
 
     # ──────────────────────────────────────────────────────────────────────────
     # Local AI Stack (Ollama)
