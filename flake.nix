@@ -68,6 +68,12 @@
 
     # DeMoD Voice - Local TTS and Voice Cloning
     demod-voice.url = "path:./modules/demod-voice";
+
+    # DeMoD Communication Framework mesh (agent-to-agent)
+    hydra-mesh = {
+      url = "github:ALH477/HydraMesh";
+      flake = false;   # we only consume files from it, no flake outputs needed
+    };
   };
 
   outputs = {
@@ -87,6 +93,7 @@
     sops-nix,
     vm-manager,
     demod-voice,
+    hydra-mesh,
     # archibaldos,
     ...
   } @ inputs:
@@ -155,6 +162,7 @@
       ./modules/secure-boot.nix
       ./modules/agentic-local-ai.nix
       ./modules/oligarchy-mcp.nix
+      ./modules/hermes-mcp.nix
       ./modules/secrets.nix
       ./modules/security/strict-egress.nix
       greeting.nixosModules.greeting
