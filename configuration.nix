@@ -222,6 +222,18 @@
     programs.ssh.askPassword = lib.mkForce "${pkgs.kdePackages.ksshaskpass}/bin/ksshaskpass";
 
     # ──────────────────────────────────────────────────────────────────────────
+    # CPU security hardening (modules/cpu-security.nix)
+    # ──────────────────────────────────────────────────────────────────────────
+    # "hardened": forced mitigations, early microcode, MSR-write blocking, kernel-
+    # image protection. SMT kept (DSP/build throughput) and the msr module left
+    # loaded (undervolt/thermal tooling). vendor tracks custom.platform.cpu.
+    # Verify: grep -r . /sys/devices/system/cpu/vulnerabilities/
+    hardware.cpuSecurity = {
+      enable = true;
+      preset = "hardened";
+    };
+
+    # ──────────────────────────────────────────────────────────────────────────
     # Boot Configuration
     # ──────────────────────────────────────────────────────────────────────────
     boot = {

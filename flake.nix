@@ -163,6 +163,7 @@
       ./modules/oligarchy-mcp.nix
       ./modules/secrets.nix
       ./modules/security/strict-egress.nix
+      ./modules/cpu-security.nix
       greeting.nixosModules.greeting
 
       # Blipply Assistant - AI Voice Assistant (integrated from local source)
@@ -277,6 +278,7 @@
             custom.dcfIdentity.enable = lib.mkForce false;
             services.dcf-tray.enable = lib.mkForce false;
             networking.firewall.strictEgress.enable = lib.mkForce false;
+            hardware.cpuSecurity.enable = lib.mkForce false;
 
             boot.supportedFilesystems = lib.mkForce [
               "btrfs" "reiserfs" "vfat" "f2fs" "xfs" "ntfs" "cifs"
