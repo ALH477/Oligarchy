@@ -270,6 +270,19 @@ in
     })
 
     ##########################################################################
+    # 8. IOMMU/DMA PROTECTION (vault and paranoid only)
+    #    Prevents DMA attacks from malicious PCIe/Thunderbolt devices.
+    #    amd_iommu=on forces IOMMU usage; iommu.passthrough=0 ensures all
+    #    DMA goes through the IOMMU (no direct memory access).
+    #    Zero performance cost for normal I/O.
+    ##########################################################################
+    (mkIf (cfg.preset == "vault" || cfg.preset == "paranoid") {
+      boot.kernelParams =
+        optionals isAMD [ "amd_iommu=on" "iommu.passthrough=0" ]
+        ++ optionals isIntel [ "intel_iommu=on" "iommu.passthrough=0" ];
+    })
+
+    ##########################################################################
     # 7. VAULT PRESET: requires Secure Boot (lanzaboote)
     ##########################################################################
     (mkIf (cfg.preset == "vault") {
