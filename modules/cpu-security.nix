@@ -264,6 +264,11 @@ in
       # You MUST provide signing keys + sign out-of-tree modules, or use lanzaboote.
     })
 
+    # Vault preset auto-enables the lockdown kernel build
+    (mkIf (cfg.preset == "vault") {
+      hardware.cpuSecurity.enableLockdownKernelBuild = lib.mkDefault true;
+    })
+
     ##########################################################################
     # 7. VAULT PRESET: requires Secure Boot (lanzaboote)
     ##########################################################################
