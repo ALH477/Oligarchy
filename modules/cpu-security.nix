@@ -46,6 +46,18 @@ let
       forceGDS            = false;
       lockdownMode        = "none";  # opt into "integrity" only with signing
     };
+    vault = {
+      forceAllMitigations = true;
+      disableSMT          = false;   # keep SMT for RT performance
+      earlyMicrocode      = true;
+      blockMsrWrites      = true;
+      blacklistMsrModule  = false;
+      lockKernelModules   = true;    # NEW: no modules after boot
+      protectKernelImage  = true;
+      disableTSX          = true;    # Intel only
+      forceGDS            = false;   # explicitly NOT forced — AVX perf
+      lockdownMode        = "integrity"; # NEW: prevents kernel modification
+    };
     paranoid = {
       forceAllMitigations = true;
       disableSMT          = true;    # nosmt: closes cross-thread leakage
@@ -80,11 +92,12 @@ in
     enable = mkEnableOption "CPU security hardening (mitigations, microcode, MSR, lockdown)";
 
     preset = mkOption {
-      type = types.enum [ "balanced" "hardened" "paranoid" ];
+      type = types.enum [ "balanced" "hardened" "vault" "paranoid" ];
       default = "hardened";
       description = ''
         balanced  = close to upstream defaults (mitigations=auto, early ucode, MSR writes blocked).
         hardened  = force all mitigations, protect kernel image, disable TSX (Intel). SMT kept.
+        vault     = hardened + Secure Boot required, kernel lockdown=integrity, module locking. Zero performance cost. Requires lanzaboote + enrolled Secure Boot keys.
         paranoid  = also nosmt, blacklist msr, lock modules, force GDS, confidentiality lockdown.
       '';
     };
@@ -249,6 +262,29 @@ in
         '';
       }];
       # You MUST provide signing keys + sign out-of-tree modules, or use lanzaboote.
+    })
+
+    ##########################################################################
+    # 7. VAULT PRESET: requires Secure Boot (lanzaboote)
+    ##########################################################################
+    (mkIf (cfg.preset == "vault") {
+      assertions = [{
+        assertion = config.boot.lanzaboote.enable or false;
+        message = ''
+          hardware.cpuSecurity.preset = "vault" requires Secure Boot via lanzaboote.
+          The vault preset enforces kernel lockdown=integrity and module locking, which
+          depend on a signed boot chain to be meaningful.
+
+          To enable:
+            1. Set boot.lanzaboote.enable = true in your configuration
+            2. Enroll Secure Boot keys: sbctl create-keys
+            3. Enroll keys into firmware: sbctl enroll-keys --microsoft
+            4. Sign the bootloader: sbctl sign -s /boot/EFI/BOOT/BOOTX64.EFI
+            5. Rebuild and reboot into Secure Boot mode
+
+          If you do not want Secure Boot requirements, use preset = "hardened" instead.
+        '';
+      }];
     })
   ]);
 }
