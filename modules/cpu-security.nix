@@ -13,6 +13,35 @@
 # per persona — see modules/kernel.nix). Verify msr/lockdown configs per kernel with:
 #   zcat /proc/config.gz | grep -E 'LOCKDOWN|X86_MSR'
 #   grep -r . /sys/devices/system/cpu/vulnerabilities/
+#
+# PRESETS (upgrade path: balanced → hardened → vault → paranoid)
+#
+# balanced: Kernel defaults, early microcode, MSR writes blocked.
+#   Performance: baseline
+#   Security: mitigations=auto (kernel decides), protectKernelImage=false
+#   Use for: development, testing, maximum compatibility
+#
+# hardened: All speculation mitigations forced, kernel image protected, TSX off (Intel).
+#   Performance: -5% to -15% on Intel (PTI, L1TF, MDS), ~0% on AMD
+#   Security: spectre_v2=on, retbleed mitigated, nohibernate, kexec disabled
+#   Use for: production workloads, general security hardening
+#
+# vault: hardened + Secure Boot + kernel lockdown=integrity + module locking + IOMMU.
+#   Performance: identical to hardened (all additions are zero-cost)
+#   Security: prevents evil-maid, unsigned bootloaders, runtime kernel modification,
+#             DMA attacks from malicious PCIe/Thunderbolt devices
+#   Requires: Secure Boot enrollment (see docs/secure-boot-enrollment.md)
+#   Use for: maximum integrity without performance loss, threat model includes
+#            physical access or DMA attack vectors
+#
+# paranoid: vault + nosmt + forceGDS + blacklist msr + confidentiality lockdown.
+#   Performance: -30% to -50% (nosmt halves parallel capacity, GDS kills AVX)
+#   Security: closes cross-thread side-channels, forces AVX-disable on Intel if no
+#             microcode fix, prevents all module loading after boot
+#   Use for: extreme threat models where side-channel resistance > throughput
+#
+# UPGRADE PATH: balanced → hardened → vault (zero cost at each step)
+#               vault → paranoid (only if you accept the performance hit)
 { config, lib, pkgs, ... }:
 
 let
