@@ -664,6 +664,7 @@
       };
 
       udev.extraRules = ''
+        # USB devices: disable all power management
         ACTION=="add", SUBSYSTEM=="usb", ATTR{power/autosuspend}="-1"
         ACTION=="add", SUBSYSTEM=="usb", ATTR{power/control}="on"
         ACTION=="add", SUBSYSTEM=="usb", ATTR{power/autosuspend_delay_ms}="-1"
@@ -673,6 +674,9 @@
         ACTION=="add", SUBSYSTEM=="thunderbolt", ATTR{authorized}=="0", ATTR{authorized}="1"
         ACTION=="add", SUBSYSTEM=="hid", ATTR{power/control}="on"
         ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="32ac", ATTR{power/control}="on"
+        # PCI XHCI host controllers: prevent runtime PM from suspending the bus
+        # (without this, the parent controller sleeps and kills BT/keyboard on resume)
+        ACTION=="add", SUBSYSTEM=="pci", ATTR{class}=="0x0c0330", ATTR{power/control}="on"
       '';
 
       logind.settings.Login = {
