@@ -276,11 +276,12 @@ in
           depend on a signed boot chain to be meaningful.
 
           To enable:
-            1. Set boot.lanzaboote.enable = true in your configuration
-            2. Enroll Secure Boot keys: sbctl create-keys
-            3. Enroll keys into firmware: sbctl enroll-keys --microsoft
-            4. Sign the bootloader: sbctl sign -s /boot/EFI/BOOT/BOOTX64.EFI
-            5. Rebuild and reboot into Secure Boot mode
+            1. Set custom.secureBoot.enable = true in configuration.nix
+            2. sudo sbctl create-keys
+            3. Enter BIOS → clear Secure Boot keys → Setup Mode
+            4. sudo sbctl enroll-keys
+            5. Reboot, verify: bootctl status shows "Secure Boot: enabled"
+            6. Rebuild with preset = "vault"
 
           If you do not want Secure Boot requirements, use preset = "hardened" instead.
         '';
