@@ -498,7 +498,9 @@
         allowPing = true;
         allowedTCPPorts = [ 22 443 ];
         allowedUDPPorts = [ 5353 ];
-        trustedInterfaces = [ "docker0" "br-+" ];
+        # tailscale0 is the mesh interface; trust so node-to-node SSH works
+        # without fighting reverse-path on the CGNAT range.
+        trustedInterfaces = [ "docker0" "br-+" "tailscale0" ];
         logReversePathDrops = false;
         logRefusedConnections = false;
       };
@@ -506,6 +508,23 @@
       # NOTE: networking.wireless.enable removed — it ran a second, unmanaged
       # wpa_supplicant alongside NetworkManager's own (wifi.backend above),
       # which trips a NixOS assertion / causes the two to fight over the radio.
+    };
+
+    # SSH for local + Tailscale access (LAN already admits :22 in firewall).
+    services.openssh = {
+      enable = true;
+      settings = {
+        PasswordAuthentication = true;
+        KbdInteractiveAuthentication = false;
+        PermitRootLogin = "prohibit-password";
+      };
+    };
+
+    # Tailscale mesh — join with: sudo tailscale up
+    services.tailscale = {
+      enable = true;
+      openFirewall = true;
+      useRoutingFeatures = "client";
     };
 
     services.resolved = {
