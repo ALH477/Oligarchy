@@ -29,13 +29,26 @@ See [VM Manager DSP Documentation](../../../vm-manager/docs/dsp-vm.md) for full 
 
 ---
 
-Old codebase is in a zip file in the release section. I updated the repo to be easier to maintain and learn.
+Old codebase is archived in the [releases section](../../releases). The current repo has been restructured for easier maintenance and learning.
 
-Real-time workstation for audio production and robotics + HydraMesh P2P networking.
+---
 
-What sets it apart? **Bit-for-bit reproducibility** across deployments, ensuring that your setup on a studio workstation matches exactly on a drone brain or secure edge router—eliminating the *"it works on my machine"* syndrome that plagues traditional OSes. Trust us, once you experience deployment consistency at this level, you'll wonder how you ever managed without it.
+## What Is ArchibaldOS?
 
-ArchibaldOS forms the foundational operating system layer for the **DeMoD platform**, a cohesive ecosystem for real-time digital signal processing (DSP) and demodulation. As detailed in the open-source guide at [https://github.com/ALH477/DeMoDulation](https://github.com/ALH477/DeMoDulation)—a public blueprint released by DeMoD LLC on **November 20, 2025**—ArchibaldOS powers **DIY DSP devices** built from e-waste, Framework 13 mainboards, or Raspberry Pi 5. This integration enables **sub-0.8ms round-trip latency at 24-bit/192kHz**, transforming low-cost hardware into professional-grade audio and **software-defined radio (SDR)** rigs. The DeMoDulation repository provides Nix flake profiles that explicitly support ArchibaldOS as a **native or virtualized build option**, ensuring seamless scalability from embedded prototypes to production deployments.
+Real-time workstation for audio production, robotics, and HydraMesh P2P networking.
+
+**What sets it apart:** Bit-for-bit reproducibility across deployments. Your setup on a studio workstation matches exactly on a drone brain or secure edge router — no more *"it works on my machine"*.
+
+### The DeMoD Platform
+
+ArchibaldOS is the foundational OS layer for the **DeMoD platform** — a cohesive ecosystem for real-time DSP and demodulation.
+
+**Key capabilities:**
+- **Sub-0.8ms round-trip latency** at 24-bit/192kHz
+- Transforms low-cost hardware (e-waste, Framework 13 mainboards, Raspberry Pi 5) into professional-grade audio and SDR rigs
+- Powers DIY DSP devices detailed in the [DeMoDulation guide](https://github.com/ALH477/DeMoDulation) (public blueprint released November 20, 2025)
+
+**Integration:** The DeMoDulation repository provides Nix flake profiles with native ArchibaldOS support, enabling seamless scaling from embedded prototypes to production deployments.
 
 ## Who Is ArchibaldOS For?
 
@@ -73,7 +86,7 @@ ArchibaldOS is a **specialized, expert-oriented operating system** designed for 
 
 #### **Embedded, Edge, and Defense-Oriented Developers**
 
-* Building **secure, minimal, ITAR/EAR-safe** systems
+* Building **secure, minimal systems suitable for defense applications**
 * Deploying on **e-waste, SBCs, or custom hardware**
 * Needing **auditable configurations and deterministic behavior**
 * Prioritizing **reliability over UX polish**
@@ -93,7 +106,7 @@ ArchibaldOS is a **specialized, expert-oriented operating system** designed for 
 
 ### **Design Philosophy**
 
-ArchibaldOS follows a **“minimal oligarchy” philosophy**:
+ArchibaldOS follows a **minimalist philosophy**:
 
 > Only components that directly contribute to performance, determinism, or reproducibility are included.
 
@@ -229,6 +242,8 @@ nix develop github:ALH477/ArchibaldOS#robotics
 - [musnix](https://github.com/musnix/musnix) - Real-time audio NixOS module
 - [chaotic-nyx](https://github.com/chaotic-cx/nyx) - CachyOS packages for NixOS
 - [NixOS](https://nixos.org) - The reproducible Linux distribution
+
+**Kernel sources:** CachyOS RT (default) and musnix PREEMPT_RT (fallback) — see [Kernel Options](#kernel-options) above.
 
 ---
 

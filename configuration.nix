@@ -79,6 +79,20 @@
       log "done"
     '';
   in {
+    # Android SDK license acceptance
+    nixpkgs.config.android_sdk.accept_license = true;
+
+    # Enable nix-ld to run dynamically linked executables (required for Android build tools)
+    programs.nix-ld.enable = true;
+    programs.nix-ld.libraries = with pkgs; [
+      stdenv.cc.cc
+      zlib
+      glib
+      openssl
+      curl
+      libxml2
+    ];
+
   # ──────────────────────────────────────────────────────────────────────────
   # DeMoD Boot Intro
   # ──────────────────────────────────────────────────────────────────────────
@@ -221,10 +235,10 @@
     # ──────────────────────────────────────────────────────────────────────────
     # Memory Configuration
     # ──────────────────────────────────────────────────────────────────────────
-    swapDevices = [
-      { device = "/swapfile";
-        size = 32768; }  # 32 GiB (was 32680 — 88 MiB short of the label)
-    ];
+    # swapDevices = [
+    #   { device = "/swapfile";
+    #     size = 32768; }  # 32 GiB — disabled to free disk space
+    # ];
 
     # ── Hibernate support ────────────────────────────────────────────────────
     # upower.criticalPowerAction below is "Hibernate". Without resumeDevice +
@@ -275,6 +289,16 @@
     # Terminus Developer Edition (local-only, references working trees)
     # ──────────────────────────────────────────────────────────────────────────
     custom.terminus-dev.enable = true;
+
+    # Sunshine (Moonlight server for remote desktop/game streaming)
+    # DISABLED — capSysAdmin was grabbing input devices and killing keyboard/BT
+    # ──────────────────────────────────────────────────────────────────────────
+    # services.sunshine = {
+    #   enable = false;
+    #   openFirewall = true;
+    #   autoStart = false;
+    #   capSysAdmin = true;  # Required for input capture
+    # };
 
     # Use mkForce to resolve SSH askPassword conflicts (prefer KDE solution)
     programs.ssh.askPassword = lib.mkForce "${pkgs.kdePackages.ksshaskpass}/bin/ksshaskpass";
@@ -548,8 +572,8 @@
       firewall = {
         enable = true;
         allowPing = true;
-        allowedTCPPorts = [ 22 443 ];
-        allowedUDPPorts = [ 5353 ];
+        allowedTCPPorts = [ 22 443 47984 47989 47990 48010 ];
+        allowedUDPPorts = [ 5353 47998 47999 48000 48002 48010 ];
         # tailscale0 is the mesh interface; trust so node-to-node SSH works
         # without fighting reverse-path on the CGNAT range.
         trustedInterfaces = [ "docker0" "br-+" "tailscale0" ];
@@ -588,12 +612,10 @@
     };
 
     systemd.services.systemd-networkd-wait-online.enable = lib.mkForce false;
-    systemd.services.NetworkManager-wait-online = {
-      serviceConfig = {
-        ExecStart = [ "" "${pkgs.networkmanager}/bin/nm-online -q" ];
-        TimeoutStartSec = "30s";
-      };
-    };
+    # Nothing enabled needs network-online at boot; on a laptop the link is
+    # rarely up in time, so this only ever burned its full timeout and held
+    # docker -> multi-user.target hostage for 30s every boot.
+    systemd.services.NetworkManager-wait-online.enable = lib.mkForce false;
 
     services.demod-ip-blocker = {
       enable = true;
@@ -787,9 +809,11 @@
     services.gnome.gnome-keyring.enable = true;
     programs.seahorse.enable = true;
 
+    # Applying pending firmware on every boot cost ~3.8s; the fwupd-refresh
+    # timer and manual `fwupdmgr update` still cover updates.
     environment.etc."fwupd/fwupd.conf".text = lib.mkForce ''
       [fwupd]
-      UpdateOnBoot=true
+      UpdateOnBoot=false
     '';
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -800,7 +824,9 @@
       # Default docker (docker_28) is flagged insecure/unmaintained since
       # Nov 2025; pin the maintained release rather than allow an insecure pkg.
       package = pkgs.docker_29;
-      enableOnBoot = true;
+      # Socket-activated: dockerd (and its restart-policy containers) start on
+      # first use instead of the boot critical path.
+      enableOnBoot = false;
       storageDriver = "overlay2";
       autoPrune = {
         enable = true;
@@ -929,6 +955,13 @@
     environment.systemPackages = with pkgs; [
       # `docker` CLI is provided on PATH by virtualisation.docker (docker_29);
       # listing pkgs.docker here pulled the insecure docker_28 default.
+      android-studio android-tools jdk17
+      (androidenv.composeAndroidPackages {
+        platformVersions = [ "34" ];
+        buildToolsVersions = [ "34.0.0" ];
+        includeEmulator = false;
+        includeSources = false;
+      }).androidsdk
       vim git git-lfs gh htop nvme-cli lm_sensors s-tui stress
       dmidecode util-linux gparted usbutils
       # dual-HS bus recover (PCI rebind 0000:c5:00.3); sudo NOPASSWD for asher
@@ -977,7 +1010,7 @@
 
       ghc
 
-      ollama opencode open-webui alpaca aichat aider-chat
+      ollama opencode # open-webui alpaca aichat aider-chat  # disabled: open-webui npm build OOMs
 
       # IceWM backup system
       icewm
@@ -992,7 +1025,8 @@
       # ])
 
       libserialport can-utils lksctp-tools cjson ncurses libuuid
-      kicad graphviz mako openscad freecad carla strawberry
+      carla
+      # kicad graphviz mako openscad freecad strawberry  # disabled: kicad-packages3d OOMs disk
 
       unetbootin popsicle gnome-disk-utility
     ] ++ lib.optionals config.custom.steam.enable [

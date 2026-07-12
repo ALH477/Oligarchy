@@ -13,6 +13,35 @@
 # per persona — see modules/kernel.nix). Verify msr/lockdown configs per kernel with:
 #   zcat /proc/config.gz | grep -E 'LOCKDOWN|X86_MSR'
 #   grep -r . /sys/devices/system/cpu/vulnerabilities/
+#
+# PRESETS (upgrade path: balanced → hardened → vault → paranoid)
+#
+# balanced: Kernel defaults, early microcode, MSR writes blocked.
+#   Performance: baseline
+#   Security: mitigations=auto (kernel decides), protectKernelImage=false
+#   Use for: development, testing, maximum compatibility
+#
+# hardened: All speculation mitigations forced, kernel image protected, TSX off (Intel).
+#   Performance: -5% to -15% on Intel (PTI, L1TF, MDS), ~0% on AMD
+#   Security: spectre_v2=on, retbleed mitigated, nohibernate, kexec disabled
+#   Use for: production workloads, general security hardening
+#
+# vault: hardened + Secure Boot + kernel lockdown=integrity + module locking + IOMMU.
+#   Performance: identical to hardened (all additions are zero-cost)
+#   Security: prevents evil-maid, unsigned bootloaders, runtime kernel modification,
+#             DMA attacks from malicious PCIe/Thunderbolt devices
+#   Requires: Secure Boot enrollment (see docs/secure-boot-enrollment.md)
+#   Use for: maximum integrity without performance loss, threat model includes
+#            physical access or DMA attack vectors
+#
+# paranoid: vault + nosmt + forceGDS + blacklist msr + confidentiality lockdown.
+#   Performance: -30% to -50% (nosmt halves parallel capacity, GDS kills AVX)
+#   Security: closes cross-thread side-channels, forces AVX-disable on Intel if no
+#             microcode fix, prevents all module loading after boot
+#   Use for: extreme threat models where side-channel resistance > throughput
+#
+# UPGRADE PATH: balanced → hardened → vault (zero cost at each step)
+#               vault → paranoid (only if you accept the performance hit)
 { config, lib, pkgs, ... }:
 
 let
@@ -45,6 +74,18 @@ let
       disableTSX          = true;    # Intel: kill TSX/TAA at the source
       forceGDS            = false;
       lockdownMode        = "none";  # opt into "integrity" only with signing
+    };
+    vault = {
+      forceAllMitigations = true;
+      disableSMT          = false;   # keep SMT for RT performance
+      earlyMicrocode      = true;
+      blockMsrWrites      = true;
+      blacklistMsrModule  = false;
+      lockKernelModules   = true;    # NEW: no modules after boot
+      protectKernelImage  = true;
+      disableTSX          = true;    # Intel only
+      forceGDS            = false;   # explicitly NOT forced — AVX perf
+      lockdownMode        = "integrity"; # NEW: prevents kernel modification
     };
     paranoid = {
       forceAllMitigations = true;
@@ -80,11 +121,12 @@ in
     enable = mkEnableOption "CPU security hardening (mitigations, microcode, MSR, lockdown)";
 
     preset = mkOption {
-      type = types.enum [ "balanced" "hardened" "paranoid" ];
+      type = types.enum [ "balanced" "hardened" "vault" "paranoid" ];
       default = "hardened";
       description = ''
         balanced  = close to upstream defaults (mitigations=auto, early ucode, MSR writes blocked).
         hardened  = force all mitigations, protect kernel image, disable TSX (Intel). SMT kept.
+        vault     = hardened + Secure Boot required, kernel lockdown=integrity, module locking. Zero performance cost. Requires lanzaboote + enrolled Secure Boot keys.
         paranoid  = also nosmt, blacklist msr, lock modules, force GDS, confidentiality lockdown.
       '';
     };
@@ -249,6 +291,48 @@ in
         '';
       }];
       # You MUST provide signing keys + sign out-of-tree modules, or use lanzaboote.
+    })
+
+    # Vault preset auto-enables the lockdown kernel build
+    (mkIf (cfg.preset == "vault") {
+      hardware.cpuSecurity.enableLockdownKernelBuild = lib.mkDefault true;
+    })
+
+    ##########################################################################
+    # 8. IOMMU/DMA PROTECTION (vault and paranoid only)
+    #    Prevents DMA attacks from malicious PCIe/Thunderbolt devices.
+    #    amd_iommu=on forces IOMMU usage; iommu.passthrough=0 ensures all
+    #    DMA goes through the IOMMU (no direct memory access).
+    #    Zero performance cost for normal I/O.
+    ##########################################################################
+    (mkIf (cfg.preset == "vault" || cfg.preset == "paranoid") {
+      boot.kernelParams =
+        optionals isAMD [ "amd_iommu=on" "iommu.passthrough=0" ]
+        ++ optionals isIntel [ "intel_iommu=on" "iommu.passthrough=0" ];
+    })
+
+    ##########################################################################
+    # 7. VAULT PRESET: requires Secure Boot (lanzaboote)
+    ##########################################################################
+    (mkIf (cfg.preset == "vault") {
+      assertions = [{
+        assertion = config.boot.lanzaboote.enable or false;
+        message = ''
+          hardware.cpuSecurity.preset = "vault" requires Secure Boot via lanzaboote.
+          The vault preset enforces kernel lockdown=integrity and module locking, which
+          depend on a signed boot chain to be meaningful.
+
+          To enable:
+            1. Set custom.secureBoot.enable = true in configuration.nix
+            2. sudo sbctl create-keys
+            3. Enter BIOS → clear Secure Boot keys → Setup Mode
+            4. sudo sbctl enroll-keys
+            5. Reboot, verify: bootctl status shows "Secure Boot: enabled"
+            6. Rebuild with preset = "vault"
+
+          If you do not want Secure Boot requirements, use preset = "hardened" instead.
+        '';
+      }];
     })
   ]);
 }
