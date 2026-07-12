@@ -268,7 +268,8 @@
       extraModprobeConfig = ''
         options v4l2loopback devices=1 video_nr=10 card_label="Virtual Cam" exclusive_caps=1
         options usbcore autosuspend=-1
-        options xhci_hcd quirks=0x40
+        # xhci_hcd.quirks intentionally unset — see modules/platform.nix
+        # (forced TRUST_TX_LENGTH 0x40 correlated with HC death under dual USB audio)
       '';
     };
 
@@ -779,17 +780,27 @@
       fi
     '';
 
-    # Activation runs before bluetoothd may re-apply soft-block state from kernel/
-    # rfkill. Force a post-graph unblock once the stack is up.
+    # systemd-rfkill can restore SoftBlock=1 from saved state *after* activation
+    # and racing this service; delay + rewrite files + unblock.
     systemd.services.unblock-bluetooth = {
-      description = "Unblock Bluetooth rfkill after XHCI/USB resume soft-blocks";
-      after = [ "bluetooth.service" "systemd-rfkill.service" ];
+      description = "Unblock Bluetooth rfkill after sticky soft-blocks";
+      after = [ "bluetooth.service" "systemd-rfkill.service" "multi-user.target" ];
       wants = [ "bluetooth.service" ];
       wantedBy = [ "multi-user.target" ];
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "${pkgs.util-linux}/bin/rfkill unblock bluetooth";
+        ExecStartPre = "${pkgs.coreutils}/bin/sleep 2";
+        ExecStart = pkgs.writeShellScript "unblock-bt" ''
+          set -e
+          if [ -d /var/lib/systemd/rfkill ]; then
+            for f in /var/lib/systemd/rfkill/*bluetooth*; do
+              [ -f "$f" ] || continue
+              echo 0 > "$f" || true
+            done
+          fi
+          ${pkgs.util-linux}/bin/rfkill unblock bluetooth || true
+        '';
       };
     };
 

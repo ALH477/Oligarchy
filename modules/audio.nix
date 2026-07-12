@@ -51,6 +51,39 @@ in
               };
             };
           })
+          # USB isoc ALSA nodes — don't suspend/auto-profile flip under patchbay edits.
+          # Multi-device thrash on AMD XHCI 1022:15b9 can escalate to HC death if the
+          # stack repeatedly stop-ep's isochronous endpoints.
+          {
+            "30-usb-audio-stability" = {
+              "monitor.alsa.rules" = [
+                {
+                  matches = [
+                    { "device.name" = "~alsa_card.usb-.*"; }
+                  ];
+                  actions = {
+                    update-props = {
+                      "session.suspend-timeout-seconds" = 0;
+                      "api.alsa.auto-profile" = false;
+                      "api.alsa.auto-port" = false;
+                    };
+                  };
+                }
+                {
+                  matches = [
+                    { "node.name" = "~alsa_input.usb-.*"; }
+                    { "node.name" = "~alsa_output.usb-.*"; }
+                  ];
+                  actions = {
+                    update-props = {
+                      "session.suspend-timeout-seconds" = 0;
+                      "node.pause-on-idle" = false;
+                    };
+                  };
+                }
+              ];
+            };
+          }
         ];
       };
 

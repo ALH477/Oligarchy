@@ -134,8 +134,12 @@ in
     (mkIf cfg.framework {
       boot.kernelParams = [
         "usbcore.autosuspend=-1"
-        "usbcore.use_both_schemes=y"
-        "xhci_hcd.quirks=0x40"
+        # Prefer single bandwidth schedule under multi USB-audio; dual schemes
+        # add scheduling complexity on AMD XHCI (c5:00.3 HC death thrash 2026-07-11).
+        "usbcore.use_both_schemes=n"
+        # DO NOT force xhci_hcd.quirks=0x40 (XHCI_TRUST_TX_LENGTH). That global
+        # quirk co-occurred with "stop endpoint" / "HC died" under dual isoc
+        # USB audio patchbay thrash on 1022:15b9. Let the driver pick AMD quirks.
         "usb-storage.quirks=:u"
       ];
     })
