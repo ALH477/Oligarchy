@@ -16,6 +16,7 @@
     ./modules/dcf-identity.nix
     ./modules/dcf-tray.nix
     ./modules/dcf-mesh-agent.nix
+    ./modules/terminus-dev.nix
   ]
   # Optional local overrides written by the control center (kernel/platform
   # selection). Must be git-tracked for the flake to see it; the UI runs `git add`.
@@ -217,6 +218,11 @@
     };
     hardware.steam-hardware.enable = lib.mkIf config.custom.steam.enable true;
     # gamemode is owned by the active persona (on for the "gaming" persona).
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Terminus Developer Edition (local-only, references working trees)
+    # ──────────────────────────────────────────────────────────────────────────
+    custom.terminus-dev.enable = true;
 
     # Use mkForce to resolve SSH askPassword conflicts (prefer KDE solution)
     programs.ssh.askPassword = lib.mkForce "${pkgs.kdePackages.ksshaskpass}/bin/ksshaskpass";
@@ -531,11 +537,12 @@
         powerOnBoot = true;
         settings = {
           General = {
-            Enable = "Source,Sink,Media,Socket";
+            # Do NOT set Enable= — modern bluez rejects it ("Unknown key Enable")
             Experimental = true;
             FastConnectable = true;
             JustWorksRepairing = "always";
             MultiProfile = "multiple";
+            KernelExperimental = true;
           };
           Policy = {
             AutoEnable = true;
@@ -638,15 +645,26 @@
       };
 
       udev.extraRules = ''
-        ACTION=="add", SUBSYSTEM=="usb", ATTR{power/autosuspend}="-1"
-        ACTION=="add", SUBSYSTEM=="usb", ATTR{power/control}="on"
-        ACTION=="add", SUBSYSTEM=="usb", ATTR{power/autosuspend_delay_ms}="-1"
-        ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", ATTR{power/control}="on"
-        ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", ATTR{power/autosuspend}="-1"
-        ACTION=="add", SUBSYSTEM=="usb", ATTR{bDeviceClass}=="09", ATTR{power/control}="on"
+        # PCI XHCI host controllers (class 0x0c0330) must stay awake.
+        # Device-level USB autosuspend alone is NOT enough — parent D3hot
+        # suspend resets the whole tree (Framework kbd + MediaTek BT).
+        ACTION=="add", SUBSYSTEM=="pci", ATTR{class}=="0x0c0330", ATTR{power/control}="on"
+
+        # USB devices only — never interfaces (they have no power/* attrs;
+        # matching interfaces spams "Could not chase sysfs attribute").
+        ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{power/control}="on"
+        ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{power/autosuspend}="-1"
+        ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{power/autosuspend_delay_ms}="-1"
+
+        # USB hubs (device class 09)
+        ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{bDeviceClass}=="09", ATTR{power/control}="on"
+
+        # Framework keyboard module + any Framework USB device (vendor 32ac)
+        ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="32ac", ATTR{power/control}="on"
+        ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="32ac", ATTR{power/autosuspend}="-1"
+
+        # Thunderbolt authorize (Framework expansion bay)
         ACTION=="add", SUBSYSTEM=="thunderbolt", ATTR{authorized}=="0", ATTR{authorized}="1"
-        ACTION=="add", SUBSYSTEM=="hid", ATTR{power/control}="on"
-        ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="32ac", ATTR{power/control}="on"
       '';
 
       logind.settings.Login = {
@@ -743,9 +761,23 @@
     users.users.asher = {
       isNormalUser = true;
       description = "Asher";
-      extraGroups = [ "networkmanager" "wheel" "docker" "wireshark" "disk" "video" "input" "audio" ];
+      # No "input" — compositor routes HID for normal desktop use.
+      # Raw-evdev daemons (blipply service user) keep their own group membership.
+      extraGroups = [ "networkmanager" "wheel" "docker" "wireshark" "disk" "video" "audio" ];
       shell = pkgs.bash;
     };
+
+    # Clear sticky Bluetooth soft-blocks left by prior XHCI runtime-suspend
+    # cascades. Runtime recurrence is fixed by the PCI XHCI udev rule above;
+    # this only purges saved state on switch/boot.
+    system.activationScripts.unblockBluetoothRfkill.text = ''
+      if [ -d /var/lib/systemd/rfkill ]; then
+        for f in /var/lib/systemd/rfkill/*bluetooth*; do
+          [ -f "$f" ] || continue
+          echo 0 > "$f" || true
+        done
+      fi
+    '';
 
     # ──────────────────────────────────────────────────────────────────────────
     # System Maintenance (unchanged)
