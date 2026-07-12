@@ -842,12 +842,18 @@
     # XHCI recover CLI — ssh asher@<tailscale-ip> 'sudo xhci-recover'
     # after "HC died" on AMD 0000:c5:00.3 (WiFi path survives; USB NIC does not).
     # Binary is on PATH via environment.systemPackages below (shared derivation).
+    # List both the nix-store path and the /run/current-system symlink so
+    # `sudo xhci-recover` (PATH) and an explicit store path both match NOPASSWD.
     security.sudo.extraRules = [
       {
         users = [ "asher" ];
         commands = [
           {
             command = "${xhci-recover}/bin/xhci-recover";
+            options = [ "NOPASSWD" ];
+          }
+          {
+            command = "/run/current-system/sw/bin/xhci-recover";
             options = [ "NOPASSWD" ];
           }
         ];
