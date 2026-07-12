@@ -769,7 +769,7 @@
 
     # Clear sticky Bluetooth soft-blocks left by prior XHCI runtime-suspend
     # cascades. Runtime recurrence is fixed by the PCI XHCI udev rule above;
-    # this only purges saved state on switch/boot.
+    # this purges saved state on switch/boot and unblocks after bluetooth.service.
     system.activationScripts.unblockBluetoothRfkill.text = ''
       if [ -d /var/lib/systemd/rfkill ]; then
         for f in /var/lib/systemd/rfkill/*bluetooth*; do
@@ -778,6 +778,20 @@
         done
       fi
     '';
+
+    # Activation runs before bluetoothd may re-apply soft-block state from kernel/
+    # rfkill. Force a post-graph unblock once the stack is up.
+    systemd.services.unblock-bluetooth = {
+      description = "Unblock Bluetooth rfkill after XHCI/USB resume soft-blocks";
+      after = [ "bluetooth.service" "systemd-rfkill.service" ];
+      wants = [ "bluetooth.service" ];
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${pkgs.util-linux}/bin/rfkill unblock bluetooth";
+      };
+    };
 
     # ──────────────────────────────────────────────────────────────────────────
     # System Maintenance (unchanged)
