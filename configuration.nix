@@ -26,7 +26,59 @@
     custom.steam.enable = lib.mkEnableOption "Steam and gaming support";
   };
 
-  config = {
+  config = let
+    # Shared derivation: PATH binary and sudoers NOPASSWD entry must match.
+    xhci-recover = pkgs.writeShellScriptBin "xhci-recover" ''
+      set -euo pipefail
+      if [ "''${EUID:-$(id -u)}" -ne 0 ]; then
+        echo "run as root: sudo $0 [PCI_ADDR ...]" >&2
+        exit 1
+      fi
+      if [ "$#" -gt 0 ]; then
+        DEVS=("$@")
+      else
+        DEVS=(0000:c5:00.3)
+      fi
+      log() { echo "[xhci-recover $(${pkgs.coreutils}/bin/date +%H:%M:%S)] $*"; }
+      rebind() {
+        local dev=$1
+        if [ ! -e /sys/bus/pci/devices/$dev ]; then
+          log "WARN: $dev not present"
+          return 1
+        fi
+        if [ -e /sys/bus/pci/drivers/xhci_hcd/$dev ]; then
+          log "unbind $dev"
+          echo "$dev" > /sys/bus/pci/drivers/xhci_hcd/unbind || true
+          ${pkgs.coreutils}/bin/sleep 2
+        fi
+        log "bind $dev"
+        if ! echo "$dev" > /sys/bus/pci/drivers/xhci_hcd/bind 2>/dev/null; then
+          log "bind failed — remove + rescan $dev"
+          echo 1 > "/sys/bus/pci/devices/$dev/remove" || true
+          ${pkgs.coreutils}/bin/sleep 1
+          echo 1 > /sys/bus/pci/rescan
+          ${pkgs.coreutils}/bin/sleep 2
+        fi
+      }
+      for d in "''${DEVS[@]}"; do
+        rebind "$d" || true
+      done
+      ${pkgs.coreutils}/bin/sleep 2
+      if [ -d /var/lib/systemd/rfkill ]; then
+        for f in /var/lib/systemd/rfkill/*bluetooth*; do
+          [ -f "$f" ] || continue
+          echo 0 > "$f" || true
+        done
+      fi
+      ${pkgs.util-linux}/bin/rfkill unblock bluetooth 2>/dev/null || true
+      log "USB devices now:"
+      ${pkgs.usbutils}/bin/lsusb || true
+      log "Framework kbd / audio probe:"
+      ${pkgs.usbutils}/bin/lsusb | ${pkgs.gnugrep}/bin/grep -E '32ac:0012|17cc:|0499:|0e8d:' \
+        || log "(not yet re-enumerated — replug or wait)"
+      log "done"
+    '';
+  in {
   # ──────────────────────────────────────────────────────────────────────────
   # DeMoD Boot Intro
   # ──────────────────────────────────────────────────────────────────────────
@@ -787,6 +839,21 @@
       shell = pkgs.bash;
     };
 
+    # XHCI recover CLI — ssh asher@<tailscale-ip> 'sudo xhci-recover'
+    # after "HC died" on AMD 0000:c5:00.3 (WiFi path survives; USB NIC does not).
+    # Binary is on PATH via environment.systemPackages below (shared derivation).
+    security.sudo.extraRules = [
+      {
+        users = [ "asher" ];
+        commands = [
+          {
+            command = "${xhci-recover}/bin/xhci-recover";
+            options = [ "NOPASSWD" ];
+          }
+        ];
+      }
+    ];
+
     # Clear sticky Bluetooth soft-blocks left by prior XHCI runtime-suspend
     # cascades. Runtime recurrence is fixed by the PCI XHCI udev rule above;
     # this purges saved state on switch/boot and unblocks after bluetooth.service.
@@ -858,6 +925,8 @@
       # listing pkgs.docker here pulled the insecure docker_28 default.
       vim git git-lfs gh htop nvme-cli lm_sensors s-tui stress
       dmidecode util-linux gparted usbutils
+      # dual-HS bus recover (PCI rebind 0000:c5:00.3); sudo NOPASSWD for asher
+      xhci-recover
 
       (python3.withPackages (ps: with ps; [
         pip virtualenv cryptography pycryptodome grpcio grpcio-tools
