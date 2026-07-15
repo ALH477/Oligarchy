@@ -66,6 +66,9 @@
     # VM Manager - Hybrid VM management
     vm-manager.url = "path:./vm-manager";
 
+    # DSP Coprocessor Control — TUI/CLI for ArchibaldOS DSP VM
+    dsp-ctl.url = "path:./modules/dsp-ctl";
+
     # DeMoD Voice - Local TTS and Voice Cloning
     demod-voice.url = "path:./modules/demod-voice";
 
@@ -92,6 +95,7 @@
     nixos-generators,
     sops-nix,
     vm-manager,
+    dsp-ctl,
     demod-voice,
     # archibaldos,
     ...
@@ -119,7 +123,7 @@
       inherit inputs nixpkgs-unstable;
       # Uncomment when archibaldos is available:
       # inherit archibaldos;
-      inherit vm-manager;
+      inherit vm-manager dsp-ctl;
     };
 
     # ════════════════════════════════════════════════════════════════════════
@@ -172,6 +176,9 @@
       # VM Manager - Hybrid VM management
       vm-manager.nixosModules.quickemu-vm
       vm-manager.nixosModules.dsp-vm
+
+      # DSP Coprocessor Control — TUI/CLI tool
+      dsp-ctl.nixosModules.dsp-ctl
 
       # DeMoD Voice - Local TTS and Voice Cloning
       ./modules/demod-voice/nixos-module.nix

@@ -1,0 +1,6 @@
+/target
+/result
+/result-*
+*.o
+*.so
+*.a
