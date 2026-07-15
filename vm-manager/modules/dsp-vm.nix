@@ -391,7 +391,7 @@
           displayOpts =
             lib.optionalString cfg.spice " -vga virtio -display gtk,gl=on"
             + lib.optionalString cfg.vnc " -vnc :0"
-            + lib.optionalString (!cfg.spice && !cfg.vnc) " -display none -serial file:/var/log/qemu-${cfg.name}-serial.log";
+            + lib.optionalString (!cfg.spice && !cfg.vnc) " -display none -chardev file,id=serial0,path=/var/log/qemu-${cfg.name}-serial.log -device isa-serial,chardev=serial0";
 
           # QEMU monitor socket for debugging
           monitorOpts = " -monitor unix:/run/qemu-${cfg.name}.sock,server,nowait";
