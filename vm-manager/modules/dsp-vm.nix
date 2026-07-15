@@ -302,10 +302,10 @@
         
         # Unbind VFIO devices from xhci_hcd and bind to vfio-pci
         for dev in ${cfg.audioDevice.usbController.xhciUsb2PciId} ${cfg.audioDevice.usbController.xhciUsb3PciId}; do
-          if [ -e "/sys/bus/pci/devices/0000:$dev/driver" ]; then
-            echo "0000:$dev" > /sys/bus/pci/devices/0000:$dev/driver/unbind || true
+          if [ -e "/sys/bus/pci/devices/$dev/driver" ]; then
+            echo "$dev" > /sys/bus/pci/devices/$dev/driver/unbind || true
           fi
-          echo "0000:$dev" > /sys/bus/pci/drivers/vfio-pci/bind || true
+          echo "$dev" > /sys/bus/pci/drivers/vfio-pci/bind || true
         done
       '';
       
