@@ -110,19 +110,62 @@
       enable = lib.mkOption {
         type = lib.types.bool;
         default = false;
-        description = "Enable VFIO passthrough of USB audio interface (alternative to NETJACK).";
+        description = ''
+          Enable VFIO passthrough of an entire USB host controller to the VM.
+          The VM gets direct hardware access to whatever audio interface is
+          plugged into that controller — zero-copy, zero-latency, no hypervisor
+          translation in the audio path.
+          NETJACK is still used to route the processed audio back to the host.
+        '';
       };
-      
+
+      # Single PCI address (legacy — one device)
       pciId = lib.mkOption {
         type = lib.types.str;
         default = "0000:00:1b.0";
         description = "PCI address of audio device (from lspci -nn).";
       };
-      
+
       vendorDevice = lib.mkOption {
         type = lib.types.str;
         default = "";
         description = "Vendor:Device ID for VFIO binding (e.g., '1022:15e3').";
+      };
+
+      # Full USB controller passthrough — the real deal
+      usbController = {
+        enable = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Pass through an entire USB XHCI host controller to the VM.";
+        };
+
+        # XHCI USB2 controller (e.g., 0000:c7:00.3)
+        xhciUsb2PciId = lib.mkOption {
+          type = lib.types.str;
+          default = "0000:c7:00.3";
+          description = "PCI address of the XHCI USB2 controller to pass through.";
+        };
+
+        # XHCI USB3 companion (e.g., 0000:c7:00.4)
+        xhciUsb3PciId = lib.mkOption {
+          type = lib.types.str;
+          default = "0000:c7:00.4";
+          description = "PCI address of the XHCI USB3 companion controller to pass through.";
+        };
+
+        # Vendor:Device IDs for both controllers (for VFIO binding)
+        usb2VendorDevice = lib.mkOption {
+          type = lib.types.str;
+          default = "1022:15C0";
+          description = "Vendor:Device ID for USB2 controller (from lspci -nn).";
+        };
+
+        usb3VendorDevice = lib.mkOption {
+          type = lib.types.str;
+          default = "1022:15C1";
+          description = "Vendor:Device ID for USB3 companion (from lspci -nn).";
+        };
       };
     };
     
@@ -216,10 +259,17 @@
       "vfio"
     ];
     
-    boot.extraModprobeConfig = lib.mkIf (cfg.audioDevice.enable && cfg.audioDevice.vendorDevice != "") ''
-      options vfio-pci ids=${cfg.audioDevice.vendorDevice}
-      softdep snd_hda_intel pre: vfio-pci
-    '';
+    boot.extraModprobeConfig =
+      # Full USB controller passthrough: bind both XHCI controllers to vfio-pci
+      lib.optionalString (cfg.audioDevice.enable && cfg.audioDevice.usbController.enable) ''
+        options vfio-pci ids=${cfg.audioDevice.usbController.usb2VendorDevice},${cfg.audioDevice.usbController.usb3VendorDevice}
+        softdep xhci_hcd pre: vfio-pci
+      ''
+      # Single device passthrough (legacy)
+      + lib.optionalString (cfg.audioDevice.enable && !cfg.audioDevice.usbController.enable && cfg.audioDevice.vendorDevice != "") ''
+        options vfio-pci ids=${cfg.audioDevice.vendorDevice}
+        softdep snd_hda_intel pre: vfio-pci
+      '';
 
     virtualisation.libvirtd = {
       enable = true;
@@ -286,9 +336,19 @@
               -no-fd-bootchk
           '';
 
-          vfioOpts = lib.optionalString cfg.audioDevice.enable ''
+          # VFIO passthrough: either a single PCI device or a full USB
+          # host controller pair (USB2 + USB3 companion). The VM gets
+          # direct hardware access — zero-copy, zero-latency audio.
+          vfioOpts =
+            # Full USB controller passthrough (primary mode)
+            lib.optionalString (cfg.audioDevice.enable && cfg.audioDevice.usbController.enable) ''
+              -device vfio-pci,host=${cfg.audioDevice.usbController.xhciUsb2PciId},multifunction=on,romfile= \
+              -device vfio-pci,host=${cfg.audioDevice.usbController.xhciUsb3PciId},multifunction=on,romfile=
+            ''
+            # Single PCI device passthrough (legacy mode)
+            + lib.optionalString (cfg.audioDevice.enable && !cfg.audioDevice.usbController.enable) ''
               -device vfio-pci,host=${cfg.audioDevice.pciId}
-          '';
+            '';
 
           # Network: forward NETJACK port (TCP + UDP) + multi-queue virtio-net
           # for lower latency. mq=on enables multi-queue, vectors=4 for

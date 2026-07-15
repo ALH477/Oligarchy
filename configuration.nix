@@ -305,11 +305,26 @@
       archibaldOS = {
         enable = true;
         netjack = {
-          enable = true;
+          enable = true;       # NETJACK routes processed audio back to host
           sourcePort = 4713;
-          bufferSize = 64;   # 64 frames @ 96kHz = 0.67ms
+          bufferSize = 64;     # 64 frames @ 96kHz = 0.67ms
           sampleRate = 96000;
           channels = 2;
+        };
+      };
+
+      # VFIO passthrough of the second USB host controller (c7:00.3/4).
+      # The VM gets direct hardware access to whatever audio interface is
+      # plugged into that controller. The first controller (c5:00.3) stays
+      # on the host for keyboard/mouse/BT.
+      audioDevice = {
+        enable = true;
+        usbController = {
+          enable = true;
+          xhciUsb2PciId = "0000:c7:00.3";  # 1022:15C0 — empty, isolated IOMMU group 31
+          xhciUsb3PciId = "0000:c7:00.4";  # 1022:15C1 — IOMMU group 32
+          usb2VendorDevice = "1022:15C0";
+          usb3VendorDevice = "1022:15C1";
         };
       };
 
