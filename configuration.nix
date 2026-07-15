@@ -307,7 +307,7 @@
         netjack = {
           enable = true;       # NETJACK routes processed audio back to host
           sourcePort = 4713;
-          bufferSize = 64;     # 64 frames @ 96kHz = 0.67ms
+          bufferSize = 32;     # 32 frames @ 96kHz = 0.33ms period, 0.67ms buffer
           sampleRate = 96000;
           channels = 2;
         };

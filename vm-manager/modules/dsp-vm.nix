@@ -88,8 +88,8 @@
         
         bufferSize = lib.mkOption {
           type = lib.types.int;
-          default = 64;
-          description = "Buffer size in frames (64 @ 96kHz = 0.67ms).";
+          default = 32;
+          description = "Buffer size in frames (32 @ 96kHz = 0.33ms, 0.67ms buffer with n=2).";
         };
         
         sampleRate = lib.mkOption {
