@@ -299,7 +299,7 @@
       name = "archibaldos-dsp";
       isolatedCores = [ 0 1 ];
       memoryMB = 2048;
-      hugepages = 1024;  # 2GB of 2MB hugepages
+      hugepages = 2048;  # 4GB of 2MB hugepages (2x VM memory for safety)
       cpuModel = "host";
 
       archibaldOS = {
