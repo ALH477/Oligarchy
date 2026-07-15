@@ -354,7 +354,7 @@
           # no parallel, no serial redirection. Every emulated device is
           # a potential source of latency.
           minimalDeviceOpts = lib.replaceStrings ["\n"] [" "] ''
-            -nodefaults -no-fd-bootchk -boot c
+            -nodefaults -no-fd-bootchk -boot c -device isa-serial
           '';
 
           # VFIO passthrough: either a single PCI device or a full USB
