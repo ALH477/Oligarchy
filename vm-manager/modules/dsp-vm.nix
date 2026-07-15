@@ -337,39 +337,36 @@
               -no-reboot
           '';
 
-          memoryOpts = lib.optionalString cfg.realtime.enable ''
-              -mem-prealloc \
-              -mem-path /dev/hugepages \
-              -overcommit mem-lock=on
-          '';
+          memoryOpts = lib.optionalString cfg.realtime.enable (lib.replaceStrings ["\n"] [" "] ''
+            -mem-prealloc -mem-path /dev/hugepages -overcommit mem-lock=on
+          '');
 
           # Disk: cache=unsafe + native AIO for lowest I/O latency
-          diskOpts = ''
-              -drive file=${cfg.archibaldOS.diskImage},format=qcow2,if=virtio,cache=unsafe,aio=native,cache.direct=on
+          diskOpts = lib.replaceStrings ["\n"] [" "] ''
+            -drive file=${cfg.archibaldOS.diskImage},format=qcow2,if=virtio,cache=unsafe,aio=native,cache.direct=on
           '';
 
           # Disable all unnecessary emulated devices — no USB, no floppy,
           # no parallel, no serial redirection. Every emulated device is
           # a potential source of latency.
-          minimalDeviceOpts = ''
-              -nodefaults \
-              -no-fd-bootchk \
-              -boot c
+          minimalDeviceOpts = lib.replaceStrings ["\n"] [" "] ''
+            -nodefaults -no-fd-bootchk -boot c
           '';
 
           # VFIO passthrough: either a single PCI device or a full USB
           # host controller pair (USB2 + USB3 companion). The VM gets
           # direct hardware access — zero-copy, zero-latency audio.
-          vfioOpts =
+          vfioOpts = lib.replaceStrings ["\n"] [" "] (
             # Full USB controller passthrough (primary mode)
             lib.optionalString (cfg.audioDevice.enable && cfg.audioDevice.usbController.enable) ''
-              -device vfio-pci,host=${cfg.audioDevice.usbController.xhciUsb2PciId},multifunction=on,romfile= \
+              -device vfio-pci,host=${cfg.audioDevice.usbController.xhciUsb2PciId},multifunction=on,romfile=
               -device vfio-pci,host=${cfg.audioDevice.usbController.xhciUsb3PciId},multifunction=on,romfile=
             ''
             # Single PCI device passthrough (legacy mode)
             + lib.optionalString (cfg.audioDevice.enable && !cfg.audioDevice.usbController.enable) ''
               -device vfio-pci,host=${cfg.audioDevice.pciId}
-            '';
+            ''
+          );
 
           # Network: forward NETJACK port (TCP + UDP) + multi-queue virtio-net
           # for lower latency. mq=on enables multi-queue, vectors=4 for
@@ -382,10 +379,10 @@
             udpFwds = lib.optional (cfg.archibaldOS.netjack.enable)
               "hostfwd=udp::${toString cfg.archibaldOS.netjack.sourcePort}-:${toString cfg.archibaldOS.netjack.sourcePort}";
             allFwds = tcpFwds ++ udpFwds;
-          in lib.optionalString cfg.network.enable ''
-              -netdev user,id=net0,${lib.concatStringsSep "," allFwds} \
-              -device virtio-net-pci,netdev=net0,mq=on,vectors=4
-          '';
+          in lib.optionalString cfg.network.enable (lib.replaceStrings ["\n"] [" "] ''
+            -netdev user,id=net0,${lib.concatStringsSep "," allFwds}
+            -device virtio-net-pci,netdev=net0,mq=on,vectors=4
+          '');
 
           displayOpts =
             lib.optionalString cfg.spice " -vga virtio -display gtk,gl=on"
@@ -395,32 +392,30 @@
           # QEMU monitor socket for debugging
           monitorOpts = " -monitor unix:/run/qemu-${cfg.name}.sock,server,nowait";
 
-          tpmOpts = lib.optionalString cfg.tpm ''
-              -tpmdev emulator,id=tpm0,tpm-type=tpm2-emulator \
-              -device tpm-tis,tpmdev=tpm0
-          '';
+          tpmOpts = lib.optionalString cfg.tpm (lib.replaceStrings ["\n"] [" "] ''
+            -tpmdev emulator,id=tpm0,tpm-type=tpm2-emulator
+            -device tpm-tis,tpmdev=tpm0
+          '');
 
-        in pkgs.writeShellScript "start-${cfg.name}" ''
-          exec ${headlessQemu}/bin/qemu-system-x86_64 \
-            -enable-kvm \
-            -name ${cfg.name},process=${cfg.name} \
-            -m ${toString cfg.memoryMB} \
-            -smp ${toString coresCount},sockets=1,cores=${toString coresCount},threads=1 \
-            -cpu ${cfg.cpuModel},+topoext \
-            -machine q35,accel=kvm,kernel_irqchip=split \
-            -no-reboot \
-            ${lib.concatStringsSep " \\\n            " (lib.filter (s: s != "") [
-              memoryOpts
-              minimalDeviceOpts
-              diskOpts
-              vfioOpts
-              netOpts
-              displayOpts
-              monitorOpts
-              tpmOpts
-              (lib.concatStringsSep " " cfg.qemuExtraArgs)
-            ])}
-        '';
+        in pkgs.writeShellScript "start-${cfg.name}" (lib.concatStringsSep " \\\n  " (lib.filter (s: s != "") [
+          "${headlessQemu}/bin/qemu-system-x86_64"
+          "-enable-kvm"
+          "-name ${cfg.name},process=${cfg.name}"
+          "-m ${toString cfg.memoryMB}"
+          "-smp ${toString coresCount},sockets=1,cores=${toString coresCount},threads=1"
+          "-cpu ${cfg.cpuModel},+topoext"
+          "-machine q35,accel=kvm,kernel_irqchip=split"
+          "-no-reboot"
+          memoryOpts
+          minimalDeviceOpts
+          diskOpts
+          vfioOpts
+          netOpts
+          displayOpts
+          monitorOpts
+          tpmOpts
+          (lib.concatStringsSep " " cfg.qemuExtraArgs)
+        ]));
         
         ExecStop = "${pkgs.coreutils}/bin/kill -TERM $MAINPID";
       };
