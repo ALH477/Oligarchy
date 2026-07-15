@@ -15,26 +15,202 @@ The VM Manager provides a declarative way to configure and run multiple virtual 
 
 ## Quick Start
 
-### Enable a VM
+### 1. Build the Guest Image
 
-Add to your `configuration.nix`:
+```bash
+git clone https://github.com/ALH477/ArchibaldOS
+cd ArchibaldOS
+nix build .#dsp-vm-qcow2
+mkdir -p ~/vms
+cp result-dsp-vm/nixos.qcow2 ~/vms/archibaldos-dsp.qcow2
+```
+
+### 2. Configure Hardware-Specific Settings
+
+Before deploying, you need to identify your hardware:
+
+```bash
+# Find USB audio controllers (for VFIO passthrough)
+lspci -nn | grep -i "USB.*controller"
+
+# Find available CPU cores
+lscpu | grep "CPU(s):"
+
+# Check IOMMU groups (for VFIO)
+ls -l /sys/kernel/iommu_groups/*/devices/
+```
+
+### 3. Deploy the Host Configuration
+
+```bash
+git clone https://github.com/ALH477/Oligarchy
+cd Oligarchy
+
+# Edit configuration.nix to match your hardware (see Hardware Configuration below)
+# Then deploy:
+sudo nixos-rebuild switch --flake .#nixos
+```
+
+The VM auto-starts as a systemd service.
+
+## Hardware Configuration
+
+The DSP VM requires hardware-specific configuration. All settings are NixOS module options that can be customized in `configuration.nix`.
+
+### CPU Isolation
+
+Isolate CPU cores for deterministic RT processing. Choose cores that won't be used by the host.
 
 ```nix
-imports = [ vm-manager.nixosModules.dsp-vm ];
-
-# DSP VM with ArchibaldOS and NETJACK
 custom.vm.dsp = {
-  enable = true;
-  isolatedCores = [ 0 1 ];
-  memoryMB = 4096;
-  archibaldOS = {
+  isolatedCores = [ 0 1 ];  # Isolate cores 0 and 1
+};
+```
+
+**Finding your cores:**
+```bash
+# See all CPU cores
+lscpu | grep "CPU(s):"
+
+# Check current isolation
+cat /sys/devices/system/cpu/isolated
+
+# Recommended: use the first 2 cores for the DSP VM
+# Adjust based on your CPU topology
+```
+
+### Memory Allocation
+
+```nix
+custom.vm.dsp = {
+  memoryMB = 2048;   # 2GB RAM for the VM
+  hugepages = 2048;  # 2048 × 2MB = 4GB hugepages (2x VM memory for safety)
+};
+```
+
+**Guidelines:**
+- `memoryMB`: VM RAM (2048MB minimum for JACK2 + PipeWire + musnix)
+- `hugepages`: Should be ≥ `memoryMB / 2` (each hugepage is 2MB)
+
+### VFIO Audio Passthrough
+
+Pass USB audio controllers directly to the VM for zero-latency hardware access.
+
+```nix
+custom.vm.dsp = {
+  audioDevice = {
     enable = true;
-    netjack.enable = true;
+    usbController = {
+      enable = true;
+      xhciUsb2PciId = "0000:c7:00.3";      # Your USB2 controller
+      xhciUsb3PciId = "0000:c7:00.4";      # Your USB3 companion
+      usb2VendorDevice = "1022:15C0";       # From lspci -nn
+      usb3VendorDevice = "1022:15C1";       # From lspci -nn
+    };
   };
 };
 ```
 
-### Using Pre-built Configs
+**Finding your PCI IDs:**
+```bash
+# List all USB controllers with vendor:device IDs
+lspci -nn | grep -i "USB.*controller"
+
+# Example output:
+# c7:00.3 USB controller [0c03]: Advanced Micro Devices, Inc. [AMD] Device [1022:15c0]
+# c7:00.4 USB controller [0c03]: Advanced Micro Devices, Inc. [AMD] Device [1022:15c1]
+
+# Extract the PCI address (c7:00.3) and vendor:device (1022:15c0)
+```
+
+**IOMMU requirements:**
+- Enable AMD-Vi or Intel VT-d in BIOS
+- Add to kernel params:
+  ```nix
+  boot.kernelParams = [
+    "amd_iommu=on"  # or "intel_iommu=on" for Intel
+    "iommu=pt"
+  ];
+  ```
+
+### Disk Image Path
+
+```nix
+custom.vm.dsp = {
+  archibaldOS = {
+    diskImage = "/home/asher/vms/archibaldos-dsp.qcow2";  # Path to built image
+  };
+};
+```
+
+### NETJACK Audio Settings
+
+```nix
+custom.vm.dsp = {
+  archibaldOS = {
+    netjack = {
+      enable = true;
+      sourcePort = 4713;      # Port for NETJACK routing
+      bufferSize = 32;        # 32 samples @ 96kHz = 0.33ms
+      sampleRate = 96000;     # 96kHz HD audio
+      channels = 2;           # Stereo
+    };
+  };
+};
+```
+
+**Latency calculation:**
+```
+Buffer latency = bufferSize / sampleRate
+               = 32 / 96000
+               = 0.000333 seconds
+               = 0.33ms
+
+Round-trip (with n=2 buffers) = 0.67ms
+```
+
+### Complete Example
+
+```nix
+imports = [ vm-manager.nixosModules.dsp-vm ];
+
+custom.vm.dsp = {
+  enable = true;
+  
+  # Hardware-specific (adjust for your system)
+  isolatedCores = [ 0 1 ];
+  memoryMB = 2048;
+  hugepages = 2048;
+  
+  # VFIO passthrough (adjust PCI IDs for your hardware)
+  audioDevice = {
+    enable = true;
+    usbController = {
+      enable = true;
+      xhciUsb2PciId = "0000:c7:00.3";
+      xhciUsb3PciId = "0000:c7:00.4";
+      usb2VendorDevice = "1022:15C0";
+      usb3VendorDevice = "1022:15C1";
+    };
+  };
+  
+  # Guest image
+  archibaldOS = {
+    enable = true;
+    diskImage = "/home/YOUR_USERNAME/vms/archibaldos-dsp.qcow2";
+    
+    netjack = {
+      enable = true;
+      sourcePort = 4713;
+      bufferSize = 32;
+      sampleRate = 96000;
+      channels = 2;
+    };
+  };
+};
+```
+
+## Using Pre-built Configs
 
 ```nix
 imports = [
