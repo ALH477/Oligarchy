@@ -409,15 +409,17 @@
             -cpu ${cfg.cpuModel},+topoext \
             -machine q35,accel=kvm,kernel_irqchip=split \
             -no-reboot \
-            ${memoryOpts} \
-            ${minimalDeviceOpts} \
-            ${diskOpts} \
-            ${vfioOpts} \
-            ${netOpts} \
-            ${displayOpts} \
-            ${monitorOpts} \
-            ${tpmOpts} \
-            ${lib.concatStringsSep " " cfg.qemuExtraArgs}
+            ${lib.concatStringsSep " \\\n            " (lib.filter (s: s != "") [
+              memoryOpts
+              minimalDeviceOpts
+              diskOpts
+              vfioOpts
+              netOpts
+              displayOpts
+              monitorOpts
+              tpmOpts
+              (lib.concatStringsSep " " cfg.qemuExtraArgs)
+            ])}
         '';
         
         ExecStop = "${pkgs.coreutils}/bin/kill -TERM $MAINPID";
