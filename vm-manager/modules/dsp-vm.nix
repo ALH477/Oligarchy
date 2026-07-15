@@ -236,13 +236,11 @@
 
   config = let
     cfg = config.custom.vm.dsp;
-    headlessQemu = pkgs.qemu_kvm.overrideAttrs (old: {
-      mesonFlags = (old.mesonFlags or []) ++ [
-        "-Dgtk=disabled"
-        "-Dsdl=disabled"
-      ];
-      buildInputs = builtins.filter (p: !builtins.any (name: p.pname or "" == name) ["gtk+3" "sdl2"]) (old.buildInputs or []);
-    });
+    headlessQemu = pkgs.qemu.override {
+      gtkSupport = false;
+      sdlSupport = false;
+      spiceSupport = false;
+    };
   in lib.mkIf cfg.enable {
     boot.kernelParams = lib.mkAfter (
       let
