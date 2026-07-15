@@ -3,16 +3,27 @@
 # ============================================================================
 # DSP VM Module - ArchibaldOS DSP Coprocessor with NETJACK
 # ============================================================================
-# 
+#
 # This module creates an isolated VM running ArchibaldOS for real-time
 # digital signal processing. It uses CPU isolation and NETJACK audio
 # routing to the host PipeWire system.
 #
-# Prerequisites:
-#   1. Build the VM image: nix build .#archibaldos-dsp-vm
-#   2. Copy result to ~/vms/archibaldos-dsp.qcow2
-#   3. Enable IOMMU in BIOS (AMD-Vi / Intel VT-d)
+# Guest image source: https://github.com/ALH477/ArchibaldOS
+#   Build: cd ArchibaldOS && nix build .#dsp-vm-qcow2
+#   Place: cp result/*.qcow2 ~/vms/archibaldos-dsp.qcow2
 #
+# Host integration: Oligarchy NixOS (https://github.com/ALH477/Oligarchy)
+#   Enable: custom.vm.dsp.enable = true in configuration.nix
+#
+# Terminus Dev audio routing: terminus-dsp-connect start|stop|status
+#   (provided by modules/terminus-dev.nix)
+#
+# Prerequisites:
+#   1. Build the VM image: cd ~/ArchibaldOS && nix build .#dsp-vm-qcow2
+#   2. Copy result to ~/vms/archibaldos-dsp.qcow2
+#   3. Enable IOMMU in BIOS (AMD-Vi / Intel VT-d) — only for VFIO passthrough
+#
+# Organization: https://github.com/ALH477
 # ============================================================================
 
 {
@@ -58,7 +69,7 @@
       
       diskImage = lib.mkOption {
         type = lib.types.path;
-        default = ./config/archibaldos-dsp-image;
+        default = /home/asher/vms/archibaldos-dsp.qcow2;
         description = "Path to pre-built ArchibaldOS disk image.";
       };
       
@@ -77,8 +88,8 @@
         
         bufferSize = lib.mkOption {
           type = lib.types.int;
-          default = 128;
-          description = "Buffer size in frames (128 @ 96kHz = 1.33ms).";
+          default = 64;
+          description = "Buffer size in frames (64 @ 96kHz = 0.67ms).";
         };
         
         sampleRate = lib.mkOption {
@@ -242,7 +253,7 @@
         ExecStart = let
           coresCount = lib.length cfg.isolatedCores;
           coresStr = lib.concatStringsSep "," (map toString cfg.isolatedCores);
-          
+
           baseCmd = ''
             ${pkgs.qemu_kvm}/bin/qemu-system-x86_64 \
               -enable-kvm \
@@ -250,47 +261,63 @@
               -m ${toString cfg.memoryMB} \
               -smp ${toString coresCount},sockets=1,cores=${toString coresCount},threads=1 \
               -cpu ${cfg.cpuModel},+topoext \
-              -machine q35,accel=kvm,kernel_irqchip=on
+              -machine q35,accel=kvm,kernel_irqchip=split \
+              -no-hpet \
+              -no-reboot
           '';
-          
+
           memoryOpts = lib.optionalString cfg.realtime.enable ''
               -mem-prealloc \
               -mem-path /dev/hugepages \
-              ${lib.optionalString cfg.realtime.mlock "-realtime mlock=on"}
+              ${lib.optionalString cfg.realtime.mlock "-realtime mlock=on"} \
+              -overcommit
           '';
-          
-          # Use ArchibaldOS disk image path
+
+          # Disk: cache=unsafe + native AIO for lowest I/O latency
           diskOpts = ''
-              -drive file=${cfg.archibaldOS.diskImage},format=qcow2,if=virtio,cache=unsafe,aio=native
+              -drive file=${cfg.archibaldOS.diskImage},format=qcow2,if=virtio,cache=unsafe,aio=native,cache.direct=on
           '';
-          
+
+          # Disable all unnecessary emulated devices — no USB, no floppy,
+          # no parallel, no serial redirection. Every emulated device is
+          # a potential source of latency.
+          minimalDeviceOpts = ''
+              -nodefaults \
+              -no-fd-bootchk
+          '';
+
           vfioOpts = lib.optionalString cfg.audioDevice.enable ''
               -device vfio-pci,host=${cfg.audioDevice.pciId}
           '';
-          
-          # Network options - forward NETJACK port when enabled
+
+          # Network: forward NETJACK port (TCP + UDP) + multi-queue virtio-net
+          # for lower latency. mq=on enables multi-queue, vectors=4 for
+          # interrupt coalescing. This reduces NETJACK packet overhead.
           netOpts = let
-            hostfwds = lib.mapAttrsToList (k: v: "hostfwd=tcp::${toString k}-:${toString v}") 
+            tcpFwds = lib.mapAttrsToList (k: v: "hostfwd=tcp::${toString k}-:${toString v}")
               (cfg.network.hostfwd // lib.optionalAttrs (cfg.archibaldOS.netjack.enable) {
                 ${toString cfg.archibaldOS.netjack.sourcePort} = cfg.archibaldOS.netjack.sourcePort;
               });
+            udpFwds = lib.optional (cfg.archibaldOS.netjack.enable)
+              "hostfwd=udp::${toString cfg.archibaldOS.netjack.sourcePort}-:${toString cfg.archibaldOS.netjack.sourcePort}";
+            allFwds = tcpFwds ++ udpFwds;
           in lib.optionalString cfg.network.enable ''
-              -netdev user,id=net0,${lib.concatStringsSep "," hostfwds} \
-              -device virtio-net-pci,netdev=net0
+              -netdev user,id=net0,${lib.concatStringsSep "," allFwds} \
+              -device virtio-net-pci,netdev=net0,mq=on,vectors=4
           '';
-          
-          displayOpts = 
+
+          displayOpts =
             lib.optionalString cfg.spice " -vga virtio -display gtk,gl=on"
             ++ lib.optionalString cfg.vnc " -vnc :0"
             ++ lib.optionalString (!cfg.spice && !cfg.vnc) " -nographic -serial mon:stdio";
-          
+
           tpmOpts = lib.optionalString cfg.tpm ''
               -tpmdev emulator,id=tpm0,tpm-type=tpm2-emulator \
               -device tpm-tis,tpmdev=tpm0
           '';
-          
+
         in pkgs.writeShellScript "start-${cfg.name}" ''
-          exec ${baseCmd} ${memoryOpts} ${diskOpts} ${vfioOpts} ${netOpts} ${displayOpts} ${tpmOpts} ${lib.concatStringsSep " " cfg.qemuExtraArgs}
+          exec ${baseCmd} ${memoryOpts} ${minimalDeviceOpts} ${diskOpts} ${vfioOpts} ${netOpts} ${displayOpts} ${tpmOpts} ${lib.concatStringsSep " " cfg.qemuExtraArgs}
         '';
         
         ExecStop = "${pkgs.coreutils}/bin/kill -TERM $MAINPID";
@@ -317,10 +344,11 @@
           # Wait for VM to boot and JACK to start
           sleep 15
           
-          # Connect to VM's NETJACK server
+          # Connect to VM's NETJACK server via QEMU port forwarding.
+          # QEMU user-mode networking forwards host 127.0.0.1:4713 → VM:4713.
           # 128 frames @ 96kHz = 1.33ms round-trip latency
           exec ${pkgs.jack2}/bin/jack_netsource \
-            -H 10.0.2.2 \
+            -H 127.0.0.1 \
             -p ${toString cfg.archibaldOS.netjack.sourcePort} \
             -n archibaldos-dsp \
             -C ${toString cfg.archibaldOS.netjack.channels} \

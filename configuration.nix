@@ -290,6 +290,40 @@
     # ──────────────────────────────────────────────────────────────────────────
     custom.terminus-dev.enable = true;
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # ArchibaldOS DSP Coprocessor VM
+    # RT DSP guest with PREEMPT_RT kernel, CPU 0 isolated, NETJACK audio
+    # ──────────────────────────────────────────────────────────────────────────
+    custom.vm.dsp = {
+      enable = true;
+      name = "archibaldos-dsp";
+      isolatedCores = [ 0 ];
+      memoryMB = 2048;
+      hugepages = 1024;  # 2GB of 2MB hugepages
+      cpuModel = "host";
+
+      archibaldOS = {
+        enable = true;
+        netjack = {
+          enable = true;
+          sourcePort = 4713;
+          bufferSize = 64;   # 64 frames @ 96kHz = 0.67ms
+          sampleRate = 96000;
+          channels = 2;
+        };
+      };
+
+      realtime = {
+        enable = true;
+        mlock = true;
+        nice = -20;
+      };
+
+      ovmf = true;
+      spice = false;
+      vnc = false;
+    };
+
     # Sunshine (Moonlight server for remote desktop/game streaming)
     # DISABLED — capSysAdmin was grabbing input devices and killing keyboard/BT
     # ──────────────────────────────────────────────────────────────────────────
