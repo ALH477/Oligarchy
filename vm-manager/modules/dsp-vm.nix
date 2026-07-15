@@ -353,9 +353,8 @@
           # Disable all unnecessary emulated devices — no USB, no floppy,
           # no parallel, no serial redirection. Every emulated device is
           # a potential source of latency.
-          # Note: -nodefaults removes default serial, so we explicitly add isa-serial
           minimalDeviceOpts = lib.replaceStrings ["\n"] [" "] ''
-            -nodefaults -no-fd-bootchk -boot c -device isa-serial,chardev=serial0
+            -nodefaults -no-fd-bootchk -boot c
           '';
 
           # VFIO passthrough: either a single PCI device or a full USB
