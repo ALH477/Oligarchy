@@ -162,49 +162,68 @@ custom.vm.dsp = {
 
 ## Usage
 
-### Starting the VM
+### Quick Start with oligarchy-dsp Command
+
+OligarchyOS provides a dedicated command-line tool for managing the DSP VM:
+
+```bash
+# Start the DSP VM
+oligarchy-dsp start
+
+# Stop the DSP VM
+oligarchy-dsp stop
+
+# Restart the DSP VM
+oligarchy-dsp restart
+
+# Check detailed status
+oligarchy-dsp status
+
+# View serial console logs
+oligarchy-dsp logs
+
+# Access QEMU monitor
+oligarchy-dsp monitor
+
+# Rebuild VM image from ArchibaldOS flake
+oligarchy-dsp rebuild
+
+# Show help
+oligarchy-dsp help
+```
+
+The `oligarchy-dsp status` command provides comprehensive diagnostics:
+
+```
+═══════════════════════════════════════════════════════
+  ArchibaldOS DSP Coprocessor VM Status
+═══════════════════════════════════════════════════════
+
+[✓] Service: ACTIVE
+[✓] QEMU Process: PID 1260613 (CPU: 178%, MEM: 161.4MB)
+[✓] Disk Image: 4.1G (last modified: 2026-07-15 12:52:05)
+[✓] Serial Log: 273K
+[✓] Monitor Socket: AVAILABLE
+
+Network Ports:
+[✓] NETJACK (4713): LISTENING
+
+VFIO Passthrough:
+[✓] USB Controller 1 (c7:00.3): BOUND
+[✓] USB Controller 2 (c7:00.4): BOUND
+```
+
+### Manual Service Management
 
 ```bash
 # The VM starts automatically on boot
-systemctl start archibaldos-dsp
-```
+sudo systemctl start archibaldos-dsp.service
 
-### Checking Status
+# Check service status
+sudo systemctl status archibaldos-dsp.service
 
-```bash
-# Built-in status script
-dsp-status
-
-# Sample output:
-# === DSP VM Status ===
-# ● archibaldos-dsp.service - ArchibaldOS DSP Coprocessor VM
-#    Loaded: loaded (/etc/systemd/system/archibaldos-dsp.service; enabled)
-#    Active: active (running) since Mon 2026-02-16 04:00:00 UTC
-#
-# === CPU Isolation ===
-# 0-1
-#
-# === Hugepages ===
-# HugePages_Total:  1024
-# HugePages_Free:   512
-# HugePages_Rsvd:   512
-#
-# === NETJACK Bridge ===
-# ● dsp-netjack-bridge.service - NETJACK bridge to ArchibaldOS DSP VM
-#    Active: active (running)
-```
-
-### Connecting to VM Console
-
-```bash
-dsp-console
-# Press Ctrl-A X to exit
-```
-
-### Restarting NETJACK
-
-```bash
-dsp-netjack-restart
+# View service logs
+sudo journalctl -u archibaldos-dsp.service -f
 ```
 
 ## Audio Routing
