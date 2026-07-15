@@ -322,8 +322,7 @@
           memoryOpts = lib.optionalString cfg.realtime.enable ''
               -mem-prealloc \
               -mem-path /dev/hugepages \
-              ${lib.optionalString cfg.realtime.mlock "-realtime mlock=on"} \
-              -overcommit
+              -overcommit mem-lock=on
           '';
 
           # Disk: cache=unsafe + native AIO for lowest I/O latency
