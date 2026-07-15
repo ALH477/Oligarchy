@@ -293,9 +293,19 @@
       requires = [ "libvirtd.service" ];
       
       environment = {
-        DISPLAY = ":99";  # Dummy display for GTK init (no X server)
-        GDK_BACKEND = "broadway";  # Use Broadway backend (no X11/Wayland needed)
+        DISPLAY = ":99";
       };
+      
+      preStart = ''
+        # Start Xvfb for dummy display
+        ${pkgs.xvfb-run}/bin/Xvfb :99 -screen 0 1024x768x24 &
+        sleep 1
+      '';
+      
+      postStop = ''
+        # Kill Xvfb
+        pkill -f "Xvfb :99" || true
+      '';
       
       serviceConfig = {
         Type = "simple";
