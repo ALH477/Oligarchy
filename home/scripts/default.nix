@@ -496,6 +496,49 @@ in {
   };
 
   # ══════════════════════════════════════════════════════════════════════════
+  # Resolution Cycle Script — cycle through common resolutions per monitor
+  # ══════════════════════════════════════════════════════════════════════════
+  home.file."${scriptsDir}/resolution-cycle.sh" = {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      # Get the focused monitor
+      monitor=$(hyprctl monitors -j | jq -r '.[0].name')
+      current_w=$(hyprctl monitors -j | jq -r '.[0].width')
+      current_h=$(hyprctl monitors -j | jq -r '.[0].height')
+      current_res="''${current_w}x''${current_h}"
+
+      # Resolution presets per monitor type (width x height only, refresh handled separately)
+      if [[ "$monitor" == eDP* ]]; then
+        # Laptop: native then common lower res
+        presets=("2560x1600" "1920x1200" "1680x1050" "1280x800")
+        refreshes=("165" "165" "60" "60")
+      else
+        # Desktop/external: native then common lower res
+        presets=("2560x1440" "1920x1080" "1680x1050" "1280x720")
+        refreshes=("165" "165" "60" "60")
+      fi
+
+      # Find current position and advance to next
+      next_idx=0
+      for i in "''${!presets[@]}"; do
+        if [[ "''${presets[$i]}" == "$current_res" ]]; then
+          next_idx=$(( (i + 1) % ''${#presets[@]} ))
+          break
+        fi
+      done
+
+      next_res="''${presets[$next_idx]}@''${refreshes[$next_idx]}"
+
+      # Apply
+      hyprctl keyword monitor "$monitor, $next_res, 0x0, 1"
+      notify-send -t 2000 "Resolution" "$monitor → $next_res"
+    '';
+  };
+
+  # ══════════════════════════════════════════════════════════════════════════
   # Thermal Status Script
   # ══════════════════════════════════════════════════════════════════════════
   home.file.".local/bin/thermal-status" = {

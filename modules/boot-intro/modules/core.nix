@@ -222,7 +222,8 @@ let
     TIMEOUT=${toString cfg.audioDetection.timeout}
 
     log() {
-      ${optionalString cfg.debugAudio "echo \"[audio] $1\" >&2"}
+      ${optionalString cfg.debugAudio "echo \\\"[audio] $1\\\" >&2"}
+      ${optionalString (!cfg.debugAudio) ":"}
     }
 
     test_device() {

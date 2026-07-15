@@ -68,8 +68,8 @@
       };
       
       diskImage = lib.mkOption {
-        type = lib.types.path;
-        default = /home/asher/vms/archibaldos-dsp.qcow2;
+        type = lib.types.str;
+        default = "/home/asher/vms/archibaldos-dsp.qcow2";
         description = "Path to pre-built ArchibaldOS disk image.";
       };
       
@@ -244,7 +244,7 @@
         "isolcpus=${isolatedCoresStr}"
         "nohz_full=${isolatedCoresStr}"
         "rcu_nocbs=${isolatedCoresStr}"
-        "irqaffinity=1-$(($(nproc) - 1))"
+        "irqaffinity=1-7"
         "threadirqs"
         "hugepagesz=2M"
         "hugepages=${toString cfg.hugepages}"
@@ -274,10 +274,9 @@
     virtualisation.libvirtd = {
       enable = true;
       qemu = {
-        package = pkgs.qemu_kvm;
+        package = pkgs.qemu_kvm;  # Headless KVM-only package, no GTK
         runAsRoot = true;
         swtpm.enable = cfg.tpm;
-        ovmf.enable = cfg.ovmf;
       };
     };
 
@@ -286,6 +285,11 @@
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" "libvirtd.service" ];
       requires = [ "libvirtd.service" ];
+      
+      environment = {
+        DISPLAY = ":99";  # Dummy display for GTK init (no X server)
+        GDK_BACKEND = "broadway";  # Use Broadway backend (no X11/Wayland needed)
+      };
       
       serviceConfig = {
         Type = "simple";
@@ -312,7 +316,6 @@
               -smp ${toString coresCount},sockets=1,cores=${toString coresCount},threads=1 \
               -cpu ${cfg.cpuModel},+topoext \
               -machine q35,accel=kvm,kernel_irqchip=split \
-              -no-hpet \
               -no-reboot
           '';
 
@@ -368,8 +371,8 @@
 
           displayOpts =
             lib.optionalString cfg.spice " -vga virtio -display gtk,gl=on"
-            ++ lib.optionalString cfg.vnc " -vnc :0"
-            ++ lib.optionalString (!cfg.spice && !cfg.vnc) " -nographic -serial mon:stdio";
+            + lib.optionalString cfg.vnc " -vnc :0"
+            + lib.optionalString (!cfg.spice && !cfg.vnc) " -vga none -display none -serial mon:stdio";
 
           tpmOpts = lib.optionalString cfg.tpm ''
               -tpmdev emulator,id=tpm0,tpm-type=tpm2-emulator \
