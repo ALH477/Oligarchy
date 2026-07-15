@@ -401,7 +401,23 @@
           '';
 
         in pkgs.writeShellScript "start-${cfg.name}" ''
-          exec ${baseCmd} ${memoryOpts} ${minimalDeviceOpts} ${diskOpts} ${vfioOpts} ${netOpts} ${displayOpts} ${monitorOpts} ${tpmOpts} ${lib.concatStringsSep " " cfg.qemuExtraArgs}
+          exec ${headlessQemu}/bin/qemu-system-x86_64 \
+            -enable-kvm \
+            -name ${cfg.name},process=${cfg.name} \
+            -m ${toString cfg.memoryMB} \
+            -smp ${toString coresCount},sockets=1,cores=${toString coresCount},threads=1 \
+            -cpu ${cfg.cpuModel},+topoext \
+            -machine q35,accel=kvm,kernel_irqchip=split \
+            -no-reboot \
+            ${memoryOpts} \
+            ${minimalDeviceOpts} \
+            ${diskOpts} \
+            ${vfioOpts} \
+            ${netOpts} \
+            ${displayOpts} \
+            ${monitorOpts} \
+            ${tpmOpts} \
+            ${lib.concatStringsSep " " cfg.qemuExtraArgs}
         '';
         
         ExecStop = "${pkgs.coreutils}/bin/kill -TERM $MAINPID";
