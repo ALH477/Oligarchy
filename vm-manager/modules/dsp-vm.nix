@@ -376,7 +376,10 @@
           displayOpts =
             lib.optionalString cfg.spice " -vga virtio -display gtk,gl=on"
             + lib.optionalString cfg.vnc " -vnc :0"
-            + lib.optionalString (!cfg.spice && !cfg.vnc) " -nographic";
+            + lib.optionalString (!cfg.spice && !cfg.vnc) " -nographic -serial mon:stdio";
+
+          # QEMU monitor socket for debugging
+          monitorOpts = " -monitor unix:/run/qemu-${cfg.name}.sock,server,nowait";
 
           tpmOpts = lib.optionalString cfg.tpm ''
               -tpmdev emulator,id=tpm0,tpm-type=tpm2-emulator \
@@ -384,7 +387,7 @@
           '';
 
         in pkgs.writeShellScript "start-${cfg.name}" ''
-          exec ${baseCmd} ${memoryOpts} ${minimalDeviceOpts} ${diskOpts} ${vfioOpts} ${netOpts} ${displayOpts} ${tpmOpts} ${lib.concatStringsSep " " cfg.qemuExtraArgs}
+          exec ${baseCmd} ${memoryOpts} ${minimalDeviceOpts} ${diskOpts} ${vfioOpts} ${netOpts} ${displayOpts} ${monitorOpts} ${tpmOpts} ${lib.concatStringsSep " " cfg.qemuExtraArgs}
         '';
         
         ExecStop = "${pkgs.coreutils}/bin/kill -TERM $MAINPID";
