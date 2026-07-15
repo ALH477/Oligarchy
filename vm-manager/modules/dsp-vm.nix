@@ -38,7 +38,7 @@
     
     isolatedCores = lib.mkOption {
       type = lib.types.listOf lib.types.int;
-      default = [ 0 ];
+      default = [ 0 1 ];
       description = "CPU cores to isolate for the DSP VM (e.g., [0,1] for cores 0-1).";
     };
     
@@ -296,6 +296,16 @@
         DISPLAY = ":99";
       };
       
+      preStart = lib.optionalString (cfg.audioDevice.enable && cfg.audioDevice.usbController.enable) ''
+        # Unbind VFIO devices from xhci_hcd and bind to vfio-pci
+        for dev in ${cfg.audioDevice.usbController.xhciUsb2PciId} ${cfg.audioDevice.usbController.xhciUsb3PciId}; do
+          if [ -e "/sys/bus/pci/devices/0000:$dev/driver" ]; then
+            echo "0000:$dev" > /sys/bus/pci/devices/0000:$dev/driver/unbind
+          fi
+          echo "0000:$dev" > /sys/bus/pci/drivers/vfio-pci/bind
+        done
+      '';
+      
       serviceConfig = {
         Type = "simple";
         Restart = "always";
@@ -340,7 +350,8 @@
           # a potential source of latency.
           minimalDeviceOpts = ''
               -nodefaults \
-              -no-fd-bootchk
+              -no-fd-bootchk \
+              -boot c
           '';
 
           # VFIO passthrough: either a single PCI device or a full USB
