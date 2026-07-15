@@ -274,7 +274,7 @@
     virtualisation.libvirtd = {
       enable = true;
       qemu = {
-        package = pkgs.qemu_kvm;  # Headless KVM-only package, no GTK
+        package = pkgs.qemu_kvm.override { gtkSupport = false; spiceSupport = false; };
         runAsRoot = true;
         swtpm.enable = cfg.tpm;
       };
@@ -371,7 +371,7 @@
           displayOpts =
             lib.optionalString cfg.spice " -vga virtio -display gtk,gl=on"
             + lib.optionalString cfg.vnc " -vnc :0"
-            + lib.optionalString (!cfg.spice && !cfg.vnc) " -vga none -display none -serial mon:stdio";
+            + lib.optionalString (!cfg.spice && !cfg.vnc) " -nographic";
 
           tpmOpts = lib.optionalString cfg.tpm ''
               -tpmdev emulator,id=tpm0,tpm-type=tpm2-emulator \
