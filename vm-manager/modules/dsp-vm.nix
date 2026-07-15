@@ -236,6 +236,13 @@
 
   config = let
     cfg = config.custom.vm.dsp;
+    headlessQemu = pkgs.qemu_kvm.overrideAttrs (old: {
+      mesonFlags = (old.mesonFlags or []) ++ [
+        "-Dgtk=disabled"
+        "-Dsdl=disabled"
+      ];
+      buildInputs = builtins.filter (p: !builtins.any (name: p.pname or "" == name) ["gtk+3" "sdl2"]) (old.buildInputs or []);
+    });
   in lib.mkIf cfg.enable {
     boot.kernelParams = lib.mkAfter (
       let
@@ -272,15 +279,6 @@
       '';
 
     # Headless QEMU - no GTK/SPICE to avoid display init failures on headless host
-    let
-      headlessQemu = pkgs.qemu_kvm.overrideAttrs (old: {
-        mesonFlags = (old.mesonFlags or []) ++ [
-          "-Dgtk=disabled"
-          "-Dsdl=disabled"
-        ];
-        buildInputs = builtins.filter (p: !builtins.any (name: p.pname or "" == name) ["gtk+3" "sdl2"]) (old.buildInputs or []);
-      });
-    in {
     virtualisation.libvirtd = {
       enable = true;
       qemu = {
