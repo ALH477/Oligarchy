@@ -297,12 +297,15 @@
       };
       
       preStart = lib.optionalString (cfg.audioDevice.enable && cfg.audioDevice.usbController.enable) ''
+        # Ensure vfio-pci module is loaded
+        ${pkgs.kmod}/bin/modprobe vfio-pci
+        
         # Unbind VFIO devices from xhci_hcd and bind to vfio-pci
         for dev in ${cfg.audioDevice.usbController.xhciUsb2PciId} ${cfg.audioDevice.usbController.xhciUsb3PciId}; do
           if [ -e "/sys/bus/pci/devices/0000:$dev/driver" ]; then
-            echo "0000:$dev" > /sys/bus/pci/devices/0000:$dev/driver/unbind
+            echo "0000:$dev" > /sys/bus/pci/devices/0000:$dev/driver/unbind || true
           fi
-          echo "0000:$dev" > /sys/bus/pci/drivers/vfio-pci/bind
+          echo "0000:$dev" > /sys/bus/pci/drivers/vfio-pci/bind || true
         done
       '';
       
