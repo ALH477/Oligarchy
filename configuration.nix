@@ -297,7 +297,7 @@
     custom.vm.dsp = {
       enable = true;
       name = "archibaldos-dsp";
-      isolatedCores = [ 0 ];
+      isolatedCores = [ 0 1 ];
       memoryMB = 2048;
       hugepages = 1024;  # 2GB of 2MB hugepages
       cpuModel = "host";
