@@ -7,8 +7,8 @@ Replaces the removed OpenClaw gateway. Design goals:
   * stdio transport only — no network listener, no LAN exposure, no auth token.
   * Read-only — every tool inspects or dry-runs; none mutate the running system.
   * No remote code fetch — tools are a fixed allowlist that shells out to the
-    system's own CLIs (oligarchy-ctl, oligarchy-security, hydramesh-*,
-    dsp-status, ai-stack, nix, systemctl/journalctl).
+    system's own CLIs (oligarchy-ctl, oligarchy-security, oligarchy-fingerprint,
+    hydramesh-*, dsp-status, ai-stack, nix, systemctl/journalctl).
   * Auditable — every tool call is appended to an audit log.
 
 Consumed by Claude Code (via .mcp.json) and by Blipply (spawned over stdio).
@@ -117,6 +117,18 @@ def ai_status() -> str:
     """Local Ollama AI stack status."""
     _audit("ai_status")
     return _run(["ai-stack", "status"])
+
+
+@mcp.tool()
+def fingerprint_status(user: str = "") -> str:
+    """Fingerprint reader + enrollment state (read-only): fprintd service,
+    reader presence, enrolled fingers, and which PAM services use fingerprint
+    auth. Does NOT enroll or verify — enrollment stays a manual operation."""
+    _audit("fingerprint_status", user)
+    cmd = ["oligarchy-fingerprint", "status"]
+    if user:
+        cmd.append(user)
+    return _run(cmd)
 
 
 @mcp.tool()
