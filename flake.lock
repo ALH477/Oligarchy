@@ -622,11 +622,11 @@
     },
     "nixpkgs_10": {
       "locked": {
-        "lastModified": 1771008912,
-        "narHash": "sha256-gf2AmWVTs8lEq7z/3ZAsgnZDhWIckkb+ZnAo5RzSxJg=",
+        "lastModified": 1784497964,
+        "narHash": "sha256-vlHUuqAcbcH2RKmHbPiuQzbv1pnzzavXnI62RD0bqCU=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "a82ccc39b39b621151d6732718e3e250109076fa",
+        "rev": "241313f4e8e508cb9b13278c2b0fa25b9ca27163",
         "type": "github"
       },
       "original": {
@@ -670,11 +670,11 @@
     },
     "nixpkgs_13": {
       "locked": {
-        "lastModified": 1784007870,
-        "narHash": "sha256-djcLt/JJphyNt4eDY9XTly+/WbCK5lqWq9lSgCmJkkQ=",
+        "lastModified": 1784497964,
+        "narHash": "sha256-vlHUuqAcbcH2RKmHbPiuQzbv1pnzzavXnI62RD0bqCU=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "18b9261cb3294b6d2a06d03f96872827b8fe2698",
+        "rev": "241313f4e8e508cb9b13278c2b0fa25b9ca27163",
         "type": "github"
       },
       "original": {
@@ -884,7 +884,8 @@
         "nixpkgs": "nixpkgs_12",
         "nixpkgs-unstable": "nixpkgs-unstable",
         "sops-nix": "sops-nix",
-        "vm-manager": "vm-manager"
+        "vm-manager": "vm-manager",
+        "yara-rules": "yara-rules"
       }
     },
     "rust-overlay": {
@@ -1087,6 +1088,22 @@
         "type": "path"
       },
       "parent": []
+    },
+    "yara-rules": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1649786038,
+        "narHash": "sha256-AtyRHS3mbemHXErpRONUOWVyVDkVKw96uluzKz5t8K4=",
+        "owner": "Yara-Rules",
+        "repo": "rules",
+        "rev": "0f93570194a80d2f2032869055808b0ddcdfb360",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Yara-Rules",
+        "repo": "rules",
+        "type": "github"
+      }
     }
   },
   "root": "root",

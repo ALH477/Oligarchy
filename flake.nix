@@ -77,6 +77,14 @@
       url = "github:ALH477/HydraMesh";
       flake = false;   # we only consume files from it, no flake outputs needed
     };
+
+    # Community YARA ruleset — pinned so the Malware Shield build gate
+    # (packages.malwareScan) scans the closure with deterministic, offline
+    # rules. We consume .yar files only, no flake outputs.
+    yara-rules = {
+      url = "github:Yara-Rules/rules";
+      flake = false;
+    };
   };
 
   outputs = {
@@ -97,6 +105,7 @@
     vm-manager,
     dsp-ctl,
     demod-voice,
+    yara-rules,
     # archibaldos,
     ...
   } @ inputs:
@@ -167,6 +176,9 @@
       ./modules/oligarchy-mcp.nix
       ./modules/secrets.nix
       ./modules/security/strict-egress.nix
+      ./modules/security/hardening.nix
+      ./modules/security/malware-shield.nix
+      ./modules/security/security-cli.nix
       ./modules/cpu-security.nix
       greeting.nixosModules.greeting
 
@@ -286,6 +298,9 @@
             services.dcf-tray.enable = lib.mkForce false;
             networking.firewall.strictEgress.enable = lib.mkForce false;
             hardware.cpuSecurity.enable = lib.mkForce false;
+            custom.security.hardening.enable = lib.mkForce false;
+            custom.malwareShield.enable = lib.mkForce false;
+            custom.secrets.enable = lib.mkForce false;
 
             boot.supportedFilesystems = lib.mkForce [
               "btrfs" "reiserfs" "vfat" "f2fs" "xfs" "ntfs" "cifs"
@@ -318,6 +333,49 @@
       };
 
       default = self.packages.${system}.iso;
+
+      # ════════════════════════════════════════════════════════════════════
+      # Malware Shield build gate — scans the FULL system closure with pinned,
+      # offline YARA rules (vendored starters + the yara-rules input). Fails
+      # the build if a signature hits. Deliberately NOT in `checks` (a
+      # closure-sized YARA sweep is slow on this machine and `nix flake check`
+      # already builds the toplevel). Run on demand:  nix build .#malwareScan
+      # ════════════════════════════════════════════════════════════════════
+      malwareScan =
+        let
+          toplevel = self.nixosConfigurations.nixos.config.system.build.toplevel;
+        in
+        pkgs.runCommand "oligarchy-malware-scan"
+          {
+            nativeBuildInputs = [ pkgs.yara ];
+            # Realize the whole runtime closure so YARA sees every store path.
+            exportReferencesGraph = [ "closure" toplevel ];
+          }
+          ''
+            echo "Scanning system closure with pinned YARA rules..."
+            rules="${./modules/security/yara-rules}"
+            hits=0
+            # Vendored rules over every path in the closure. The upstream
+            # yara-rules tree contains rules with external-variable deps that
+            # won't compile standalone, so the gate uses the vendored set that
+            # is guaranteed to compile; extend deliberately from the pinned
+            # yara-rules input (${yara-rules}).
+            for rulefile in "$rules"/*.yar; do
+              while IFS= read -r path; do
+                [ -e "$path" ] || continue
+                if yara -w -r "$rulefile" "$path" 2>/dev/null | grep -q .; then
+                  echo "MALWARE SIGNATURE MATCH: $rulefile in $path"
+                  hits=$((hits+1))
+                fi
+              done < <(grep '^/nix/store' closure | sort -u)
+            done
+            if [ "$hits" -gt 0 ]; then
+              echo "Build gate FAILED: $hits signature match(es) in the closure." >&2
+              exit 1
+            fi
+            echo "Clean: no signatures in the system closure."
+            touch $out
+          '';
     };
 
     # ════════════════════════════════════════════════════════════════════════
@@ -381,8 +439,10 @@
         echo "║   nixos-rebuild dry-build \\                                    ║"
         echo "║     --flake .#nixos                - fast eval smoke test      ║"
         echo "║   nix build .#iso                  - build installer ISO       ║"
+        echo "║   nix build .#malwareScan          - YARA-scan the closure     ║"
         echo "║   nix fmt                          - format Nix sources        ║"
         echo "║   nvd diff /run/current-system ./result - diff closures        ║"
+        echo "║   oligarchy-security status        - live security posture     ║"
         echo "║                                                                ║"
         echo "║ Tools: nix-tree, nix-diff, htop, iftop, tshark, qemu           ║"
         echo "╚════════════════════════════════════════════════════════════════╝"

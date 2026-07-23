@@ -50,6 +50,9 @@ status() {
   if command -v ai-stack >/dev/null 2>&1; then
     echo "AI     : $(ai-stack status 2>/dev/null | head -n1)"
   fi
+  if command -v oligarchy-security >/dev/null 2>&1; then
+    echo "Sec    : $(oligarchy-security status --oneline 2>/dev/null || echo n/a)"
+  fi
 }
 
 cats() {
@@ -59,6 +62,7 @@ ai|🧠 AI Stack
 dsp|🎛 Audio / DSP
 dcf|🛰 DCF Fabric
 network|🌐 Network
+security|🛡 Security
 power|⚡ Power
 persona|🎚 Persona
 rig|🎸 DSP Rig
@@ -132,6 +136,16 @@ EOF
     network) cat <<'EOF'
 net-tui|Network (nmtui)
 net-edit|Connection editor
+EOF
+      ;;
+    security) cat <<'EOF'
+sec-status|Security status
+sec-scan-quick|Scan now (quick)
+sec-scan-full|Scan now (full)
+sec-egress|Egress firewall status
+sec-egress-resolve|Refresh egress allowlist
+sec-events|Malware events log
+sec-quarantine|Quarantine list
 EOF
       ;;
     power) cat <<'EOF'
@@ -270,6 +284,14 @@ run() {
 
     net-tui)        in_term nmtui ;;
     net-edit)       nm-connection-editor >/dev/null 2>&1 & ;;
+
+    sec-status)         visible oligarchy-security status ;;
+    sec-scan-quick)     visible oligarchy-security scan quick ;;
+    sec-scan-full)      visible oligarchy-security scan full ;;
+    sec-egress)         visible oligarchy-security egress status ;;
+    sec-egress-resolve) visible oligarchy-security egress resolve ;;
+    sec-events)         visible oligarchy-security events ;;
+    sec-quarantine)     visible oligarchy-security quarantine list ;;
 
     power-perf)     powerprofilesctl set performance && note "Power → performance" ;;
     power-balanced) powerprofilesctl set balanced && note "Power → balanced" ;;

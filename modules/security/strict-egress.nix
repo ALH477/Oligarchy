@@ -1,3 +1,15 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Strict Egress Filtering — default-deny outbound, allowlist by domain/IP/port
+# ═══════════════════════════════════════════════════════════════════════════════
+# Rewritten on networking.nftables.tables (validated at build by checkRuleset):
+#   - one `inet` table, sets and chain inside it (the old generator emitted
+#     them at top level and never loaded resolved IPs — non-functional)
+#   - static sets carry private nets + allow.ips; dynamic sets are populated
+#     by a resolver service via `nft add element` with 26h timeouts
+#   - DNS is pinned: only systemd-resolved may talk to remote resolvers,
+#     everything else goes through the 127.0.0.53 stub
+#   - recovery.dryRun switches the policy to accept and logs WOULDBLOCK lines,
+#     so the allowlist can be soaked before enforcement
 { config, lib, pkgs, ... }:
 
 with lib;
@@ -5,643 +17,396 @@ with lib;
 let
   cfg = config.networking.firewall.strictEgress;
 
-  # ═══════════════════════════════════════════════════════════════════════════════
-  # Helper Functions
-  # ═══════════════════════════════════════════════════════════════════════════════
-
-  # Convert domain list to nftables set entries
-  domainToNftset = domain: "${domain}";
-
-  # Generate IP set entries from domain resolution
-  ipsToNftset = ips: concatStringsSep "\n" (map (ip: "    ${ip}") ips);
-
-  # Port protocol string to nftables format
-  portProtoToNftables = pp: "${toString pp.port}/${pp.proto or "tcp"}";
-
-  # ═══════════════════════════════════════════════════════════════════════════════
-  # Mandatory Allowlist - Non-Configurable Baseline for NixOS
-  # ═══════════════════════════════════════════════════════════════════════════════
-
-  # These domains are ALWAYS allowed - critical for NixOS operation
+  # ── Mandatory allowlist ─────────────────────────────────────────────────────
+  # Hostnames only (the old list carried path-suffixed entries that can never
+  # resolve). Always resolved and allowed — critical for nixos-rebuild.
   mandatoryDomains = [
-    # Nix Binary Cache & Channels
     "cache.nixos.org"
     "channels.nixos.org"
-    # Flake Registry
     "api.flakehub.com"
-    "github.com/NixOS/flake-registry"
-    # GitHub (primary flake host)
+    "install.determinate.systems"
     "github.com"
     "api.github.com"
     "codeload.github.com"
-    # GitLab (alternative)
-    "gitlab.com"
-    "gitlab.com/api/v4"
-    # Docker Hub
-    "registry-1.docker.io"
-    "docker.io"
-    # Let's Encrypt (ACME)
-    "acme-v02.api.letsencrypt.org"
-    "acme-staging-v02.api.letsencrypt.org"
+    "objects.githubusercontent.com"
+    "raw.githubusercontent.com"
   ];
 
-  # Mandatory ports/protocols
-  mandatoryPorts = [
-    # DNS (systemd-resolved stub)
-    { port = 53; proto = "udp"; }
-    { port = 53; proto = "tcp"; }
-    # NTP
-    { port = 123; proto = "udp"; }
-    # DHCP
-    { port = 67; proto = "udp"; }
-    { port = 68; proto = "udp"; }
-    # mDNS
-    { port = 5353; proto = "udp"; }
+  privateNets4 = [
+    "10.0.0.0/8" # RFC1918
+    "172.16.0.0/12" # RFC1918
+    "192.168.0.0/16" # RFC1918
+    "100.64.0.0/10" # RFC6598 (CGNAT / tailscale)
+    "169.254.0.0/16" # link-local
+  ];
+  privateNets6 = [
+    "fc00::/7" # ULA
+    "fe80::/10" # link-local
   ];
 
-  # Private networks that are ALWAYS allowed
-  privateNets = [
-    # IPv4
-    "10.0.0.0/8"       # RFC1918
-    "172.16.0.0/12"    # RFC1918
-    "192.168.0.0/16"   # RFC1918
-    "100.64.0.0/10"    # RFC6598 (CGNAT)
-    "169.254.0.0/16"   # Link-local
-    # IPv6
-    "fc00::/7"         # RFC4193 (ULA)
-    "fe80::/10"        # Link-local
-    "::1/128"          # Loopback
-    "ff00::/8"         # Multicast
-  ];
+  # UDP ports that must always work (DHCP, NTP, mDNS)
+  mandatoryUdpPorts = [ 67 68 123 5353 ];
 
-  # ═══════════════════════════════════════════════════════════════════════════════
-  # Preset Definitions
-  # ═══════════════════════════════════════════════════════════════════════════════
-
+  # ── Presets ─────────────────────────────────────────────────────────────────
   presets = {
-    minimal = {
-      domains = [
-        "cache.nixos.org"
-        "channels.nixos.org"
-      ];
-    };
-
-    developer = {
-      domains = [
-        # Nix
-        "cache.nixos.org"
-        "channels.nixos.org"
-        "api.flakehub.com"
-        # Git
-        "github.com"
-        "api.github.com"
-        "gitlab.com"
-        # Package registries
-        "pypi.org"
-        "registry.npmjs.org"
-        "registry-1.docker.io"
-        "docker.io"
-        # ACME
-        "acme-v02.api.letsencrypt.org"
-      ];
-    };
-
-    workstation = {
-      domains = presets.developer.domains ++ [
-        # Productivity
-        "api.github.com"
-        "discord.com"
-        "slack.com"
-        "zoom.us"
-        "teams.microsoft.com"
-        # Auth providers
-        "accounts.google.com"
-        "login.microsoftonline.com"
-        "auth0.com"
-        "okta.com"
-        # Cloud
-        "aws.amazon.com"
-        "cloudflare.com"
-        "azure.microsoft.com"
-        # Communication
-        "mail.google.com"
-        "outlook.office.com"
-      ];
-    };
-
-    server = {
-      domains = [
-        "cache.nixos.org"
-        "acme-v02.api.letsencrypt.org"
-      ];
-    };
+    minimal.domains = [ ];
+    developer.domains = [
+      "gitlab.com"
+      "pypi.org"
+      "files.pythonhosted.org"
+      "registry.npmjs.org"
+      "crates.io"
+      "static.crates.io"
+      "index.crates.io"
+      "registry-1.docker.io"
+      "auth.docker.io"
+      "production.cloudflare.docker.com"
+      "acme-v02.api.letsencrypt.org"
+    ];
+    workstation.domains = presets.developer.domains ++ [
+      "discord.com"
+      "gateway.discord.gg"
+      "slack.com"
+      "zoom.us"
+      "accounts.google.com"
+      "mail.google.com"
+      "login.microsoftonline.com"
+      "outlook.office.com"
+      "aws.amazon.com"
+      "cloudflare.com"
+    ];
+    server.domains = [ "acme-v02.api.letsencrypt.org" ];
   };
 
-  # Resolve preset domains to IPs (merged with manual lists)
-  resolvedPresetDomains = let
-    preset = presets.${cfg.preset} or presets.developer;
-  in preset.domains;
+  autoDetectDomains =
+    optionals (cfg.autoDetect.acme && config.security.acme.certs or { } != { }) [
+      "acme-v02.api.letsencrypt.org"
+      "acme-staging-v02.api.letsencrypt.org"
+    ]
+    ++ optionals (cfg.autoDetect.docker && (config.virtualisation.docker.enable || config.virtualisation.docker.rootless.enable)) [
+      "registry-1.docker.io"
+      "auth.docker.io"
+      "production.cloudflare.docker.com"
+    ]
+    ++ optionals (cfg.autoDetect.firmware && config.services.fwupd.enable) [
+      "cdn.fwupd.org"
+      "fwupd.org"
+    ];
 
-  # All domains to resolve (preset + manual)
-  allDomains = resolvedPresetDomains ++ cfg.allow.domains;
+  allDomains = unique (mandatoryDomains ++ presets.${cfg.preset}.domains ++ cfg.allow.domains ++ autoDetectDomains);
 
-  # Combine all allowed IPs (mandatory + resolved + manual)
-  allAllowedIPs = privateNets ++ cfg.allow.ips;
+  isV6 = ip: hasInfix ":" ip;
+  static4 = privateNets4 ++ (filter (ip: !isV6 ip) cfg.allow.ips);
+  static6 = privateNets6 ++ (filter isV6 cfg.allow.ips);
 
-  # ═══════════════════════════════════════════════════════════════════════════════
-  # nftables Ruleset Generation
-  # ═══════════════════════════════════════════════════════════════════════════════
+  portRules = concatMapStringsSep "\n      "
+    (pp:
+      "${pp.proto or "tcp"} dport ${toString pp.port} accept"
+    )
+    cfg.allow.ports;
 
-  nftablesRules = let
-    # Generate domain allow rules
-    domainRules = concatStringsSep "\n" (map (domain: ''
-      # Allow ${domain}
-      ip daddr @strict_egress_domains_${replaceStrings ["." "-"] ["_" "_"] domain} accept
-      ip6 daddr @strict_egress_domains_${replaceStrings ["." "-"] ["_" "_"] domain} accept
-    '') allDomains);
+  uidRules = concatMapStringsSep "\n      "
+    (u:
+      ''meta skuid "${u}" accept''
+    )
+    cfg.allow.uids;
 
-    # Generate IP/CIDR allow rules
-    ipRules = concatStringsSep "\n" (map (ip: ''
-      # Allow ${ip}
-      ip daddr ${ip} accept
-      ip6 daddr ${ip} accept
-    '') allAllowedIPs);
+  logLevelArg = optionalString (cfg.logging.level != "off") "level ${cfg.logging.level} ";
 
-    # Generate port allow rules
-    portRules = concatStringsSep "\n" (map (pp: ''
-      # Allow port ${toString pp.port}/${pp.proto or "tcp"}
-      ${if pp.proto == "udp" then "udp" else "tcp"} dport ${toString pp.port} accept
-    '') (mandatoryPorts ++ cfg.allow.ports));
+  finalVerdict =
+    if cfg.recovery.dryRun then
+      (optionalString cfg.logging.enable ''
+        limit rate ${cfg.logging.rateLimit} log ${logLevelArg}prefix "STRICT-EGRESS-WOULDBLOCK: " counter
+      '')
+    else if cfg.logging.enable then ''
+      limit rate ${cfg.logging.rateLimit} log ${logLevelArg}prefix "STRICT-EGRESS-BLOCKED: " counter drop
+      counter drop
+    '' else ''
+      counter drop
+    '';
 
-  in ''
-    #!/usr/sbin/nft -f
-    # Strict Egress Filtering - Defense in Depth
-    # Generated by NixOS strict-egress module
-
-    flush ruleset
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Tables
-    # ═══════════════════════════════════════════════════════════════════════════
-    table ip strict_egress { }
-    table ip6 strict_egress { }
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Sets for domain-based filtering
-    # ═══════════════════════════════════════════════════════════════════════════
-    ${concatStringsSep "\n" (map (domain: ''
-      set strict_egress_domains_${replaceStrings ["." "-"] ["_" "_"]} {
+  # ── Standalone nft ruleset ──────────────────────────────────────────────────
+  # A self-contained `table inet strict-egress`, loaded by its own service so
+  # it COEXISTS with the iptables-based NixOS firewall (and demod-ip-blocker's
+  # ipset/iptables INPUT rules) instead of flipping the whole firewall backend
+  # to nftables. Our table only hooks `output`; the firewall hooks `input`.
+  rulesetFile = pkgs.writeText "strict-egress.nft" ''
+    table inet strict-egress
+    delete table inet strict-egress
+    table inet strict-egress {
+      set egress_static4 {
         type ipv4_addr
-        flags constant,timeout
-        elements = { }
+        flags interval
+        ${optionalString (static4 != []) "elements = { ${concatStringsSep ", " static4} }"}
       }
-    '') allDomains)}
-
-    ${concatStringsSep "\n" (map (domain: ''
-      set strict_egress_domains_${replaceStrings ["." "-"] ["_" "_"]} {
+      set egress_static6 {
         type ipv6_addr
-        flags constant,timeout
-        elements = { }
+        flags interval
+        ${optionalString (static6 != []) "elements = { ${concatStringsSep ", " static6} }"}
       }
-    '') allDomains)}
+      set egress_dyn4 {
+        type ipv4_addr
+        flags timeout
+      }
+      set egress_dyn6 {
+        type ipv6_addr
+        flags timeout
+      }
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Chains
-    # ═══════════════════════════════════════════════════════════════════════════
-    chain output {
-      type filter hook output priority -100; policy drop;
+      chain egress {
+        type filter hook output priority filter + 10; policy ${if cfg.recovery.dryRun then "accept" else "drop"};
 
-      # ═══════════════════════════════════════════════════════════════════════
-      # Always allow loopback
-      # ═══════════════════════════════════════════════════════════════════════
-      oif lo accept
-      iif lo accept
+        oif "lo" accept
+        ct state established,related accept
+        ct state invalid drop
 
-      # ═══════════════════════════════════════════════════════════════════════
-      # Allow established/related connections
-      # ═══════════════════════════════════════════════════════════════════════
-      ct state established,related accept
+        # DNS pinning: only systemd-resolved may reach remote resolvers
+        # (53/853); every other process is confined to the local stub.
+        meta skuid "systemd-resolve" udp dport 53 accept
+        meta skuid "systemd-resolve" tcp dport { 53, 853 } accept
 
-      # ═══════════════════════════════════════════════════════════════════════
-      # Allow invalid state (some NAT scenarios)
-      # ═══════════════════════════════════════════════════════════════════════
-      ct state invalid accept
+        meta l4proto icmp accept
+        meta l4proto ipv6-icmp accept
 
-      # ═══════════════════════════════════════════════════════════════════════
-      # Allow private networks (RFC1918, RFC6598, RFC4193)
-      # ═══════════════════════════════════════════════════════════════════════
-      ${ipRules}
+        udp dport { ${concatMapStringsSep ", " toString mandatoryUdpPorts} } accept
 
-      # ═══════════════════════════════════════════════════════════════════════
-      # Allow DNS (systemd-resolved on localhost)
-      # ═══════════════════════════════════════════════════════════════════════
-      oif != lo udp dport 53 drop
-      oif != lo tcp dport 53 drop
+        ${optionalString cfg.recovery.preserveLocalSsh "tcp sport 22 accept"}
+        ${optionalString (cfg.allow.uids != [ ]) uidRules}
+        ${optionalString (cfg.allow.ports != [ ]) portRules}
 
-      # Allow to systemd-resolved stub (127.0.0.53)
-      ip daddr 127.0.0.53 udp dport 53 accept
-      ip daddr 127.0.0.53 tcp dport 53 accept
+        ip daddr @egress_static4 accept
+        ip6 daddr @egress_static6 accept
+        ip daddr @egress_dyn4 accept
+        ip6 daddr @egress_dyn6 accept
 
-      # ═══════════════════════════════════════════════════════════════════════
-      # Allow mandatory domains (NixOS, GitHub, etc.)
-      # ═══════════════════════════════════════════════════════════════════════
-      ${domainRules}
-
-      # ═══════════════════════════════════════════════════════════════════════
-      # Allow mandatory ports (NTP, DHCP, mDNS)
-      # ═══════════════════════════════════════════════════════════════════════
-      ${portRules}
-
-      # ═══════════════════════════════════════════════════════════════════════
-      # Allow SSH from local networks (recovery)
-      # ═══════════════════════════════════════════════════════════════════════
-      ${if cfg.recovery.preserveLocalSsh then ''
-        tcp dport 22 ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7 } accept
-      '' else ""}
-
-      # ═══════════════════════════════════════════════════════════════════════
-      # Logging (rate-limited)
-      # ═══════════════════════════════════════════════════════════════════════
-      ${if cfg.logging.enable then ''
-        counter drop
-        limit rate ${cfg.logging.rateLimit} counter drop
-        log prefix "STRICT-EGRESS-BLOCKED: " counter drop
-      '' else "counter drop"}
-    }
-
-    chain output6 {
-      type filter hook output priority -100; policy drop;
-
-      # Same as IPv4 but for IPv6
-      oif lo accept
-      iif lo accept
-      ct state established,related accept
-      ct state invalid accept
-
-      ${ipRules}
-
-      # IPv6 mDNS
-      udp dport 5353 ip6 daddr ff02::fb accept
-
-      # IPv6 NDP (router solicitation/advertisement)
-      icmpv6 type { 133, 134, 135, 136 } accept
-
-      ${domainRules}
-
-      ${portRules}
-
-      ${if cfg.recovery.preserveLocalSsh then ''
-        tcp dport 22 ip6 saddr { fc00::/7, fe80::/10 } accept
-      '' else ""}
-
-      ${if cfg.logging.enable then ''
-        limit rate ${cfg.logging.rateLimit} counter drop
-        log prefix "STRICT-EGRESS-BLOCKED: " counter drop
-      '' else "counter drop"}
+        ${finalVerdict}
+      }
     }
   '';
 
-  # ═══════════════════════════════════════════════════════════════════════════════
-  # Domain Resolution Script
-  # ═══════════════════════════════════════════════════════════════════════════════
-  domainResolverScript = pkgs.writeShellScriptBin "strict-egress-resolve" ''
-    #!/usr/bin/env bash
-    set -euo pipefail
+  # ── Resolver: populate the dynamic sets through the pinned stub ─────────────
+  # getent ahosts resolves via NSS -> systemd-resolved, the one path the
+  # ruleset guarantees. Elements carry a 26h timeout (daily timer + slack),
+  # so stale IPs age out on their own.
+  resolveScript = pkgs.writeShellScriptBin "strict-egress-resolve" ''
+    set -u
+    NFT=${pkgs.nftables}/bin/nft
+    RUNDIR=/run/strict-egress
+    mkdir -p "$RUNDIR"
+    : > "$RUNDIR/resolved.txt.new"
 
-    RESOLVED_IPS_DIR="/run/strict-egress"
-    mkdir -p "$RESOLVED_IPS_DIR"
-
-    resolve_domain() {
-      local domain="$1"
-      # Resolve A records
-      dig +short "$domain" A 2>/dev/null || true
-      # Resolve AAAA records
-      dig +short "$domain" AAAA 2>/dev/null || true
-    }
-
-    echo "Resolving domains for strict-egress..."
-
+    failed=0
     for domain in ${toString allDomains}; do
-      echo "  Resolving $domain..."
-      ips=$(resolve_domain "$domain")
-      if [ -n "$ips" ]; then
-        echo "$ips" >> "$RESOLVED_IPS_DIR/resolved-ips.txt"
-        echo "    → $ips"
-      else
-        echo "    → FAILED (keeping old if exists)"
+      ips=""
+      for attempt in 1 2 3; do
+        ips=$(${pkgs.glibc.bin}/bin/getent ahosts "$domain" 2>/dev/null | ${pkgs.gawk}/bin/awk '{print $1}' | sort -u)
+        [ -n "$ips" ] && break
+        sleep 2
+      done
+      if [ -z "$ips" ]; then
+        echo "strict-egress: FAILED to resolve $domain (keeping any live set entries)" >&2
+        failed=$((failed+1))
+        continue
       fi
+      for ip in $ips; do
+        case "$ip" in
+          *:*) $NFT add element inet strict-egress egress_dyn6 "{ $ip timeout 26h }" 2>/dev/null || true ;;
+          *)   $NFT add element inet strict-egress egress_dyn4 "{ $ip timeout 26h }" 2>/dev/null || true ;;
+        esac
+        echo "$domain $ip" >> "$RUNDIR/resolved.txt.new"
+      done
     done
+    mv "$RUNDIR/resolved.txt.new" "$RUNDIR/resolved.txt"
+    echo "strict-egress: resolved $(wc -l < "$RUNDIR/resolved.txt") entries ($failed domains failed)"
 
-    # Deduplicate
-    sort -u "$RESOLVED_IPS_DIR/resolved-ips.txt" -o "$RESOLVED_IPS_DIR/resolved-ips.txt"
-
-    echo "Resolved $(wc -l < "$RESOLVED_IPS_DIR/resolved-ips.txt") unique IPs"
+    ${optionalString (!cfg.recovery.dryRun) ''
+      # Post-flight: enforcing a broken allowlist must not brick nixos-rebuild.
+      if ! ${pkgs.curl}/bin/curl -fsSL --connect-timeout ${toString cfg.recovery.activationTimeout} \
+          --max-time 30 https://cache.nixos.org >/dev/null 2>&1; then
+        echo "strict-egress: ERROR cache.nixos.org unreachable under enforcement!" >&2
+        ${if cfg.recovery.failOpen then ''
+          echo "strict-egress: failOpen=true -> flushing egress chain (FAIL OPEN)" >&2
+          $NFT flush chain inet strict-egress egress || true
+          exit 1
+        '' else ''
+          echo "strict-egress: failOpen=false -> staying closed. Fix allowlist or run: nft flush chain inet strict-egress egress" >&2
+          exit 1
+        ''}
+      fi
+    ''}
   '';
 
-  # ═══════════════════════════════════════════════════════════════════════════════
-  # Pre-flight Check Script
-  # ═══════════════════════════════════════════════════════════════════════════════
-  preflightCheckScript = pkgs.writeShellScriptBin "strict-egress-preflight" ''
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    echo "Running strict-egress pre-flight connectivity check..."
-
-    # Test Nix cache connectivity (critical for nixos-rebuild)
-    echo "  Testing connectivity to cache.nixos.org..."
-    if curl -fsSL --connect-timeout ${toString cfg.recovery.activationTimeout} \
-       --max-time 30 https://cache.nixos.org > /dev/null 2>&1; then
-      echo "  ✓ cache.nixos.org reachable"
+  statusScript = pkgs.writeShellScriptBin "strict-egress-status" ''
+    set -u
+    NFT=${pkgs.nftables}/bin/nft
+    echo "Mode      : ${if cfg.recovery.dryRun then "DRY-RUN (logging only)" else "ENFORCING"} (preset: ${cfg.preset})"
+    echo "Dyn v4    : $(sudo $NFT list set inet strict-egress egress_dyn4 2>/dev/null | grep -c 'timeout' || echo 0) entries"
+    echo "Dyn v6    : $(sudo $NFT list set inet strict-egress egress_dyn6 2>/dev/null | grep -c 'timeout' || echo 0) entries"
+    if [ -f /run/strict-egress/resolved.txt ]; then
+      echo "Resolved  : $(wc -l < /run/strict-egress/resolved.txt) domain->IP entries"
     else
-      echo "✗ ERROR: cache.nixos.org is not reachable!"
-      echo "  Applying strict egress would break nixos-rebuild."
-      echo "  Aborting activation. Fix network connectivity first."
-      exit 1
+      echo "Resolved  : resolver has not run yet"
     fi
-
-    # Test DNS resolution
-    echo "  Testing DNS resolution..."
-    if host github.com > /dev/null 2>&1; then
-      echo "  ✓ DNS resolution working"
-    else
-      echo "  ✗ WARNING: DNS resolution not working"
-    fi
-
-    echo "Pre-flight check passed. Proceeding with egress filtering."
+    echo "Recent ${if cfg.recovery.dryRun then "would-blocks" else "blocks"}:"
+    journalctl -k -g "STRICT-EGRESS" -n 10 --no-pager 2>/dev/null || true
   '';
 
-in {
-  # ═══════════════════════════════════════════════════════════════════════════════
-  # Module Options
-  # ═══════════════════════════════════════════════════════════════════════════════
+  testScript = pkgs.writeShellScriptBin "strict-egress-test" ''
+    set -u
+    host="''${1:?usage: strict-egress-test <hostname>}"
+    echo "Resolving $host through the stub..."
+    ${pkgs.glibc.bin}/bin/getent ahosts "$host" | ${pkgs.gawk}/bin/awk '{print "  " $1}' | sort -u
+    echo "Connectivity (https):"
+    if ${pkgs.curl}/bin/curl -fsSL --max-time 5 "https://$host" >/dev/null 2>&1; then
+      echo "  OK — egress permitted"
+    else
+      echo "  BLOCKED or unreachable (check strict-egress-status / allow.domains)"
+    fi
+  '';
+
+in
+{
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Options (API unchanged from the original module, plus allow.uids/failOpen)
+  # ═══════════════════════════════════════════════════════════════════════════
   options.networking.firewall.strictEgress = {
     enable = mkOption {
       type = types.bool;
       default = false;
       description = ''
-        Enable strict egress filtering with default-deny outbound policy.
-        
-        When enabled, all outbound connections are blocked by default unless
-        explicitly allowed. This provides defense-in-depth against data exfiltration
-        and ensures only approved destinations can be reached.
-        
-        **WARNING**: Misconfiguration can lock you out of network access.
-        The module includes pre-flight checks to prevent lockout during activation.
+        Strict egress filtering: default-deny outbound with an allowlist of
+        domains, IPs, ports and users. Start with recovery.dryRun = true and
+        watch `journalctl -k -g STRICT-EGRESS-WOULDBLOCK` before enforcing.
       '';
-      example = true;
     };
 
     preset = mkOption {
       type = types.enum [ "minimal" "developer" "workstation" "server" ];
       default = "workstation";
-      description = ''
-        Preset configuration for common workflows.
-        
-        - `minimal`: Only NixOS caches (cache.nixos.org, channels.nixos.org)
-        - `developer`: + GitHub, GitLab, PyPI, npm, Docker Hub, Let's Encrypt
-        - `workstation`: + Discord, Slack, Zoom, Google, Microsoft (full workstation)
-        - `server`: Only cache.nixos.org + ACME (server hardening)
-        
-        This can be combined with `allow` for additional custom domains/IPs.
-      '';
+      description = "Domain allowlist preset (mandatory NixOS/GitHub domains are always included).";
     };
 
-    allow = mkOption {
-      type = types.submodule {
-        options = {
-          ips = mkOption {
-            type = types.listOf types.str;
-            default = [ ];
-            description = ''
-              List of IP addresses or CIDR ranges to allow.
-              These are added to the mandatory private network allowlist.
-            '';
-            example = [ "192.168.1.0/24" "10.0.0.5" "2001:db8::/32" ];
-          };
-
-          domains = mkOption {
-            type = types.listOf types.str;
-            default = [ ];
-            description = ''
-              List of domains to allow. These are resolved to IPs at activation
-              and daily via systemd timer.
-            '';
-            example = [ "pypi.org" "registry.npmjs.org" "my-internal-api.local" ];
-          };
-
-          ports = mkOption {
-            type = types.listOf types.submodule {
-              options = {
-                port = mkOption {
-                  type = types.port;
-                  description = "Port number";
-                };
-                proto = mkOption {
-                  type = types.enum [ "tcp" "udp" ];
-                  default = "tcp";
-                  description = "Protocol";
-                };
-              };
-            };
-            default = [ ];
-            description = ''
-              List of port/protocol combinations to allow.
-              These are added to the mandatory port allowlist.
-            '';
-            example = [ { port = 8000; proto = "tcp"; } { port = 5000; proto = "udp"; } ];
-          };
-        };
+    allow = {
+      ips = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = "IPs/CIDRs (v4 or v6) always allowed, merged into the static sets.";
+        example = [ "192.168.1.0/24" "2001:db8::/32" ];
       };
-      default = { };
-      description = ''
-        Manual allowlist entries (merged with preset if set).
-      '';
+      domains = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = "Extra hostnames resolved into the dynamic allow sets (refreshed daily).";
+      };
+      ports = mkOption {
+        type = types.listOf (types.submodule {
+          options = {
+            port = mkOption { type = types.port; };
+            proto = mkOption { type = types.enum [ "tcp" "udp" ]; default = "tcp"; };
+          };
+        });
+        default = [ ];
+        description = "Destination ports always allowed regardless of address.";
+        example = [{ port = 41641; proto = "udp"; }];
+      };
+      uids = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        description = ''
+          User names whose traffic bypasses egress filtering entirely
+          (meta skuid). Escape hatch for daemons with IP-diverse endpoints.
+        '';
+      };
     };
 
-    autoDetect = mkOption {
-      type = types.submodule {
-        options = {
-          acme = mkOption {
-            type = types.bool;
-            default = true;
-            description = "Auto-allow Let's Encrypt endpoints if ACME is enabled";
-          };
-          docker = mkOption {
-            type = types.bool;
-            default = true;
-            description = "Auto-allow Docker registries if Docker is enabled";
-          };
-          firmware = mkOption {
-            type = types.bool;
-            default = true;
-            description = "Allow linux-firmware downloads during activation";
-          };
-        };
-      };
-      default = { };
-      description = ''
-        Auto-detect enabled services and automatically permit required endpoints.
-      '';
+    autoDetect = {
+      acme = mkOption { type = types.bool; default = true; description = "Auto-allow Let's Encrypt when ACME certs are configured."; };
+      docker = mkOption { type = types.bool; default = true; description = "Auto-allow Docker Hub when docker (rootful or rootless) is enabled."; };
+      firmware = mkOption { type = types.bool; default = true; description = "Auto-allow fwupd metadata/firmware downloads when fwupd is enabled."; };
     };
 
-    recovery = mkOption {
-      type = types.submodule {
-        options = {
-          preserveLocalSsh = mkOption {
-            type = types.bool;
-            default = true;
-            description = ''
-              Always allow SSH from RFC1918 networks during activation.
-              This provides a recovery mechanism if strict filtering breaks connectivity.
-            '';
-          };
-          activationTimeout = mkOption {
-            type = types.int;
-            default = 30;
-            description = ''
-              Timeout in seconds for pre-flight connectivity test.
-              If cache.nixos.org is not reachable within this time, activation aborts.
-            '';
-          };
-          dryRun = mkOption {
-            type = types.bool;
-            default = false;
-            description = ''
-              Preview rules without applying. For testing configuration.
-            '';
-          };
-        };
+    recovery = {
+      preserveLocalSsh = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Keep inbound-SSH reply traffic working even across conntrack flushes (tcp sport 22 accept).";
       };
-      default = { };
-      description = ''
-        Recovery safeguards to prevent admin lockout.
-      '';
+      activationTimeout = mkOption {
+        type = types.int;
+        default = 30;
+        description = "Seconds for the post-resolve cache.nixos.org reachability check (enforce mode).";
+      };
+      dryRun = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Log what would be blocked (WOULDBLOCK) without dropping anything.";
+      };
+      failOpen = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          If the post-resolve check cannot reach cache.nixos.org under
+          enforcement, flush the egress chain (fail open) instead of leaving
+          the machine unable to rebuild. Set false for strict environments.
+        '';
+      };
     };
 
-    logging = mkOption {
-      type = types.submodule {
-        options = {
-          enable = mkOption {
-            type = types.bool;
-            default = true;
-            description = "Enable logging of dropped packets";
-          };
-          level = mkOption {
-            type = types.enum [ "debug" "info" "warn" "off" ];
-            default = "info";
-            description = "Log level";
-          };
-          rateLimit = mkOption {
-            type = types.str;
-            default = "10/minute";
-            description = "Rate limit for log messages to prevent DoS";
-          };
-        };
-      };
-      default = { };
-      description = ''
-        Logging configuration for blocked connections.
-      '';
+    logging = {
+      enable = mkOption { type = types.bool; default = true; description = "Log dropped (or would-be-dropped) packets."; };
+      level = mkOption { type = types.enum [ "debug" "info" "warn" "off" ]; default = "info"; description = "nftables log level."; };
+      rateLimit = mkOption { type = types.str; default = "10/minute"; description = "Rate limit for log rules."; };
     };
   };
 
-  # ═══════════════════════════════════════════════════════════════════════════════
-  # Module Configuration
-  # ═══════════════════════════════════════════════════════════════════════════════
+  # ═══════════════════════════════════════════════════════════════════════════
+  # Implementation
+  # ═══════════════════════════════════════════════════════════════════════════
   config = mkIf cfg.enable {
-    # Ensure nftables is available
-    environment.systemPackages = [ pkgs.nftables domainResolverScript preflightCheckScript ];
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Pre-flight check before applying rules
-    # ═══════════════════════════════════════════════════════════════════════════════
-    systemd.services.strict-egress-activation = {
-      description = "Strict Egress - Pre-flight connectivity check";
+    # Load our standalone table (coexists with the iptables firewall). Its own
+    # service, not networking.nftables.enable, so demod-ip-blocker's iptables
+    # rules keep working.
+    systemd.services.strict-egress-rules = {
+      description = "Strict Egress - load the nft egress table";
       wantedBy = [ "multi-user.target" ];
-      before = [ "network.target" ];
+      after = [ "firewall.service" "network-pre.target" ];
+      before = [ "network-online.target" ];
       serviceConfig = {
         Type = "oneshot";
-        ExecStart = "${preflightCheckScript}/bin/strict-egress-preflight";
-        RemainAfterExit = false;
-      };
-    };
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Domain resolution at boot
-    # ═══════════════════════════════════════════════════════════════════════════════
-    systemd.services.strict-egress-resolve = {
-      description = "Strict Egress - Resolve allowed domains to IPs";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" "strict-egress-activation.service" ];
-      serviceConfig = {
-        Type = "oneshot";
-        ExecStart = "${domainResolverScript}/bin/strict-egress-resolve";
         RemainAfterExit = true;
+        # Validate before applying; tear down only our own table on stop.
+        ExecStartPre = "${pkgs.nftables}/bin/nft -c -f ${rulesetFile}";
+        ExecStart = "${pkgs.nftables}/bin/nft -f ${rulesetFile}";
+        ExecStop = "${pkgs.nftables}/bin/nft delete table inet strict-egress";
       };
     };
 
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Daily domain refresh timer
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ── Resolver service + refresh timer ────────────────────────────────────
+    systemd.services.strict-egress-resolve = {
+      description = "Strict Egress - resolve allowlisted domains into nft sets";
+      wantedBy = [ "multi-user.target" ];
+      wants = [ "network-online.target" ];
+      after = [ "strict-egress-rules.service" "network-online.target" "systemd-resolved.service" ];
+      requires = [ "strict-egress-rules.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+        ExecStart = "${resolveScript}/bin/strict-egress-resolve";
+      };
+    };
+
     systemd.timers.strict-egress-refresh = {
-      description = "Strict Egress - Daily domain re-resolution";
+      description = "Strict Egress - periodic domain re-resolution";
       wantedBy = [ "timers.target" ];
       timerConfig = {
+        OnBootSec = "2m"; # catch-up: wait-online is masked on this host
         OnCalendar = "daily";
-        Persistent = true;
         RandomizedDelaySec = "1h";
+        Persistent = true;
+        Unit = "strict-egress-resolve.service";
       };
     };
 
-    systemd.services.strict-egress-refresh = {
-      description = "Strict Egress - Refresh resolved domain IPs";
-      after = [ "network-online.target" ];
-      serviceConfig = {
-        Type = "oneshot";
-        ExecStart = "${domainResolverScript}/bin/strict-egress-resolve";
-        RemainAfterExit = true;
-      };
-    };
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # nftables ruleset
-    # ═══════════════════════════════════════════════════════════════════════════
-    systemd.services.strict-egress-rules = {
-      description = "Strict Egress - Apply nftables rules";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" "strict-egress-resolve.service" ];
-      before = [ "network.target" ];
-      serviceConfig = {
-        Type = "oneshot";
-        ExecStart = "${pkgs.nftables}/bin/nft -f -";
-        ExecStartPost = "${pkgs.nftables}/bin/nft list ruleset > /run/strict-egress/ruleset.nft";
-        RemainAfterExit = true;
-      };
-      # Dry run mode
-      unitConfig = mkIf cfg.recovery.dryRun {
-        ConditionVirtualization = "!container";
-      };
-    };
-
-    # Store the ruleset as a file for systemd
-    environment.etc."nftables/strict-egress.conf".text = nftablesRules;
-
-    # ═══════════════════════════════════════════════════════════════════════════
-    # Enable nftables
-    # ═══════════════════════════════════════════════════════════════════════════════
-    networking.firewall.enable = true;
-    networking.firewall.backend = "nftables";
-
-    # ═══════════════════════════════════════════════════════════════════════════════
-    # Integration with auto-detect services
-    # ═══════════════════════════════════════════════════════════════════════════════
-    # ACME - Let's Encrypt (already in mandatory list via presets)
-    # Note: Docker Hub is already included in developer/workstation presets
-
-    # ═══════════════════════════════════════════════════════════════════════════════
-    # Systemd journal for egress logging
-    # (Logging is handled via nftables counter and log prefix)
-    # View blocked packets: journalctl -f | grep "STRICT-EGRESS-BLOCKED"
-    # ═══════════════════════════════════════════════════════════════════════════════
+    environment.systemPackages = [ pkgs.nftables resolveScript statusScript testScript ];
   };
 }

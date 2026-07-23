@@ -1,0 +1,21 @@
+# sops-nix recipient configuration (public keys only — safe to commit).
+#
+# Setup (once, on the host):
+#   sudo mkdir -p /var/lib/sops-nix
+#   sudo age-keygen -o /var/lib/sops-nix/key.txt   # prints the public key
+#   sudo chmod 600 /var/lib/sops-nix/key.txt
+# Replace the placeholder below with that public key, then encrypt:
+#   sops --encrypt modules/secrets/dcf-id.env > modules/secrets/dcf-id.enc.env
+#
+# NEVER commit the private key or any *.env plaintext (see .gitignore).
+keys:
+  - &host_framework16 age1PLACEHOLDER_RUN_AGE_KEYGEN_AND_PASTE_PUBLIC_KEY_HERE
+creation_rules:
+  - path_regex: modules/secrets/.*\.enc\.(env|yaml|json)$
+    key_groups:
+      - age:
+          - *host_framework16
+  - path_regex: secrets/.*
+    key_groups:
+      - age:
+          - *host_framework16

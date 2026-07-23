@@ -46,8 +46,8 @@
           libxkbcommon 
           
           # X11 Legacy
-          xorg.libX11 xorg.libXcursor xorg.libXrandr 
-          xorg.libXext xorg.libXxf86vm xorg.libXi
+          libx11 libxcursor libxrandr
+          libxext libxxf86vm libxi
           
           # System
           udev 

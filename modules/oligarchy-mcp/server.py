@@ -7,8 +7,8 @@ Replaces the removed OpenClaw gateway. Design goals:
   * stdio transport only — no network listener, no LAN exposure, no auth token.
   * Read-only — every tool inspects or dry-runs; none mutate the running system.
   * No remote code fetch — tools are a fixed allowlist that shells out to the
-    system's own CLIs (oligarchy-ctl, hydramesh-*, dsp-status, ai-stack, nix,
-    systemctl/journalctl).
+    system's own CLIs (oligarchy-ctl, oligarchy-security, hydramesh-*,
+    dsp-status, ai-stack, nix, systemctl/journalctl).
   * Auditable — every tool call is appended to an audit log.
 
 Consumed by Claude Code (via .mcp.json) and by Blipply (spawned over stdio).
@@ -87,6 +87,15 @@ def system_status() -> str:
     """Kernel, host, power profile, DCF and AI status (one-line summary)."""
     _audit("system_status")
     return _run(["oligarchy-ctl", "status"])
+
+
+@mcp.tool()
+def security_status() -> str:
+    """Security posture: SSH auth mode, fail2ban, strict-egress firewall,
+    ClamAV/malware-shield events, AppArmor/auditd/USBGuard, rootless docker.
+    Read-only."""
+    _audit("security_status")
+    return _run(["oligarchy-security", "status"])
 
 
 @mcp.tool()

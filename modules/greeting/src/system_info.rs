@@ -9,6 +9,7 @@ pub struct SystemInfo {
     pub memory_total: u64,
     pub memory_used: u64,
     pub memory_percent: f32,
+    pub security: Option<String>,
 }
 
 impl SystemInfo {
@@ -21,8 +22,37 @@ impl SystemInfo {
             memory_total: 0,
             memory_used: 0,
             memory_percent: 0.0,
+            security: Self::get_security(),
         }
         .with_memory()
+    }
+
+    /// One-line security posture, read from the cache the oligarchy-security
+    /// timer writes to /run/oligarchy-security/status.json. Dependency-free
+    /// naive parse (no serde): we only need a few flat string/number fields.
+    fn get_security() -> Option<String> {
+        let content = fs::read_to_string("/run/oligarchy-security/status.json").ok()?;
+        let field = |key: &str| -> Option<String> {
+            let pat = format!("\"{}\"", key);
+            let start = content.find(&pat)? + pat.len();
+            let rest = &content[start..];
+            let colon = rest.find(':')? + 1;
+            let tail = rest[colon..].trim_start();
+            if let Some(stripped) = tail.strip_prefix('"') {
+                stripped.find('"').map(|end| stripped[..end].to_string())
+            } else {
+                // number: read until , or }
+                let end = tail.find(|c| c == ',' || c == '}').unwrap_or(tail.len());
+                Some(tail[..end].trim().to_string())
+            }
+        };
+        let ssh = field("ssh_password_auth").unwrap_or_else(|| "?".into());
+        let egress = field("egress").unwrap_or_else(|| "?".into());
+        let events = field("malware_events").unwrap_or_else(|| "0".into());
+        Some(format!(
+            "ssh-pw:{} egress:{} malware-events:{}",
+            ssh, egress, events
+        ))
     }
     
     fn get_os_name() -> String {
@@ -133,7 +163,11 @@ impl std::fmt::Display for SystemInfo {
                 self.memory_percent
             )?;
         }
-        
+
+        if let Some(sec) = &self.security {
+            writeln!(f, "  Security: {}", sec)?;
+        }
+
         Ok(())
     }
 }

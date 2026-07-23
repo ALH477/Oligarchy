@@ -1,27 +1,23 @@
-{ config, pkgs, lib, theme ? {}, features ? {}, username ? "asher", ... }:
+{ config, pkgs, lib, theme ? { }, features ? { }, username ? "asher", ... }:
 
 let
-  p = theme;  # Shorthand for palette
-in {
+  p = theme; # Shorthand for palette
+in
+{
   # ════════════════════════════════════════════════════════════════════════════
-  # KDE/Plasma Theming Modules
+  # Qt/GTK Theming + Hyprland App Modules
   # ════════════════════════════════════════════════════════════════════════════
+  # KDE/Plasma session modules (kde-globals/kwin/plasma/input/baloo/colorscheme,
+  # dolphin, konsole) were removed with the Plasma desktop — Hyprland is the sole
+  # session. Kvantum/Qt/GTK theming stays for remaining Qt apps (kdenlive, qt6ct).
   imports = [
-    ./kde-globals.nix       # Main Plasma color scheme (theme-aware)
-    ./kde-kwin.nix          # KWin window manager
-    ./kde-plasma.nix        # Plasma shell + power management
-    ./kde-input.nix         # Keyboard/mouse/cursor
-    ./kde-baloo.nix         # File indexing (disabled)
-    ./kvantum.nix           # Kvantum Qt theme engine (theme-aware)
-    ./qt-theming.nix        # Qt5/6 configuration
-    ./gtk-theming.nix       # GTK 3/4 theming (theme-aware)
-    ./dolphin.nix           # Dolphin file manager
-    ./konsole.nix           # Konsole terminal colors
-    ./kde-colorscheme.nix   # Plasma color scheme file
-    ./wofi.nix              # Wofi launcher config
-    ./wlogout.nix           # Wlogout power menu
-    ./hyprlock.nix          # Hyprlock screen lock
-    ./control-center.nix    # Unified control hub (oligarchy-menu / -control / -ctl)
+    ./kvantum.nix # Kvantum Qt theme engine (theme-aware)
+    ./qt-theming.nix # Qt5/6 configuration
+    ./gtk-theming.nix # GTK 3/4 theming (theme-aware)
+    ./wofi.nix # Wofi launcher config
+    ./wlogout.nix # Wlogout power menu
+    ./hyprlock.nix # Hyprlock screen lock
+    ./control-center.nix # Unified control hub (oligarchy-menu / -control / -ctl)
   ];
 
   # ════════════════════════════════════════════════════════════════════════════
@@ -30,7 +26,7 @@ in {
   services.mako = {
     enable = true;
     settings = {
-      background-color = p.surface + "f2";  # Surface with 95% opacity
+      background-color = p.surface + "f2"; # Surface with 95% opacity
       text-color = p.text;
       border-color = p.accent;
       border-radius = 14;
@@ -49,15 +45,15 @@ in {
       progress-color = "over ${p.accent}";
 
       # Urgency levels
-      "urgency=low" = { 
+      "urgency=low" = {
         border-color = p.textDim;
-        default-timeout = 3000; 
+        default-timeout = 3000;
       };
-      "urgency=normal" = { 
+      "urgency=normal" = {
         border-color = p.accent;
-        default-timeout = 5000; 
+        default-timeout = 5000;
       };
-      "urgency=critical" = { 
+      "urgency=critical" = {
         border-color = p.error;
         default-timeout = 0;
         ignore-timeout = true;
@@ -70,11 +66,11 @@ in {
   # ════════════════════════════════════════════════════════════════════════════
   programs.git = {
     enable = true;
-    userName = "Asher";
-    # was "${username}@localhost" — every commit authored on this box would
-    # carry an unroutable identity GitHub can't associate with your account.
-    userEmail = "demodllc@gmail.com";
-    extraConfig = {
+    settings = {
+      user.name = "Asher";
+      # was "${username}@localhost" — every commit authored on this box would
+      # carry an unroutable identity GitHub can't associate with your account.
+      user.email = "demodllc@gmail.com";
       init.defaultBranch = "main";
       pull.rebase = true;
       push.autoSetupRemote = true;

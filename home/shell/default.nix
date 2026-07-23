@@ -39,7 +39,7 @@
           # Convert hex to RGB for terminal escape codes
           hex_to_rgb() {
             local hex=$1
-            printf "%d;%d;%d" "0x${hex:1:2}" "0x${hex:3:2}" "0x${hex:5:2}"
+            printf "%d;%d;%d" "0x''${hex:1:2}" "0x''${hex:3:2}" "0x''${hex:5:2}"
           }
           
           CYAN=$(printf '\033[38;2;%sm' "$(hex_to_rgb "$accent")")

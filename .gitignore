@@ -9,6 +9,14 @@ secrets/README.md
 # Keep sops.yaml in git (contains only public key, no secrets)
 !secrets/.sops.yaml
 
+# Plaintext env secrets must never be committed; sops-encrypted (*.enc.*) may.
+modules/secrets/*.env
+!modules/secrets/*.enc.env
+modules/secrets/keys.txt
+
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Rust build artifacts
+modules/greeting/target/

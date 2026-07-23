@@ -238,6 +238,25 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 - **Secure Boot** (opt-in via `custom.secureBoot.enable`): a signed boot chain via lanzaboote + `sbctl`, with an optional TPM2-sealed LUKS unlock. Off by default so it can never brick an un-enrolled machine — see the runbook in `modules/secure-boot.nix`.
 - **Zero-trust local agent**: the AI's hands on the system are a **read-only**, stdio-only MCP — no network listener, no auth token, no remote-plugin fetch. It executed and replaced OpenClaw (which fetched `github:*` plugins at runtime, bound `0.0.0.0`, and shipped a publicly-derivable token). The Blipply voice assistant speaks the same MCP, so even spoken commands can only *read and dry-run* — never silently mutate.
 
+### Security controls (the real table)
+
+Every control is a declarative NixOS option, default-off unless noted. See [`docs/security-hardening.md`](docs/security-hardening.md) for the rollout runbook.
+
+| Control | Module / option | Default | Notes |
+|---|---|---|---|
+| CPU/kernel mitigations | `hardware.cpuSecurity` (preset `hardened`) | **on** | Forced spectre/MDS/SRSO mitigations, MSR-write block, kernel-image protection |
+| SSH keys-only + fail2ban | `custom.security.hardening` (preset `hardened`) | **on** | `PasswordAuthentication no`, `AllowUsers`, `MaxAuthTries 3`; brute-force banning with private ranges exempt. Lockout-guard assertion requires a declared key |
+| AppArmor + auditd | `custom.security.hardening.{apparmor,auditd}` | off (soak first) | Flip on after a clean soak; complain-first profiles |
+| USBGuard | `custom.security.hardening.usbguard` (preset `paranoid`) | off | Blocks newly-plugged USB; disruptive with Framework expansion cards |
+| Strict egress firewall | `networking.firewall.strictEgress` | **on, dry-run** | Default-deny outbound allowlist as a standalone nft `output` table (coexists with the ingress firewall + IP blocker). Soak on `WOULDBLOCK` logs, then set `recovery.dryRun = false` |
+| Malware Shield | `custom.malwareShield` (level `monitor`) | **on** | ClamAV + lynis/unhide + AIDE + YARA; log-only until you raise to `quarantine`. Closure scanned at build via `nix build .#malwareScan` |
+| Ingress IP blocklist | `services.demod-ip-blocker` | **on** | Refreshes every 24h |
+| Rootless Docker | `virtualisation.docker.rootless` | **on** | Daemon runs as the user; no root-equivalent `docker` group |
+| Secure Boot | `custom.secureBoot.enable` | off | lanzaboote signed chain + optional TPM2 LUKS |
+| Secrets | `custom.secrets` (sops-nix) | **on** | Age key lives at `/var/lib/sops-nix/key.txt` (never in-store); encrypted `*.enc.env` only |
+
+`oligarchy-security status` (also `oligarchy-ctl status`, the DCF tray, and the MCP `security_status` tool) reports live posture.
+
 ## Building – Forge Your Empire
 
 1. **Clone the War Chest**:

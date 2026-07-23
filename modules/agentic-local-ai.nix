@@ -306,8 +306,19 @@ in {
 
     network.bindAddress = mkOption {
       type = types.str;
-      default = "0.0.0.0";
-      description = "Bind address (0.0.0.0 to expose to LAN).";
+      default = "127.0.0.1";
+      description = ''
+        Bind address for the Ollama API. Default is loopback-only: the API is
+        unauthenticated, so exposing it ("0.0.0.0") hands LAN/tailnet peers
+        free inference and model management. Set network.openFirewall too if
+        you really want LAN access.
+      '';
+    };
+
+    network.openFirewall = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Open port 11434 in the firewall (only meaningful when bindAddress is not 127.0.0.1).";
     };
 
     advanced.rocm.gfxVersionOverride = mkOption {
@@ -319,11 +330,17 @@ in {
   };
 
   config = mkIf cfg.enable {
-    virtualisation.docker.enable = true;
+    # Works with either daemon; the host runs rootless docker (no docker group
+    # needed — the daemon runs as the user). Rootful remains acceptable.
+    assertions = [{
+      assertion = config.virtualisation.docker.enable || config.virtualisation.docker.rootless.enable;
+      message = "services.ollamaAgentic needs docker: enable virtualisation.docker or virtualisation.docker.rootless.";
+    }];
 
-    # User groups
-    users.users.${userName}.extraGroups = [ "docker" ]
-      ++ optionals (effectiveAcceleration == "rocm") [ "video" ];
+    # User groups (docker group intentionally NOT granted: root-equivalent,
+    # and unnecessary under rootless docker)
+    users.users.${userName}.extraGroups =
+      optionals (effectiveAcceleration == "rocm") [ "video" "render" ];
 
     # Required packages (docker CLI comes from virtualisation.docker on PATH;
     # listing pkgs.docker here pulled the insecure docker_28 default)
@@ -343,9 +360,10 @@ in {
       chmod 700 "${paths.ollama}"
     '';
 
-    # Firewall for LAN access
+    # Firewall for LAN access — explicit opt-in only; a non-loopback bind no
+    # longer silently opens the port.
     networking.firewall.allowedTCPPorts =
-      mkIf (cfg.network.bindAddress != "127.0.0.1") [ 11434 ];
+      mkIf (cfg.network.openFirewall && cfg.network.bindAddress != "127.0.0.1") [ 11434 ];
 
     # Shell aliases
     environment.shellAliases = {

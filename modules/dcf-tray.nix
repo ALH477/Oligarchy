@@ -74,6 +74,7 @@ DeMoD Compute Fabric Controller
 System Tray Application
 """
 
+import json
 import os
 import signal
 import subprocess
@@ -381,6 +382,26 @@ class DCFTray:
         self.update_state()
         GLib.timeout_add(5000, self.update_state)
     
+    @staticmethod
+    def _security_label():
+        # Read the cached posture (written every 5 min by the oligarchy-
+        # security timer). green/yellow/red by malware events + egress mode.
+        try:
+            with open("/run/oligarchy-security/status.json") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return "🛡 Security: n/a"
+        events = int(data.get("malware_events", 0) or 0)
+        egress = data.get("egress", "off")
+        ssh_pw = data.get("ssh_password_auth", "?")
+        if events > 0 or ssh_pw == "yes":
+            dot = "🔴"
+        elif egress in ("off", "dry-run/active"):
+            dot = "🟡"
+        else:
+            dot = "🟢"
+        return f"{dot} Security: {events} events, egress {egress}"
+
     def _build_menu(self):
         menu = Gtk.Menu()
         
@@ -397,9 +418,21 @@ class DCFTray:
         self.item_node = Gtk.MenuItem(label="Node: Checking...")
         self.item_node.connect("activate", lambda _: self._quick_toggle(NODE_SERVICE, self.status.node))
         menu.append(self.item_node)
-        
+
         menu.append(Gtk.SeparatorMenuItem())
-        
+
+        # Security posture read from the oligarchy-security status cache.
+        self.item_security = Gtk.MenuItem(label=self._security_label())
+        self.item_security.connect(
+            "activate",
+            lambda _: subprocess.Popen(
+                ["kitty", "-e", "bash", "-lc", "oligarchy-security status; read -n1"]
+            ),
+        )
+        menu.append(self.item_security)
+
+        menu.append(Gtk.SeparatorMenuItem())
+
         item_quit = Gtk.MenuItem(label="Quit")
         item_quit.connect("activate", lambda _: Gtk.main_quit())
         menu.append(item_quit)
@@ -455,7 +488,9 @@ in {
     # Passwordless sudo for DCF service control
     security.sudo.extraRules = [
       {
-        groups = [ "wheel" ];
+        # Scoped to asher, not all of wheel: NOPASSWD service control should
+        # not extend to every future admin account.
+        users = [ "asher" ];
         commands = [
           { command = "/run/current-system/sw/bin/systemctl start docker-dcf-id.service"; options = [ "NOPASSWD" ]; }
           { command = "/run/current-system/sw/bin/systemctl stop docker-dcf-id.service"; options = [ "NOPASSWD" ]; }

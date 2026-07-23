@@ -32,13 +32,16 @@ in {
     };
     
     secretsFile = mkOption {
-      type = types.path;
+      # types.str: a types.path literal would copy the decrypted env file into
+      # the world-readable /nix/store. Point this at the sops-nix runtime path.
+      type = types.str;
       description = ''
         Path to environment file containing secrets.
         Required variables: STRIPE_SECRET_KEY, DISCORD_CLIENT_SECRET
-        Now managed via sops-nix - use config.sops.secrets."dcf/stripe-secret".path
+        Managed via sops-nix: enable custom.secrets.dcfIdentity and use
+        config.sops.secrets."dcf-id-env".path (never a repo-relative path).
       '';
-      example = "/etc/nixos/secrets/dcf-id.env";
+      example = "config.sops.secrets.\"dcf-id-env\".path";
     };
     
     logLevel = mkOption {
