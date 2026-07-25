@@ -1,0 +1,24 @@
+[package]
+name = "oligarchy-mcp-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Shared core for Oligarchy MCP servers: audit, allowlist, sandboxed reads, stdio runner"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+time.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+rmcp.workspace = true
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

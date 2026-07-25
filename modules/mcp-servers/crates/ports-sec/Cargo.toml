@@ -1,0 +1,43 @@
+[package]
+name = "oligarchy-ports-sec-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Dedicated, read-only MCP server auditing open API ports and egress coverage"
+
+[[bin]]
+name = "oligarchy-ports-sec-mcp"
+path = "src/main.rs"
+
+[features]
+default = []
+# The ONLY feature that permits opening loopback-bound sockets. Required by
+# `local_api_scan`. The `mcp_self_audit` build gate asserts this feature is
+# enabled only in this crate.
+allow-loopback-socket = [
+    "dep:reqwest",
+    "dep:rustls",
+    "dep:x509-parser",
+    "dep:zbus",
+]
+
+[dependencies]
+oligarchy-mcp-core = { path = "../core" }
+rmcp.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+time.workspace = true
+
+# Socket-surface deps — only pulled in when `allow-loopback-socket` is on.
+# `local_api_scan` is the single tool that uses them; it binds every socket
+# to 127.0.0.1/::1 and asserts that at runtime.
+reqwest = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+x509-parser = { workspace = true, optional = true }
+zbus = { workspace = true, optional = true }

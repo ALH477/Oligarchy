@@ -1,0 +1,17 @@
+[package]
+name = "oligarchy-mcp-umbrella"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Oligarchy MCP umbrella — exec-spawn multiplexer to per-aspect MCP servers"
+
+[[bin]]
+name = "oligarchy-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# No deps. The umbrella is purely an execvp wrapper; every capability
+# belongs to the spawned aspect server. Audit lines are written via plain
+# std::fs so the binary stays minimal.

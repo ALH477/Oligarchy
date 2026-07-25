@@ -66,6 +66,11 @@
     # VM Manager - Hybrid VM management
     vm-manager.url = "path:./vm-manager";
 
+    # Dedicated MCP servers — one Rust process per OS aspect + the
+    # `ports-sec` auditor. See `docs/mcp-servers-roadmap.md`. Replaces the
+    # legacy monolithic Python `oligarchy-mcp` server.
+    mcp-servers.url = "path:./modules/mcp-servers";
+
     # DSP Coprocessor Control — TUI/CLI for ArchibaldOS DSP VM
     dsp-ctl.url = "path:./modules/dsp-ctl";
 
@@ -105,6 +110,7 @@
     vm-manager,
     dsp-ctl,
     demod-voice,
+    mcp-servers,
     yara-rules,
     # archibaldos,
     ...
@@ -132,7 +138,7 @@
       inherit inputs nixpkgs-unstable;
       # Uncomment when archibaldos is available:
       # inherit archibaldos;
-      inherit vm-manager dsp-ctl;
+      inherit vm-manager dsp-ctl mcp-servers;
     };
 
     # ════════════════════════════════════════════════════════════════════════
@@ -163,6 +169,11 @@
       # Blipply integration (defines oligarchy.blipply options)
       ./modules/blipply-integration.nix
 
+      # Dedicated MCP servers (custom.mcpServers.*) — replaces the legacy
+      # ./modules/oligarchy-mcp.nix. Order is important: the options stay
+      # alphabetically grouped with the other local modules.
+      mcp-servers.nixosModules.default
+
       # Main configuration (uses options defined above).
       # Note: configuration.nix itself imports modules/audio.nix and the three
       # dcf-*.nix modules, so those travel with it. hardware-configuration.nix
@@ -173,7 +184,7 @@
       ./modules/dsp-rigs.nix
       ./modules/secure-boot.nix
       ./modules/agentic-local-ai.nix
-      ./modules/oligarchy-mcp.nix
+      # oligarchy-mcp.nix removed — replaced by mcp-servers.nixosModules.default
       ./modules/secrets.nix
       ./modules/security/strict-egress.nix
       ./modules/security/hardening.nix
@@ -301,6 +312,7 @@
             custom.security.hardening.enable = lib.mkForce false;
             custom.malwareShield.enable = lib.mkForce false;
             custom.secrets.enable = lib.mkForce false;
+            custom.mcpServers.enable = lib.mkForce false;
 
             boot.supportedFilesystems = lib.mkForce [
               "btrfs" "reiserfs" "vfat" "f2fs" "xfs" "ntfs" "cifs"
@@ -333,6 +345,16 @@
       };
 
       default = self.packages.${system}.iso;
+
+      # ════════════════════════════════════════════════════════════════════
+      # MCP self-audit build gate — runs the ports-sec `mcp_self_audit`
+      # tool from the sub-flake against the sub-flake's own source tree. It
+      # fails the build if any forbidden pattern (TcpListener, reqwest
+      # outside ports-sec, etc.) is found in the workspace, or if .mcp.json
+      # contains a URL/HTTP transport entry. Mirrors the `malwareScan`
+      # precedent. Run on demand:  nix build .#mcp-self-audit
+      # ════════════════════════════════════════════════════════════════════
+      mcp-self-audit = mcp-servers.packages.${system}.mcpSelfAudit;
 
       # ════════════════════════════════════════════════════════════════════
       # Malware Shield build gate — scans the FULL system closure with pinned,

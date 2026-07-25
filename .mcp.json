@@ -1,8 +1,12 @@
 {
   "mcpServers": {
-    "oligarchy": {
-      "command": "oligarchy-mcp",
-      "args": []
-    }
+    "oligarchy-system":    { "command": "oligarchy-mcp", "args": ["system"]    },
+    "oligarchy-net":       { "command": "oligarchy-mcp", "args": ["net"]       },
+    "oligarchy-dcf":       { "command": "oligarchy-mcp", "args": ["dcf"]       },
+    "oligarchy-dsp":       { "command": "oligarchy-mcp", "args": ["dsp"]       },
+    "oligarchy-ai":        { "command": "oligarchy-mcp", "args": ["ai"]        },
+    "oligarchy-secrets":   { "command": "oligarchy-mcp", "args": ["secrets"]   },
+    "oligarchy-vm":        { "command": "oligarchy-mcp", "args": ["vm"]        },
+    "oligarchy-ports-sec": { "command": "oligarchy-mcp", "args": ["ports-sec"] }
   }
 }

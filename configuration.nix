@@ -107,7 +107,10 @@
 
         # Branding
         titleText = "Initiating Oligarchy";
-        bottomText = "A NixOS distro";
+        # Framework hardware check: only the genuine Framework 16 board
+        # (custom.platform.framework, set per-host in flake.nix) gets told
+        # it's based; the Intel/Optimus hosts get the plain branding line.
+        bottomText = if config.custom.platform.framework then "You are based." else "A NixOS distro";
 
         # Optional: Your logo (PNG or animated GIF)
         # Re-enable once the asset is added & git-tracked (assets/modretro.png is
@@ -179,9 +182,14 @@
       # Local AI agent surface
       # ──────────────────────────────────────────────────────────────────────────
       # OpenClaw (insecure remote-plugin gateway, LAN-exposed, static token) was
-      # removed. The secure, local, read-only Oligarchy MCP (modules/oligarchy-mcp.nix)
-      # is the agentic action surface; Blipply consumes it via stdio.
-      custom.oligarchyMcp.enable = true;
+      # removed. The legacy monolithic Python `oligarchy-mcp` server was replaced
+      # by a set of dedicated, read-only Rust MCP servers — one per OS aspect,
+      # plus the dedicated `ports-sec` API/port auditor. See
+      # docs/mcp-servers-roadmap.md.
+      # Blipply consumes the MCP over stdio; Claude Code reads .mcp.json which
+      # points each aspect entry at `oligarchy-mcp <aspect>` (the umbrella binary
+      # exec-spawns the matching aspect server).
+      custom.mcpServers.enable = true;
 
       # Blipply local voice assistant (Whisper -> ollama -> Piper). Calls the MCP
       # over stdio for read-only system tools.

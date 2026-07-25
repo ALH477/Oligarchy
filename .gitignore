@@ -1,5 +1,5 @@
 # Secrets management - NEVER commit these
-secrets/
+/secrets/
 secrets/keys.txt
 secrets/secrets.yaml
 secrets/README.md
@@ -20,3 +20,4 @@ __pycache__/
 
 # Rust build artifacts
 modules/greeting/target/
+modules/mcp-servers/target/

@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/umbrella",
+    "crates/system",
+    "crates/net",
+    "crates/dcf",
+    "crates/dsp",
+    "crates/ai",
+    "crates/secrets",
+    "crates/vm",
+    "crates/ports-sec",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/ALH477/Oligarchy"
+authors = ["Oligarchy maintainers"]
+
+[workspace.dependencies]
+rmcp = { version = "0.1", features = [
+    "server", "client", "macros", "transport-io", "transport-child-process",
+] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "fs", "signal", "net"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+time = { version = "0.3", features = ["formatting", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Aspect-only
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+rustls = "0.23"
+x509-parser = "0.16"
+zbus = "4"
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+codegen-units = 1
+strip = true
