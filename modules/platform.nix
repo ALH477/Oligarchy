@@ -142,6 +142,23 @@ in
         # USB audio patchbay thrash on 1022:15b9. Let the driver pick AMD quirks.
         "usb-storage.quirks=:u"
       ];
+
+      # Framework hardware check: only the genuine Framework 16 board gets
+      # told it's based, printed straight to the boot console before the
+      # splash/display-manager claim the tty.
+      systemd.services.framework-based-banner = {
+        description = "Tell the user they are based (Framework 16 detected)";
+        wantedBy = [ "sysinit.target" ];
+        after = [ "systemd-udevd.service" ];
+        before = [ "boot-intro-player.service" "display-manager.service" ];
+        serviceConfig = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          ExecStart = pkgs.writeShellScript "framework-based-banner" ''
+            printf '\n\033[1;32mYou are based.\033[0m\n' > /dev/console 2>/dev/null || true
+          '';
+        };
+      };
     })
   ];
 }
