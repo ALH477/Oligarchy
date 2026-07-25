@@ -163,7 +163,7 @@ let
       ${if hasBackgroundVideo
         then "-stream_loop -1 -i ${cfg.backgroundVideo}"
         else "-f lavfi -i color=c=${toFF palette.background}:s=${resWidth}x${resHeight}"} \
-      ${optionalString hasScan "-i scanlines.png"} \
+      ${optionalString hasScan "-loop 1 -i scanlines.png"} \
       ${optionalString hasLogo "${optionalString isGif "-ignore_loop 0 "}-i ${logoPath}"} \
       -filter_complex "
         [1:v]scale=${resWidth}:${resHeight}:force_original_aspect_ratio=increase,crop=${resWidth}:${resHeight},setsar=1,format=rgba[bg];
