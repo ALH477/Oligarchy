@@ -18,7 +18,7 @@ let
     # Lowest-latency audio: arm the DSP coprocessor, get the CPU out of its way.
     studio = {
       description = "Studio — DSP coprocessor armed, AI idle, lowest audio latency.";
-      kernel = "zen"; dsp = true;  aiEnable = false; aiPreset = "cpu-fallback";
+      kernel = "lts"; dsp = true;  aiEnable = false; aiPreset = "cpu-fallback";
       quantum = 64;   minQuantum = 32;  gamemode = false; power = "performance";
       apps = [ "1|guitarix" "2|qpwgraph" ];
     };
