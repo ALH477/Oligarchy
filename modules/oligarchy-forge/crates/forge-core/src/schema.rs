@@ -1,16 +1,16 @@
 //! `oligarchy-forge.toml` schema — the declarative source of truth. This is
 //! the only place that needs to change to add a new built-in extension.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ForgeConfig {
     pub project: Project,
     #[serde(default)]
     pub runtime: Runtime,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Project {
     pub name: String,
     /// Nested under `[project]` rather than a bare top-level key: TOML
@@ -25,7 +25,7 @@ pub struct Project {
 /// The six built-in toolchain extensions. `Base` is implicit — always
 /// present in `ForgeConfig::extensions` after `parse()`, regardless of
 /// whether the user listed it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Extension {
     Base,
@@ -59,7 +59,7 @@ impl Extension {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Backend {
     #[default]
@@ -77,7 +77,7 @@ impl Backend {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum VolumeMode {
     #[default]
@@ -85,7 +85,7 @@ pub enum VolumeMode {
     Ephemeral,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Runtime {
     pub backend: Backend,

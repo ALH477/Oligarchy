@@ -39,7 +39,8 @@ Goals:
 | Decision | Choice | Rationale |
 |---|---|---|
 | Interface (v0) | **Plain CLI verbs** (`build`/`run`/`shell`) | Stage 0 substrate; a TUI is additive, not required to be useful |
-| Interface (future) | **Ratatui TUI**, reusing `forge-core` | Matches devenv 2.0's own architecture; SSH/TTY-native fits this repo's terminal-first workflow |
+| Interface (v1) | **Ratatui 0.29 TUI** (`forge-tui`, lib crate), reusing `forge-core`; one binary — bare `oligarchy-forge` or `oligarchy-forge tui` launches it | Matches devenv 2.0's own architecture; SSH/TTY-native fits this repo's terminal-first workflow; one binary matches every other Oligarchy sub-flake tool |
+| TUI async model | **Plain OS threads + `mpsc`**, not tokio/`tokio-process-stream` | Simpler dependency graph; sufficient at "one build, one log stream" scale — revisit only if that changes |
 | Schema | **TOML**, `oligarchy-forge.toml` in the project root | Same move as Flox's `manifest.toml`/Devbox's `devbox.json`; human-editable, git-committable |
 | Engine language | **Rust** | Matches every other Oligarchy sub-flake (mcp-servers, dsp-ctl, greeting, boot-intro, blipply) |
 | Container backend | **Rootless Podman (default)**, Docker supported via the same abstraction | Fewer default capabilities than Docker, daemonless; doc's own security recommendation |
@@ -189,20 +190,60 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
       half blocked in the dev sandbox by no running daemon, not a code
       defect (see Changelog)
 
-## Phase 1 — Read-only TUI dashboard (not started)
+## Phase 1 — Read-only TUI dashboard ✅ done
 
-- [ ] `crates/forge-tui/` — new workspace member, depends on `forge-core`
-- [ ] `ratatui` (0.30+) + `crossterm` (`event-stream` feature) +
-      `tokio` for the async event loop
-- [ ] `tokio-process-stream` wraps `nix build --log-format internal-json -v`
-      into a `Stream`, rendered in a scrolling log pane (model on
-      **logone**'s Rust parser of the `@nix {...}` protocol — see research
-      doc §"Nix already gives you machine-readable evaluation and conflict
-      data")
-- [ ] Running-sandbox/session list (which projects have a built image, are
-      they stale vs. the current `oligarchy-forge.toml`)
-- [ ] Two-pane k9s/lazydocker idiom: `j`/`k` navigate, `/` search
-- [ ] **Benchmark:** stop using raw `nix build`/`podman logs` for daily use
+- [x] `crates/forge-tui/` — new workspace member (lib crate, no separate
+      binary), depends on `forge-core`; `forge-cli` depends on `forge-tui`
+      and launches it when invoked with no subcommand (or `oligarchy-forge
+      tui`) — one binary, matching every other Oligarchy sub-flake tool
+      rather than the two-binary split implied by the source research
+- [x] Session list (`forge-tui::project::discover`) — scans
+      `forge_core::process::known_project_dirs()` (every project
+      `oligarchy-forge build` has ever touched, keyed by
+      `$XDG_STATE_HOME/oligarchy-forge/<project>`), not just the CWD.
+      Needed a new `forge_core::process::persist_config` that snapshots
+      `oligarchy-forge.toml` into the state dir on every `ensure_image`
+      call (schema gained `Serialize` for this)
+- [x] Live build-log pane (`forge_core::stream::build_and_load_streaming`)
+      — renders, `nix build -v`s, and `<backend> load`s in background OS
+      threads, streaming stderr lines to the TUI over an `mpsc` channel;
+      the TUI polls non-blockingly once per 100ms tick
+- [x] Two-pane layout (session list | detail + build log), `j`/`k`/arrows
+      navigate, `b`/Enter builds the selected project, `r` refreshes,
+      `q`/Esc quits
+- [x] 3 new `forge-tui` unit tests using `ratatui::backend::TestBackend`
+      (renders into an in-memory buffer, asserts on cell content) +
+      1 new `forge-core` test (`persist_config` TOML round-trip) — 8/8
+      total across the workspace
+- [x] Interactive smoke tests via `script`(1) for a real pty: bare
+      `oligarchy-forge` launch, navigation + refresh + build-trigger key
+      sequences, and an empty-state-dir case — all exit 0 with the
+      terminal cleanly restored
+- [x] `nix build .#nixosConfigurations.nixos.config.system.build.toplevel`
+      — full system closure builds clean with forge-tui's added deps
+      (ratatui 0.29, crossterm 0.28)
+- [x] **Benchmark met partially:** the dashboard is usable for session
+      status + triggering/watching a build; still no reason to reach for
+      raw `podman logs` once Phase 2 needs live output during interactive
+      extension edits too
+
+**Deviations from the source research (see Changelog for why):**
+- Skipped `tokio` + `tokio-process-stream` + async events entirely in
+  favor of plain OS threads/`mpsc` + `crossterm`'s synchronous
+  `event::poll`. Simpler dependency graph, same non-blocking behavior at
+  this scale (one build at a time, one log stream).
+- Skipped the `--log-format internal-json` structured protocol; streams
+  plain `-v` text lines instead. Structured per-derivation progress
+  (counts, ETA) is deferred, not lost — `internal-json` parsing can be
+  added to `forge-core::stream` later without changing the TUI's channel
+  contract.
+- No `/` search in the session list — the list is realistically small
+  (projects built on one machine), so it's deferred to Phase 2 where the
+  *extension* picker tree is large enough to need it.
+- Extension details moved out of the list items into a dedicated detail
+  line above the log pane, wrapped rather than truncated. Testing caught
+  the list version silently cutting off extension names mid-word at
+  standard 80-column width (`TestBackend` unit test, not just eyeballing).
 
 ## Phase 2 — Interactive composition + conflict resolution (not started)
 
@@ -254,6 +295,28 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ## Changelog (living document — append newest at top)
 
+- **Phase 1 landed (2026-07-26):** `forge-tui` (session list + live build
+  log) implemented, tested, and wired in as part of the existing
+  `oligarchy-forge` binary rather than a second one. Real issues caught by
+  testing, not just review: (1) a `TestBackend` unit test asserting on
+  rendered cell content caught the session-list pane truncating extension
+  names mid-word (`"rust"` → `"rus"`) at the standard 80-column width —
+  fixed by moving extension details out of the cramped list items into a
+  wrapped detail line above the log pane, which a plain visual read of the
+  code would likely have missed since it "looked fine" in the source.
+  (2) An `mpsc`-draining `poll_build` first tried to call `self.push_log`
+  (needs `&mut self`) while still holding `&self.build_rx` from a `let
+  Some(rx) = &self.build_rx` — E0502 borrow-checker error; fixed by
+  `.take()`-ing the receiver out of `self` for the duration of the drain
+  loop and putting it back if the build is still in flight. Interactive
+  verification used `script`(1) to get a real pty (this environment has no
+  attached terminal) — confirmed clean alternate-screen enter/exit and
+  exit code 0 across a bare launch, a full navigate/refresh/build-trigger
+  key sequence, and an empty-state-dir case. Deliberately diverged from
+  the source research's suggested `tokio` + `tokio-process-stream` +
+  `--log-format internal-json` stack (see Phase 1's own "Deviations" note
+  for the reasoning) — flagging it here too since it's a design decision,
+  not just an implementation detail.
 - **Phase 0 landed (2026-07-26):** schema, engine, CLI, and NixOS wiring
   implemented and verified. `cargo test --workspace` (4/4),
   `nix build .#nixosConfigurations.nixos.config.system.build.toplevel`

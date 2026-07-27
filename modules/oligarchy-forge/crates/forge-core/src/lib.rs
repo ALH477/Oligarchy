@@ -6,6 +6,7 @@
 pub mod process;
 pub mod render;
 pub mod schema;
+pub mod stream;
 
 pub use render::render_flake;
 pub use schema::{Backend, Extension, ForgeConfig, Project, Runtime, VolumeMode};

@@ -8,22 +8,57 @@ use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// `$XDG_STATE_HOME/oligarchy-forge/<project>` (falls back to
-/// `$HOME/.local/state`), where the generated `flake.nix` is written. Kept
-/// out of the user's project repo — it's a derived artifact, regenerated
-/// deterministically from `oligarchy-forge.toml` on every build.
-pub fn state_dir(project_name: &str) -> Result<PathBuf> {
+/// `$XDG_STATE_HOME/oligarchy-forge` (falls back to `$HOME/.local/state`) —
+/// the root under which every project gets its own subdirectory.
+pub fn state_root() -> Result<PathBuf> {
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
         .context("neither XDG_STATE_HOME nor HOME is set")?;
-    Ok(base.join("oligarchy-forge").join(project_name))
+    Ok(base.join("oligarchy-forge"))
+}
+
+/// `<state_root>/<project>`, where the generated `flake.nix` (and a
+/// persisted `oligarchy-forge.toml` snapshot — see `persist_config`) are
+/// written. Kept out of the user's project repo — both are derived
+/// artifacts, regenerated deterministically on every build.
+pub fn state_dir(project_name: &str) -> Result<PathBuf> {
+    Ok(state_root()?.join(project_name))
+}
+
+/// Every project subdirectory under `state_root()` that has been `build`-
+/// invoked at least once. Used by the TUI's session list (`forge-tui`) to
+/// discover known projects without depending on the caller's CWD.
+pub fn known_project_dirs() -> Result<Vec<PathBuf>> {
+    let root = state_root()?;
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&root)
+        .with_context(|| format!("reading {}", root.display()))?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .map(|entry| entry.path())
+        .collect();
+    dirs.sort();
+    Ok(dirs)
 }
 
 pub fn write_flake(dir: &Path, flake_nix: &str) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("creating state dir {}", dir.display()))?;
     std::fs::write(dir.join("flake.nix"), flake_nix)
         .with_context(|| format!("writing {}/flake.nix", dir.display()))
+}
+
+/// Snapshots the config that produced this project's `flake.nix`, so a
+/// later `known_project_dirs()` scan (from any CWD) can reload it. Written
+/// unconditionally on every `ensure_image` call — even a cache-hit build —
+/// so the snapshot always reflects the most recently requested config.
+pub fn persist_config(dir: &Path, cfg: &ForgeConfig) -> Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("creating state dir {}", dir.display()))?;
+    let toml_str = toml::to_string_pretty(cfg).context("serializing config for persistence")?;
+    std::fs::write(dir.join("oligarchy-forge.toml"), toml_str)
+        .with_context(|| format!("writing {}/oligarchy-forge.toml", dir.display()))
 }
 
 /// `nix build path:<dir>#default --no-link --print-out-paths`. Returns the
@@ -71,8 +106,9 @@ pub fn container_load(backend: Backend, image_script: &Path) -> Result<()> {
 
 /// Podman has a dedicated `image exists` subcommand; Docker doesn't — the
 /// equivalent there is a quiet `image inspect` (exit 0 iff the image is
-/// present).
-fn image_ready(cfg: &ForgeConfig) -> Result<bool> {
+/// present). Public: the TUI's session list uses this to show built/not-built
+/// per project without triggering a build.
+pub fn image_exists(cfg: &ForgeConfig) -> Result<bool> {
     let bin = cfg.runtime.backend.binary();
     let image_ref = format!("{}:latest", cfg.image_name());
     let check_args: &[&str] = match cfg.runtime.backend {
@@ -89,12 +125,15 @@ fn image_ready(cfg: &ForgeConfig) -> Result<bool> {
 }
 
 /// Builds (rendering + `nix build` + `<backend> load`) unless the image
-/// already exists and `rebuild` is false.
+/// already exists and `rebuild` is false. Always persists the config
+/// snapshot first, even on a cache-hit short-circuit.
 pub fn ensure_image(cfg: &ForgeConfig, rebuild: bool) -> Result<()> {
-    if !rebuild && image_ready(cfg)? {
+    let dir = state_dir(&cfg.project.name)?;
+    persist_config(&dir, cfg)?;
+
+    if !rebuild && image_exists(cfg)? {
         return Ok(());
     }
-    let dir = state_dir(&cfg.project.name)?;
     let flake_nix = crate::render::render_flake(cfg)?;
     write_flake(&dir, &flake_nix)?;
     let image_script = nix_build(&dir)?;
@@ -147,4 +186,37 @@ pub fn container_run(cfg: &ForgeConfig, cmd: &[String]) -> Result<i32> {
         .status()
         .with_context(|| format!("spawning `{bin} run` — is {bin} on PATH?"))?;
     Ok(status.code().unwrap_or(1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::Extension;
+
+    #[test]
+    fn persist_config_round_trips_via_toml() {
+        let dir = std::env::temp_dir().join(format!(
+            "oligarchy-forge-core-test-{}-{}",
+            std::process::id(),
+            "persist-config-round-trip"
+        ));
+        let cfg = ForgeConfig::parse(
+            r#"
+            [project]
+            name = "roundtrip"
+            extensions = ["python"]
+            "#,
+        )
+        .unwrap();
+
+        persist_config(&dir, &cfg).unwrap();
+        let raw = std::fs::read_to_string(dir.join("oligarchy-forge.toml")).unwrap();
+        let reloaded = ForgeConfig::parse(&raw).unwrap();
+
+        assert_eq!(reloaded.project.name, "roundtrip");
+        assert!(reloaded.project.extensions.contains(&Extension::Python));
+        assert!(reloaded.project.extensions.contains(&Extension::Base));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

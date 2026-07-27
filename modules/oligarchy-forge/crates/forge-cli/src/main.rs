@@ -1,6 +1,7 @@
-//! `oligarchy-forge` — plain CLI verbs over `forge-core`. Stage 1 adds a
-//! `forge-tui` binary that reuses the same engine crate; this binary and its
-//! verbs (`build`/`run`/`shell`) stay as-is once that lands.
+//! `oligarchy-forge` — plain CLI verbs (`build`/`run`/`shell`) over
+//! `forge-core`, plus a Ratatui dashboard (`forge-tui`) launched when no
+//! subcommand is given — the k9s/lazydocker convention: just run the tool
+//! name to get the dashboard.
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -11,7 +12,7 @@ use std::process::ExitCode;
 #[command(name = "oligarchy-forge", about = "Sandboxed coding-agent runner", version)]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -36,6 +37,9 @@ enum Command {
         #[arg(long)]
         rebuild: bool,
     },
+    /// Open the read-only session-list + build-log dashboard (also the
+    /// default when no subcommand is given).
+    Tui,
 }
 
 fn load_config() -> Result<ForgeConfig> {
@@ -56,18 +60,22 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<i32> {
     match cli.command {
-        Command::Build { rebuild } => {
+        None | Some(Command::Tui) => {
+            forge_tui::run()?;
+            Ok(0)
+        }
+        Some(Command::Build { rebuild }) => {
             let cfg = load_config()?;
             forge_core::process::ensure_image(&cfg, rebuild)?;
             println!("built {}:latest", cfg.image_name());
             Ok(0)
         }
-        Command::Run { rebuild, cmd } => {
+        Some(Command::Run { rebuild, cmd }) => {
             let cfg = load_config()?;
             forge_core::process::ensure_image(&cfg, rebuild)?;
             forge_core::process::container_run(&cfg, &cmd)
         }
-        Command::Shell { rebuild } => {
+        Some(Command::Shell { rebuild }) => {
             let cfg = load_config()?;
             forge_core::process::ensure_image(&cfg, rebuild)?;
             forge_core::process::container_run(&cfg, &[])
