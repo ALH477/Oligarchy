@@ -1,0 +1,12 @@
+[package]
+name = "forge-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "UI-agnostic engine: schema, flake.nix generation, nix/podman process driving"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+tera = { version = "1", default-features = false }
+anyhow = "1"

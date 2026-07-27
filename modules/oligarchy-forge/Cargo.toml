@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/forge-core", "crates/forge-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+lto = true

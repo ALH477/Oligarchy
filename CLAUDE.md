@@ -86,6 +86,7 @@ Each `.nix` file declares the options + config for one subsystem (kernel, audio,
 - `modules/demod-voice/` — local TTS / voice cloning (Coqui XTTS-v2, Piper); `nixos-module.nix`.
 - `modules/dsp-ctl/` — Rust TUI/CLI for the ArchibaldOS DSP VM (status, bench, start/stop).
 - `modules/mcp-servers/` — dedicated, read-only MCP servers (one Rust process per OS aspect + the `ports-sec` auditor). Exposes `nixosModules.default`. See `docs/mcp-servers-roadmap.md` for the full design + living roadmap. Adding an aspect means editing seven hardcoded lists — the README's checklist enumerates them; `crates/hydramesh` is the worked example.
+- `modules/oligarchy-forge/` — sandboxed coding-agent runner (`oligarchy-forge build/run/shell`): a TOML schema (`oligarchy-forge.toml`) compiles to a generated `flake.nix` building a `dockerTools.streamLayeredImage`, then runs it via rootless Podman (or Docker). `custom.oligarchyForge.enable`. Unlike `mcp-servers`, this is **not** part of the MCP surface — it's a normal read-write dev tool, same category as `dsp-ctl`. See `docs/oligarchy-forge-roadmap.md` for the full design + living roadmap (only Phase 0, the CLI substrate, is built so far).
 - `modules/ArchibaldOS/` — the RT DSP guest OS, its own flake under `modules/ArchibaldOS/modules/`.
 
 When changing one of these, build/iterate inside that sub-flake; the top-level flake consumes it as a pinned `path:` input.

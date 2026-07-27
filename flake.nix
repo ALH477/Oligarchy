@@ -74,6 +74,11 @@
     # DSP Coprocessor Control — TUI/CLI for ArchibaldOS DSP VM
     dsp-ctl.url = "path:./modules/dsp-ctl";
 
+    # oligarchy-forge — sandboxed coding-agent runner (TOML schema ->
+    # generated flake.nix -> nix build -> podman/docker run). See
+    # docs/oligarchy-forge-roadmap.md for the full design + living roadmap.
+    oligarchy-forge.url = "path:./modules/oligarchy-forge";
+
     # DeMoD Voice - Local TTS and Voice Cloning
     demod-voice.url = "path:./modules/demod-voice";
 
@@ -115,6 +120,7 @@
     , sops-nix
     , vm-manager
     , dsp-ctl
+    , oligarchy-forge
     , demod-voice
     , mcp-servers
     , hydramesh
@@ -145,7 +151,7 @@
         inherit inputs nixpkgs-unstable;
         # Uncomment when archibaldos is available:
         # inherit archibaldos;
-        inherit vm-manager dsp-ctl mcp-servers hydramesh;
+        inherit vm-manager dsp-ctl oligarchy-forge mcp-servers hydramesh;
       };
 
       # ════════════════════════════════════════════════════════════════════════
@@ -216,6 +222,9 @@
 
         # DSP Coprocessor Control — TUI/CLI tool
         dsp-ctl.nixosModules.dsp-ctl
+
+        # oligarchy-forge — sandboxed coding-agent runner (custom.oligarchyForge.*)
+        oligarchy-forge.nixosModules.default
 
         # DeMoD Voice - Local TTS and Voice Cloning
         ./modules/demod-voice/nixos-module.nix
@@ -328,6 +337,7 @@
               custom.malwareShield.enable = lib.mkForce false;
               custom.secrets.enable = lib.mkForce false;
               custom.mcpServers.enable = lib.mkForce false;
+              custom.oligarchyForge.enable = lib.mkForce false;
               # HydraMesh is a requirement of the INSTALLED system, but its SBCL
               # (hydramesh-lisp) and Faust/GCC (hydramodem) builds have no place in
               # the installer image. Drop this mkForce if the ISO must ship them.

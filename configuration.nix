@@ -366,6 +366,11 @@
       # gamemode is owned by the active persona (on for the "gaming" persona).
 
       # ──────────────────────────────────────────────────────────────────────────
+      # oligarchy-forge — sandboxed coding-agent runner
+      # ──────────────────────────────────────────────────────────────────────────
+      custom.oligarchyForge.enable = true;
+
+      # ──────────────────────────────────────────────────────────────────────────
       # Terminus Developer Edition (local-only, references working trees)
       # ──────────────────────────────────────────────────────────────────────────
       custom.terminus-dev.enable = true;

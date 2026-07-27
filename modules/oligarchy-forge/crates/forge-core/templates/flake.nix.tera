@@ -1,0 +1,24 @@
+{
+  description = "oligarchy-forge generated sandbox: {{ project_name }}";
+
+  # Pinned to match the parent Oligarchy repo's channel (see CLAUDE.md).
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+
+  outputs = { self, nixpkgs }:
+    let
+      system = "x86_64-linux";
+      pkgs = import nixpkgs { inherit system; };
+    in
+    {
+      packages.${system}.default = pkgs.dockerTools.streamLayeredImage {
+        name = "{{ image_name }}";
+        tag = "latest";
+        contents = with pkgs; [ {{ packages }} ];
+        config = {
+          Cmd = [ "/bin/bash" ];
+          WorkingDir = "/workspace";
+          Env = [ "PATH=/bin:/usr/bin" ];
+        };
+      };
+    };
+}
