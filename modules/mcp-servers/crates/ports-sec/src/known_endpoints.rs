@@ -20,6 +20,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize)]
 pub enum Proto {
     Tcp,
+    Udp,
     Unix,
     Dbus,
     Stdio,
@@ -128,6 +129,70 @@ pub const KNOWN: &[KnownEndpoint] = &[
         host: "(stdio)",
         port: None,
         proto: Proto::Stdio,
+        remote_endpoints: &[],
+    },
+    KnownEndpoint {
+        name: "oligarchy-hydramesh-mcp",
+        host: "(stdio)",
+        port: None,
+        proto: Proto::Stdio,
+        remote_endpoints: &[],
+    },
+    // The live HydraMesh / DCF community node listeners. These bind on
+    // 0.0.0.0 (see modules/dcf-community-node.nix), so `listening_ports` will
+    // flag them as `exposed_to_lan` — that is expected for a mesh node, but it
+    // is why they belong in this table rather than being a surprise.
+    KnownEndpoint {
+        name: "dcf-node-binary",
+        host: "0.0.0.0",
+        port: Some(7777),
+        proto: Proto::Udp,
+        remote_endpoints: &["api.demod.ltd"],
+    },
+    KnownEndpoint {
+        name: "dcf-node-grpc",
+        host: "0.0.0.0",
+        port: Some(50051),
+        proto: Proto::Tcp,
+        remote_endpoints: &[],
+    },
+    KnownEndpoint {
+        name: "dcf-node-shim",
+        host: "0.0.0.0",
+        port: Some(8888),
+        proto: Proto::Udp,
+        remote_endpoints: &[],
+    },
+    // Opt-in, default off (services.dcf-mesh-agent). NOT part of the read-only
+    // MCP surface: mesh_mcp.py binds UDP at import and `mesh_send` transmits.
+    KnownEndpoint {
+        name: "dcf-mesh-agent",
+        host: "0.0.0.0",
+        port: Some(7801),
+        proto: Proto::Udp,
+        remote_endpoints: &[],
+    },
+    // Opt-in, default off (services.dcf-hypr-agent, modules/hypr-controller).
+    // NOT part of the read-only MCP surface: the bridge relays Hyprland
+    // dispatch commands AND a byte-for-byte oligarchy-ctl passthrough, i.e.
+    // arbitrary command execution from a paired controller device.
+    KnownEndpoint {
+        name: "dcf-hypr-agent",
+        host: "0.0.0.0",
+        port: Some(7100),
+        proto: Proto::Udp,
+        remote_endpoints: &[],
+    },
+    // Opt-in, default off (networking.firewall.spaGate, pulled in by
+    // services.dcf-hypr-agent.spaGated). The DCF-SPA knock channel: silent by
+    // design — it never replies, so a scan sees nothing — but it IS a
+    // LAN-exposed bind, and it is the one port that must stay open for the
+    // gate on 7100 to be openable at all.
+    KnownEndpoint {
+        name: "dcf-spa-knock",
+        host: "0.0.0.0",
+        port: Some(62201),
+        proto: Proto::Udp,
         remote_endpoints: &[],
     },
 ];

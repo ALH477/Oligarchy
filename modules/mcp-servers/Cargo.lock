@@ -1170,6 +1170,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "oligarchy-hydramesh-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "oligarchy-mcp-core",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "oligarchy-mcp-core"
 version = "0.1.0"
 dependencies = [

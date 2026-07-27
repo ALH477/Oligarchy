@@ -11,6 +11,7 @@ members = [
     "crates/secrets",
     "crates/vm",
     "crates/ports-sec",
+    "crates/hydramesh",
 ]
 
 [workspace.package]

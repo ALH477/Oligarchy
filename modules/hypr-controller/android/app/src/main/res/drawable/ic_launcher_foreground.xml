@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Sierpinski level-1: three corner triangles of the seed triangle
+         A=(54,20) B=(20,80) C=(88,80), midpoints (37,50)/(71,50)/(54,80) —
+         the same fractal the DeMoD UI framework renders, as this app's mark. -->
+    <path
+        android:fillColor="#00F5D4"
+        android:pathData="M54,20 L37,50 L71,50 Z M20,80 L37,50 L54,80 Z M88,80 L71,50 L54,80 Z" />
+</vector>

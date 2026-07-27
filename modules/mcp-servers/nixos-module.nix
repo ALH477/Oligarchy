@@ -26,7 +26,9 @@ let
 
   umbrellaPkg = packages.umbrella or packages.default;
 
-  aspectNames = [ "system" "net" "dcf" "dsp" "ai" "secrets" "vm" "ports-sec" ];
+  # Must agree with `allowlist::ASPECTS`, `umbrella::is_known_aspect`, the
+  # sub-flake's aspectNames, and the repo-root `.mcp.json`.
+  aspectNames = [ "system" "net" "dcf" "dsp" "ai" "secrets" "vm" "ports-sec" "hydramesh" ];
 
   aspectPkg = name: packages."oligarchy-${name}-mcp" or null;
   # The `aspects` attrsOf submodule has per-name overrides; missing keys

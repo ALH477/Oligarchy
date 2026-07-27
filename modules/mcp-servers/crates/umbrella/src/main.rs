@@ -50,7 +50,7 @@ fn run() -> ! {
     if args.len() > 2 || !is_known_aspect(aspect) {
         eprintln!(
             "usage: {0} [aspect]\n\
-             \n  aspects: system, net, dcf, dsp, ai, secrets, vm, ports-sec\n\
+             \n  aspects: system, net, dcf, dsp, ai, secrets, vm, ports-sec, hydramesh\n\
              \n  The umbrella replaces itself (execvp) with \
              `oligarchy-<aspect>-mcp`. No aspect defaults to `system`.\n\
              \n  In `.mcp.json`, register one entry per aspect, e.g.:\n  \
@@ -77,7 +77,7 @@ fn run() -> ! {
 fn is_known_aspect(a: &str) -> bool {
     matches!(
         a,
-        "system" | "net" | "dcf" | "dsp" | "ai" | "secrets" | "vm" | "ports-sec"
+        "system" | "net" | "dcf" | "dsp" | "ai" | "secrets" | "vm" | "ports-sec" | "hydramesh"
     )
 }
 

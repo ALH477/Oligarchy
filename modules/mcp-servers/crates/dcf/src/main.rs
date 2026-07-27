@@ -1,5 +1,9 @@
-//! oligarchy-dcf-mcp — read-only MCP server for the DeMoD Compute Fabric mesh.
+//! oligarchy-dcf-mcp — read-only MCP server for the Oligarchy DCF services:
+//! the community-node container, sops identity presence, and the tray unit.
 //! See `docs/mcp-servers-roadmap.md` §4.3.
+//!
+//! The mesh/protocol stack itself (HydraMesh + DCF SDK CLIs, HydraModem) lives
+//! in the `hydramesh` aspect — see §4.9.
 
 use oligarchy_mcp_core::audit;
 use oligarchy_mcp_core::runner::{self, QUICK_TIMEOUT};
@@ -15,17 +19,30 @@ struct Server;
 
 #[tool(tool_box)]
 impl Server {
-    #[tool(description = "DeMoD Compute Fabric (DCF) mesh node status.")]
+    #[tool(description = "DeMoD Compute Fabric (DCF) community node service status (read-only).")]
     fn dcf_status(&self) -> String {
         audit::tool(ASPECT, "dcf_status", "");
-        runner::run(ASPECT, "hydramesh-status", &[], QUICK_TIMEOUT)
-            .unwrap_or_else(|e| format!("[error] {e}"))
+        runner::run(
+            ASPECT,
+            "systemctl",
+            &["status", "docker-dcf-sdk.service", "--no-pager", "--lines", "0"],
+            QUICK_TIMEOUT,
+        )
+        .or_else(|_| {
+            runner::run(
+                ASPECT,
+                "docker",
+                &["inspect", "--format", "{{.State.Status}}", "dcf-sdk"],
+                QUICK_TIMEOUT,
+            )
+        })
+        .unwrap_or_else(|e| format!("[error] {e}"))
     }
 
-    #[tool(description = "DCF mesh peer list.")]
+    #[tool(description = "DCF mesh peer list (via the HydraMesh SDK). See the `hydramesh` aspect for the full mesh surface.")]
     fn mesh_peers(&self) -> String {
         audit::tool(ASPECT, "mesh_peers", "");
-        runner::run(ASPECT, "hydramesh-peers", &[], QUICK_TIMEOUT)
+        runner::run(ASPECT, "hydramesh", &["list-peers"], QUICK_TIMEOUT)
             .unwrap_or_else(|e| format!("[error] {e}"))
     }
 

@@ -51,8 +51,17 @@ async fn scan_endpoint(ep: &KnownEndpoint, out: &mut String) {
         out.push_str(&format!("{:<28} (no TCP port; proto={:?}) — skipped\n", ep.name, ep.proto));
         return;
     };
-    let scheme = if matches!(ep.proto, Proto::Tcp) { "http" } else { "http" };
-    let url = format!("{scheme}://{}:{port}/", ep.host);
+    // Only TCP endpoints can answer an HTTP probe. UDP entries (the DCF node's
+    // binary/shim ports) carry a port number but no HTTP surface — probing
+    // them would report a meaningless failure, so skip them explicitly.
+    if !matches!(ep.proto, Proto::Tcp) {
+        out.push_str(&format!(
+            "{:<28} (proto={:?}, not HTTP-probeable) — skipped\n",
+            ep.name, ep.proto
+        ));
+        return;
+    }
+    let url = format!("http://{}:{port}/", ep.host);
     // Bind the source socket to 127.0.0.1 BEFORE connect. reqwest exposes
     // local_address on the v1 builder. Anything else panics.
     let client = reqwest::Client::builder()

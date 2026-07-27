@@ -16,6 +16,7 @@
     ./modules/dcf-identity.nix
     ./modules/dcf-tray.nix
     ./modules/dcf-mesh-agent.nix
+    ./modules/hypr-controller/nixos-module.nix
     ./modules/terminus-dev.nix
   ]
   # Optional local overrides written by the control center (kernel/platform
@@ -81,6 +82,23 @@
       '';
     in
     {
+      # ──────────────────────────────────────────────────────────────────────────
+      # Nix build parallelism
+      # ──────────────────────────────────────────────────────────────────────────
+      # The defaults (max-jobs = auto = 16, cores = 0 = unlimited) are wrong on
+      # this box: `isolcpus=0,1` surrenders two CPUs to the DSP guest, so only
+      # 14 are schedulable, and Nix would otherwise run 16 derivations x 16
+      # threads against them. Observed load average 87 on a full closure build,
+      # with the desktop unusable.
+      #
+      # 3 x 4 = 12 threads at peak, leaving 2 CPUs of headroom. Keep the product
+      # at or below 12 if you retune; raising max-jobs costs more than raising
+      # cores, because each job also holds memory.
+      nix.settings = {
+        max-jobs = 3;
+        cores = 4;
+      };
+
       # Android SDK license acceptance
       nixpkgs.config.android_sdk.accept_license = true;
 
@@ -164,7 +182,19 @@
       #   udpPort = 7801;
       #   peers = [ "127.0.0.1:7802" ];
       #   agentName = "oligarchy-hermes";
-      # }; 
+      # };
+
+      # DCF-Hypr Agent — HyprController Android remote (commented by default,
+      # see modules/hypr-controller/README.md). Enable only when actually
+      # pairing a controller device.
+      # services.dcf-hypr-agent = {
+      #   enable = true;
+      #   udpPort = 7100;
+      #   spaGated = true;    # gate 7100 behind a signed knock before putting
+      #                       # this on an untrusted LAN (forces IPv4; needs a
+      #                       # key in /etc/dcf-spa/peers). Not needed when the
+      #                       # only path in is Tailscale or USB-gadget.
+      # };
 
       # ──────────────────────────────────────────────────────────────────────────
       # Local AI Stack (Ollama)
@@ -249,6 +279,32 @@
       #   { device = "/swapfile";
       #     size = 32768; }  # 32 GiB — disabled to free disk space
       # ];
+      #
+      # ── zram: OOM cushion without the disk cost or the RT-audio penalty ──────
+      # There was NO swap of any kind on this box (22 GiB RAM, swapDevices empty
+      # above), so a memory spike had nowhere to go: `nix build` of the system
+      # toplevel fanned out to all 16 cores, exhausted RAM, and the OOM killer
+      # took the display down with it.
+      #
+      # zram is the right shape for this machine specifically: it is compressed
+      # swap *in RAM*, so it adds headroom with zero disk I/O — which is why it
+      # doesn't reintroduce the latency stalls that a /swapfile would inflict on
+      # the isolcpus/NETJACK RT audio path (the reason vm.swappiness is 10 and
+      # disk swap stayed off). zstd runs ~3:1 on build heap, so 50% of RAM of
+      # address space costs roughly 3-4 GiB of real RAM when full.
+      #
+      # This is a cushion, not a licence to run unbounded builds. The actual
+      # cause is the `nix.settings` max-jobs/cores cap ABOVE — which was already
+      # written but is NOT live on the running system: /etc/nix/nix.custom.conf
+      # still reads `cores = 0` / `max-jobs = auto`, i.e. the tree is ahead of
+      # the deployed generation. Until a switch lands, pass the caps per
+      # invocation (`nix build --max-jobs 3 --cores 4 ...`).
+      zramSwap = {
+        enable = true;
+        algorithm = "zstd";
+        memoryPercent = 50; # ~11 GiB of compressed swap space on 22 GiB RAM
+        priority = 100; # prefer zram over any disk swap added later
+      };
 
       # ── Hibernate support ────────────────────────────────────────────────────
       # upower.criticalPowerAction below is "Hibernate". Without resumeDevice +
@@ -269,6 +325,13 @@
         "Oligarchy: upower criticalPowerAction is ${config.services.upower.criticalPowerAction} but boot.resumeDevice is unset — hibernation cannot resume. See the hibernate block near swapDevices in configuration.nix.";
 
       boot.kernel.sysctl = {
+        # Deliberately left at 10 even though zramSwap is now on. The usual
+        # "raise swappiness to 100+ with zram" advice targets desktops; this box
+        # runs RT audio, and 10 keeps the kernel biased toward dropping page
+        # cache before touching anon pages. It does NOT defeat the zram cushion:
+        # swappiness only sets the reclaim *preference*, so under genuine anon
+        # pressure (a runaway nix eval heap) the kernel still swaps to zram
+        # rather than invoking the OOM killer.
         "vm.swappiness" = 10;
         "vm.dirty_ratio" = 10;
         "vm.dirty_background_ratio" = 5;
@@ -293,6 +356,11 @@
       programs.steam = lib.mkIf config.custom.steam.enable {
         enable = true;
         extraCompatPackages = [ pkgs.proton-ge-bin ];
+        package = pkgs.steam.override {
+          extraEnv = {
+            DRI_PRIME = "pci-0000_03_00_0"; # Navi 33 dGPU (renderD128)
+          };
+        };
       };
       hardware.steam-hardware.enable = lib.mkIf config.custom.steam.enable true;
       # gamemode is owned by the active persona (on for the "gaming" persona).

@@ -74,9 +74,30 @@ fn current_uid() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    /// Both tests below drive `audit_path` by mutating OLIGARCHY_MCP_STATE_DIR,
+    /// which is process-global — and cargo runs tests as threads in ONE
+    /// process. Unserialized they race: the unwritable-path test can clobber
+    /// the var (or clear it) in the window between the tempfile test's
+    /// `set_var` and its `log()` call, so the line lands somewhere else, `log`
+    /// silently swallows the failure exactly as designed, and the subsequent
+    /// read blows up with NotFound.
+    ///
+    /// That is not hypothetical: it took down `nix build` of the system
+    /// closure. It only shows up when thread scheduling cooperates, so it
+    /// passed locally for a long time and failed inside the build sandbox.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// A panicking test would otherwise poison the lock and cascade into a
+    /// second, misleading failure in the other test.
+    fn lock_env() -> MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     #[test]
     fn log_never_panics_on_unwritable_path() {
+        let _guard = lock_env();
         std::env::set_var("OLIGARCHY_MCP_STATE_DIR", "/proc/this/cannot/exist");
         log("system", "test_tool", "force-failure", "true");
         // No panic — passes by reaching this line.
@@ -85,6 +106,7 @@ mod tests {
 
     #[test]
     fn log_writes_under_tempfile_state_dir() {
+        let _guard = lock_env();
         let tmp = std::env::temp_dir().join("oligarchy-mcp-audit-test");
         let _ = std::fs::remove_dir_all(&tmp);
         std::env::set_var("OLIGARCHY_MCP_STATE_DIR", &tmp);

@@ -108,7 +108,90 @@ let
     '';
   };
 
+  # ── DCF-SPA gate: standalone table that COEXISTS with the iptables firewall ─
+  # The bug this guards: upstream's spa/modules/dcf-spa.nix sets
+  # networking.nftables.enable, which collides with demod-ip-blocker's
+  # ipset/iptables firewall.extraCommands and fails eval. The node below sets
+  # extraCommands precisely to reproduce that collision — if anyone "fixes" this
+  # module by importing upstream's, or copies its `policy drop` chain, this test
+  # stops building or stops passing.
+  dcf-spa-gate = pkgs.testers.runNixOSTest {
+    name = "dcf-spa-gate";
+
+    nodes.machine = { config, pkgs, ... }: {
+      imports = [ ../modules/security/dcf-spa-gate.nix ];
+
+      networking.firewall.spaGate = {
+        enable = true;
+        meshPort = 7100;
+        credsDir = "/var/lib/dcf-spa-test/peers";
+        grantTtl = 30;
+        # The real authorizer comes from the hydramesh flake input, which this
+        # test file has no handle on (and whose Rust build has its own tests in
+        # spa/tests/cross_lang.rs). What's under test here is the TABLE — our
+        # code — so stub the binary and let the units prove their wiring.
+        package = pkgs.writeShellScriptBin "dcf-spa-authorizer" ''
+          echo "stub authorizer: $*"
+          exec ${pkgs.coreutils}/bin/sleep infinity
+        '';
+      };
+
+      # Reproduce the collision that started all this: an iptables/ipset-shaped
+      # firewall rule. With upstream's module this node would not evaluate.
+      networking.firewall.enable = true;
+      networking.firewall.extraCommands = ''
+        ${pkgs.iptables}/bin/iptables -I INPUT -s 203.0.113.0/24 -j DROP
+      '';
+
+      systemd.tmpfiles.rules = [
+        "d /var/lib/dcf-spa-test/peers 0755 root root -"
+        # 32-byte hex "public key" — shape is all the preflight checks.
+        "f /var/lib/dcf-spa-test/peers/0001.pub 0444 root root - ${lib.concatStrings (lib.genList (_: "ab") 32)}"
+      ];
+    };
+
+    testScript = ''
+      machine.wait_for_unit("dcf-spa-gate-rules.service", timeout=120)
+
+      # 1. The standalone table loaded.
+      machine.succeed("nft list table inet dcf_spa_gate")
+
+      # 2. THE critical assertion: policy accept, not upstream's policy drop.
+      #    A drop policy here would black-hole every other inbound packet
+      #    (ssh, dhcp, mdns) because it hooks input for the whole system.
+      machine.succeed("nft list chain inet dcf_spa_gate input | grep -q 'policy accept'")
+      machine.fail("nft list chain inet dcf_spa_gate input | grep -q 'policy drop'")
+
+      # 3. The gate itself: unauthorized v4 dropped, and v6 dropped outright
+      #    (the knock channel is v4-only, so a v6 peer can never be authorized).
+      machine.succeed("nft list chain inet dcf_spa_gate input | grep -q 'udp dport 7100 drop'")
+      machine.succeed("nft list chain inet dcf_spa_gate input | grep -q 'ip6 nexthdr udp udp dport 7100 drop'")
+
+      # 4. Coexistence — the whole point. The iptables backend is still live and
+      #    still carries the extraCommands rule, i.e. we did NOT flip the
+      #    firewall to nftables the way upstream's module does.
+      machine.succeed("iptables -L INPUT -n | grep -q '203.0.113.0/24'")
+
+      # 5. A grant admits a peer, and expires on its own.
+      machine.succeed("nft add element inet dcf_spa_gate allowed_peers '{ 198.51.100.7 timeout 2s }'")
+      machine.succeed("nft get element inet dcf_spa_gate allowed_peers '{ 198.51.100.7 }'")
+      machine.sleep(5)
+      machine.fail("nft get element inet dcf_spa_gate allowed_peers '{ 198.51.100.7 }'")
+
+      # 6. The authorizer came up (stubbed) with a populated creds dir.
+      machine.wait_for_unit("dcf-spa.service", timeout=120)
+
+      # 7. Empty creds must FAIL loudly rather than silently gating everyone
+      #    out — with the table live, no creds means 7100 is dark forever.
+      machine.succeed("systemctl stop dcf-spa.service")
+      machine.succeed("rm -f /var/lib/dcf-spa-test/peers/0001.pub")
+      machine.fail("systemctl start dcf-spa.service")
+
+      print("dcf-spa-gate: coexisting table, gate rules, grant expiry, creds preflight verified")
+    '';
+  };
+
 in
 {
-  inherit strict-egress malware-shield hardening;
+  inherit strict-egress malware-shield hardening dcf-spa-gate;
 }

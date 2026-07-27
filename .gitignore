@@ -21,3 +21,12 @@ __pycache__/
 # Rust build artifacts
 modules/greeting/target/
 modules/mcp-servers/target/
+
+# Android/Gradle build artifacts (modules/hypr-controller/android)
+modules/hypr-controller/android/.gradle/
+modules/hypr-controller/android/build/
+modules/hypr-controller/android/app/build/
+modules/hypr-controller/android/local.properties
+modules/hypr-controller/android/gradle/wrapper/gradle-wrapper.jar
+modules/hypr-controller/android/.idea/
+*.iml
