@@ -54,7 +54,7 @@ in {
       "custom/logo" = {
         format = "󱄅";
         tooltip = true;
-        tooltip-format = "DeMoD Workstation\n\n<b>Keybindings</b>\n󰌨 Super+D: App Launcher\n󰍜 Super+Return: Terminal\n󰀻 Super+F: Fullscreen\n\n<b>Quick Actions</b>\n󱓞 Click: App Launcher\n󰍜 Right: System Info";
+        tooltip-format = "Oligarchy · The War Machine\n\n<b>Keybindings</b>\n󰌨 Super+D: App Launcher\n󰍜 Super+Return: Terminal\n󰀻 Super+F: Fullscreen\n\n<b>Quick Actions</b>\n󱓞 Click: App Launcher\n󰍜 Right: System Info";
         on-click = "wofi --show drun -I";
         on-click-right = "kitty --class floating-term -e btop";
       };

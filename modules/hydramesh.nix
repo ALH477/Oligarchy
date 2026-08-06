@@ -5,8 +5,8 @@ with lib;
 let
   cfg = config.custom.hydramesh;
 
-  hm = hydramesh.packages.${pkgs.system} or
-    (throw "the hydramesh flake has no packages for system ${pkgs.system}");
+  hm = hydramesh.packages.${pkgs.stdenv.hostPlatform.system} or
+    (throw "the hydramesh flake has no packages for system ${pkgs.stdenv.hostPlatform.system}");
 
   # The generated DCF node config. modules/dcf-community-node.nix mounts an
   # equivalent TOML into the container; this is the host-visible copy the

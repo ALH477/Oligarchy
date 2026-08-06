@@ -9,6 +9,7 @@ import android.net.nsd.NsdServiceInfo
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
 import ltd.demod.hyprcontroller.control.HyprController
+import ltd.demod.hyprcontroller.auth.PairingAuth
 import java.net.NetworkInterface
 import kotlin.coroutines.resume
 
@@ -41,6 +42,7 @@ class TransportManager(
         prefs.getString(KEY_LAST_HOST, null)?.let { saved ->
             if (controller.probeHost(saved)) {
                 controller.setPeer(saved, "saved")
+                if (PairingAuth.isEnabled) controller.sendSignedHello()
                 return true
             }
         }
@@ -49,6 +51,7 @@ class TransportManager(
             if (controller.probeHost(host)) {
                 controller.setPeer(host, "lan-mdns")
                 save(host)
+                if (PairingAuth.isEnabled) controller.sendSignedHello()
                 return true
             }
         }
@@ -56,6 +59,7 @@ class TransportManager(
         controller.discoverByBroadcast(broadcastAddresses())?.let { host ->
             controller.setPeer(host, "broadcast")
             save(host)
+            if (PairingAuth.isEnabled) controller.sendSignedHello()
             return true
         }
 
@@ -70,6 +74,7 @@ class TransportManager(
         return if (controller.probeHost(host, timeoutMs = 1500)) {
             controller.setPeer(host, "manual")
             save(host)
+            if (PairingAuth.isEnabled) controller.sendSignedHello()
             true
         } else {
             controller.markDisconnected()

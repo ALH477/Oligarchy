@@ -143,6 +143,26 @@ in
         "usb-storage.quirks=:u"
       ];
 
+      # ── Fan control ────────────────────────────────────────────────────────
+      # The fw-fanctrl module is wired in from flake.nix but was never enabled,
+      # which left the EC's stock curve as the *only* thermal actuator. That
+      # curve is tuned for light desktop use and lags badly under a sustained
+      # all-core load (nix builds, cargo), so the package rides 85-95C and the
+      # fans only wake up once it is already too late.
+      #
+      # `agile` is the `medium` speed curve (15% -> 40C, 30% -> 60C, 40% -> 70C,
+      # 80% -> 75C, 100% -> 85C) with a 15s moving average and a 3s update tick
+      # instead of medium's 30s/5s, so it actually tracks bursty build load
+      # rather than smoothing it away. On battery we fall back to `lazy` for
+      # runtime and noise.
+      hardware.fw-fanctrl = {
+        enable = true;
+        config = {
+          defaultStrategy = "agile";
+          strategyOnDischarging = "lazy";
+        };
+      };
+
       # Framework hardware check: only the genuine Framework 16 board gets
       # told it's based, printed straight to the boot console before the
       # splash/display-manager claim the tty.

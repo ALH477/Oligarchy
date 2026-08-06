@@ -96,3 +96,83 @@ pub fn build_and_load_streaming(cfg: ForgeConfig) -> Result<Receiver<BuildEvent>
 
     Ok(rx)
 }
+
+pub enum EvalEvent {
+    Done(Result<(), String>),
+}
+
+/// Renders `cfg` and runs a cheap `nix eval` (not build) against it in the
+/// background — a sanity check that the generated flake is still
+/// structurally valid after a TUI toggle. Deliberately separate from
+/// `ForgeConfig::conflicts()`: that catches *provided-binary* collisions
+/// (the primary, instant conflict-detection mechanism — see schema.rs);
+/// this catches template/rendering bugs that would only show up as a Nix
+/// parse/eval error, which `conflicts()` can't see. Returns immediately.
+pub fn eval_check_streaming(cfg: ForgeConfig) -> Result<Receiver<EvalEvent>> {
+    let dir = state_dir(&cfg.project.name)?;
+    let flake_nix = render_flake(&cfg)?;
+    write_flake(&dir, &flake_nix)?;
+
+    // Evaluating `.name` forces the whole `packages.${system}.default`
+    // derivation to instantiate (walking the rendered `contents` list)
+    // without realizing/building anything.
+    let flake_ref = format!("path:{}#default.name", dir.display());
+    let mut child = Command::new("nix")
+        .args(["eval", &flake_ref, "--json"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("spawning `nix eval` — is nix on PATH?")?;
+
+    let (tx, rx) = mpsc::channel();
+    let stderr = child.stderr.take().context("capturing nix eval stderr")?;
+
+    thread::spawn(move || {
+        let mut err_output = String::new();
+        for line in BufReader::new(stderr).lines().map_while(std::result::Result::ok) {
+            err_output.push_str(&line);
+            err_output.push('\n');
+        }
+        let wait_result = child.wait();
+        let result = match wait_result {
+            Ok(status) if status.success() => Ok(()),
+            Ok(status) if err_output.trim().is_empty() => {
+                Err(format!("nix eval exited with status {status}"))
+            }
+            Ok(_) => Err(err_output.trim().to_string()),
+            Err(e) => Err(format!("waiting on nix eval: {e}")),
+        };
+        let _ = tx.send(EvalEvent::Done(result));
+    });
+
+    Ok(rx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::ForgeConfig;
+
+    /// Needs a real `nix` on PATH and network access for the flake's
+    /// nixpkgs input — excluded from the default `cargo test` run (which
+    /// must work offline/sandboxed), run explicitly with
+    /// `cargo test -- --ignored` when verifying this module by hand.
+    #[test]
+    #[ignore]
+    fn eval_check_succeeds_for_a_valid_config() {
+        let cfg = ForgeConfig::parse(
+            r#"
+            [project]
+            name = "eval-check-smoke-test"
+            extensions = ["rust"]
+            "#,
+        )
+        .unwrap();
+
+        let rx = eval_check_streaming(cfg).unwrap();
+        let event = rx.recv_timeout(std::time::Duration::from_secs(120)).unwrap();
+        match event {
+            EvalEvent::Done(result) => assert!(result.is_ok(), "expected eval to succeed: {result:?}"),
+        }
+    }
+}

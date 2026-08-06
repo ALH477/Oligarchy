@@ -11,7 +11,7 @@
 # that binary (the umbrella then prints `exec failed` for that aspect).
 #
 # The top-level flake threads the `mcp-servers` sub-flake input through
-# `specialArgs`. The module references `inputs.mcp-servers.packages.${pkgs.system}.<pkg>`.
+# `specialArgs`. The module references `inputs.mcp-servers.packages.${pkgs.stdenv.hostPlatform.system}.<pkg>`.
 # ═══════════════════════════════════════════════════════════════════════════════
 { config, lib, pkgs, inputs, ... }:
 
@@ -20,8 +20,9 @@ with lib;
 let
   cfg = config.custom.mcpServers;
   mcp = inputs.mcp-servers;
-  packages = mcp.packages.${pkgs.system} or (throw
-    "mcp-servers sub-flake has no packages for system ${pkgs.system}"
+  system = pkgs.stdenv.hostPlatform.system;
+  packages = mcp.packages.${system} or (throw
+    "mcp-servers sub-flake has no packages for system ${system}"
   );
 
   umbrellaPkg = packages.umbrella or packages.default;

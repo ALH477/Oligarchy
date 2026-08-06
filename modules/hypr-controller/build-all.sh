@@ -26,7 +26,32 @@ NIX_MAX_JOBS=${NIX_MAX_JOBS:-3}
 NIX_CORES=${NIX_CORES:-4}
 GRADLE_WORKERS=${GRADLE_WORKERS:-4}
 
-echo "==> [1/2] nixos-rebuild switch (max-jobs=$NIX_MAX_JOBS cores=$NIX_CORES)"
+# ── HyprController pairing-auth key pair ──────────────────────────────
+# Fresh Ed25519 key per build. Previous build's key is revoked when
+# nixos-rebuild overwrites authorized_keys and the SPA peer file.
+HYPR_KEY_DIR="/etc/hypr-controller"
+sudo mkdir -p "$HYPR_KEY_DIR"
+sudo ssh-keygen -t ed25519 -f "$HYPR_KEY_DIR/key" -N "" \
+  -C "hypr-controller@$(date +%s)" -q
+
+# Derive raw 32-byte Ed25519 public key for DCF-SPA peer verification.
+# ssh-keygen's .pub is SSH format (ssh-ed25519 AAAA... comment); DCF-SPA
+# needs the raw 32-byte hex. Extract it from the DER-encoded public key.
+sudo bash -c 'openssl pkey -pubin -in '"$HYPR_KEY_DIR"'/key.pub -outform DER 2>/dev/null | tail -c 32 | xxd -p -c 32 > '"$HYPR_KEY_DIR"'/key_raw.pub'
+
+# Copy public key artifacts to repo for Nix evaluation (nixos-module.nix
+# reads them via builtins.readFile). These are gitignored per-build artifacts.
+sudo cp "$HYPR_KEY_DIR/key.pub" "$REPO/modules/hypr-controller/current-key.pub"
+sudo cp "$HYPR_KEY_DIR/key_raw.pub" "$REPO/modules/hypr-controller/current-key-raw.pub"
+sudo chmod 644 "$REPO/modules/hypr-controller/current-key.pub"
+sudo chmod 644 "$REPO/modules/hypr-controller/current-key-raw.pub"
+
+# Private key for the APK (passed to Gradle as a project property).
+# This stays in /etc — never enters the Nix store.
+HYPR_PRIV_KEY=$(sudo cat "$HYPR_KEY_DIR/key")
+export HYPR_PRIV_KEY
+
+echo "==> [1/3] nixos-rebuild switch (max-jobs=$NIX_MAX_JOBS cores=$NIX_CORES)"
 sudo nixos-rebuild switch \
   --flake "$REPO#nixos" \
   --max-jobs "$NIX_MAX_JOBS" \
@@ -37,7 +62,7 @@ if [ -z "$(swapon --show --noheadings 2>/dev/null)" ]; then
   echo "!! no swap active — zram did not come up; the Gradle half is less protected" >&2
 fi
 
-echo "==> [2/2] HyprController APK (workers=$GRADLE_WORKERS)"
+echo "==> [2/3] HyprController APK (workers=$GRADLE_WORKERS)"
 
 # The SDK lives in the nix store and is READ-ONLY, so point Gradle's writable
 # state (caches, installed-package metadata) somewhere else or AGP fails trying
@@ -64,5 +89,6 @@ exec systemd-run --user --scope --quiet \
     nice -n 10 gradle -p "$ANDROID_DIR" assembleDebug \
       --no-daemon \
       --max-workers="$GRADLE_WORKERS" \
+      -PHYPR_PRIV_KEY="$HYPR_PRIV_KEY" \
       -Dorg.gradle.jvmargs=-Xmx3g \
       -Dkotlin.compiler.execution.strategy=in-process

@@ -302,7 +302,7 @@ let
   playScript = pkgs.writeShellApplication {
     name = "boot-intro-play";
     runtimeInputs = [
-      pkgs.coreutils pkgs.ncurses pkgs.mpv pkgs.alsa-utils pkgs.systemd pkgs.socat
+      pkgs.coreutils pkgs.kbd pkgs.ncurses pkgs.mpv pkgs.alsa-utils pkgs.systemd pkgs.socat
     ];
     text = ''
       set -euo pipefail
@@ -354,6 +354,12 @@ let
 
       "''${MPV_CMD[@]}" || true
       clear
+      # Reset terminal and framebuffer state for clean greetd handoff.
+      # mpv --vo=gpu holds DRM master; on exit the primary plane may still
+      # show the last video frame. Force a blank+unblank cycle to repaint.
+      printf '\033[2J\033[H\033[?25h' > /dev/tty1
+      ${pkgs.kbd}/bin/setterm --blank force > /dev/tty1 2>/dev/null || true
+      ${pkgs.kbd}/bin/setterm --blank poke > /dev/tty1 2>/dev/null || true
     '';
   };
 

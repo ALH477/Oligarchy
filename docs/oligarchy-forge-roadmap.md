@@ -245,20 +245,74 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
   the list version silently cutting off extension names mid-word at
   standard 80-column width (`TestBackend` unit test, not just eyeballing).
 
-## Phase 2 — Interactive composition + conflict resolution (not started)
+## Phase 2 — Interactive composition + conflict resolution ✅ done
 
-- [ ] `tui-tree-widget` (EdJoPaTo) extension picker — tree of
-      categories → extensions → options, `TreeState` for
-      selection/expansion
-- [ ] Write-back: toggling an extension in the TUI edits
-      `oligarchy-forge.toml` in place
-- [ ] Background `nix eval --json` on toggle (cached, per-attribute
-      re-eval only) to surface conflicts before a full build
-- [ ] Parse Nix's `conflicting definition values` error text into a
-      friendly chooser (`miette`/`thiserror` for the diagnostic rendering,
-      matching devenv's own error-handling stack)
-- [ ] **Benchmark:** two extensions pinning different compiler versions
-      produce an in-TUI choice, not a raw Nix trace
+- [x] `tui-tree-widget` 0.24 (EdJoPaTo) extension picker — one category
+      ("Extensions") containing the 6 selectable leaves (`Base` is
+      implicit, not shown), `TreeState` for cursor position/expansion.
+      Reached via `e` from the session list, or directly with
+      `oligarchy-forge edit`
+- [x] Write-back: toggling a clean (non-conflicting) extension writes
+      `oligarchy-forge.toml` in the current directory immediately
+      (`forge_core::process::write_project_toml`); `oligarchy-forge edit`
+      bootstraps a fresh file if none exists yet
+      (`load_or_default_project_toml`)
+- [x] Conflict detection — **not** `nix eval`-based (see Deviations: our
+      generated flake is a flat package list, not a NixOS module
+      composition, so there's no `mkOverride`-style eval-time conflict to
+      catch). Instead: `Extension::provides()` + `ForgeConfig::conflicts()`
+      in `forge-core`, plain Rust, no Nix invocation, checked *before* the
+      toggle is even applied
+- [x] Background `nix eval --json` on toggle — kept, repurposed as a
+      flake-validity sanity check (`forge_core::stream::eval_check_streaming`,
+      evaluates `path:<dir>#default.name` to force derivation instantiation
+      without building) rather than the primary conflict-detection
+      mechanism; status shown in the edit view's side panel
+      (`flake: OK` / `checking...` / `ERROR — ...`)
+- [x] Conflict chooser — a real conflicting pair added to make this
+      possible at all: `Extension::Node` (nodejs_22) and `::NodeLts`
+      (nodejs_20) both provide `node`/`npm`/`npx`. Attempting to add one
+      while the other is selected blocks behind a two-choice panel
+      (`e`/Esc/← keep existing, `n`/Enter/→ switch to new) instead of
+      silently producing a broken config
+- [x] 7 new `forge-tui` tests (16 total across the workspace, +1 `#[ignore]`
+      integration test for `eval_check_streaming` requiring real `nix`) —
+      tree rendering, conflict-chooser rendering, conflict resolution
+      swapping extensions and writing back, and a regression test for the
+      `TreeState` render-before-navigate ordering bug found below
+- [x] Interactive end-to-end verification with a **real running binary**
+      through a **real pty** (not just unit tests): navigate → toggle →
+      write-back, and navigate → toggle `node` → toggle `node-lts` →
+      conflict chooser → resolve → write-back, both confirmed via the
+      actual `oligarchy-forge.toml` written to disk after the run
+- [x] `nix build .#nixosConfigurations.nixos.config.system.build.toplevel`
+      — full system closure builds clean with the ratatui 0.30 /
+      tui-tree-widget 0.24 dependency bump
+- [x] **Benchmark met, literally:** `node` vs `node-lts` (two extensions
+      pinning different Node runtime versions) produces an in-TUI choice,
+      not a raw Nix trace — verified via the real-pty run above, not staged
+
+**Deviations from the plan (see Changelog for the debugging story):**
+- Conflict detection moved from "parse Nix's eval-time error text" to a
+  static, instant, plain-Rust check in `forge-core`. This is a real
+  architectural fact, not a shortcut: our generated `flake.nix` is a flat
+  `dockerTools.streamLayeredImage { contents = [...] }` list, never a
+  NixOS module composition, so there is no `mkOverride`/priority mechanism
+  in play and thus no `mkOverride`-style conflict for `nix eval` to ever
+  produce. A real file-path collision (two packages both providing `/bin/node`)
+  only surfaces as a `buildEnv` error at *build* time — too late, and a
+  worse message than catching it here first. `nix eval` is kept, but
+  demoted to a secondary sanity check for template/rendering bugs.
+- Bumped `ratatui` from `0.29` (monolithic) to `0.30.2` (the
+  `ratatui-core`/`ratatui-widgets` split) specifically to match
+  `tui-tree-widget 0.24`'s foundation — `cargo build` initially resolved
+  two *separate* `ratatui`-family crate graphs (`ratatui 0.29` +
+  `ratatui-core`/`ratatui-widgets` from `tui-tree-widget`'s `ratatui 0.28`
+  dependency chain), which would have made `tui_tree_widget::Tree` fail to
+  satisfy `ratatui::widgets::StatefulWidget` from a different crate
+  instance. Caught and fixed *before* it became a compile error, by
+  reading `Cargo.lock` for duplicate `ratatui`/`crossterm` entries after
+  each dependency bump.
 
 ## Phase 3 — Skill browser + security legibility (not started)
 

@@ -6,6 +6,7 @@
 //! trigger a build and watch it stream.
 
 mod app;
+mod edit;
 mod project;
 
-pub use app::run;
+pub use app::{run, run_edit};

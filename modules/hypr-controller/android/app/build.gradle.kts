@@ -20,6 +20,12 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
+
+        // Build-embedded Ed25519 private key for pairing-auth.
+        // Injected by build-all.sh as a Gradle project property; empty string disables auth.
+        val hyprPrivKey = project.findProperty("HYPR_PRIV_KEY") as? String ?: ""
+        buildConfigField("String", "HYPR_CONTROLLER_PRIVATE_KEY",
+            "\"${hyprPrivKey.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$")}\"")
     }
 
     buildTypes {
@@ -38,6 +44,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -50,6 +57,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("androidx.navigation:navigation-compose:2.9.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

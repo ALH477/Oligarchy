@@ -22,9 +22,16 @@ pub struct Project {
     pub extensions: Vec<Extension>,
 }
 
-/// The six built-in toolchain extensions. `Base` is implicit — always
-/// present in `ForgeConfig::extensions` after `parse()`, regardless of
-/// whether the user listed it.
+/// The built-in toolchain extensions. `Base` is implicit — always present
+/// in `ForgeConfig::extensions` after `parse()`, regardless of whether the
+/// user listed it.
+///
+/// `Node` and `NodeLts` are a deliberate pair: both provide a `node`
+/// binary, so selecting both is a genuine conflict (see `provides()` /
+/// `ForgeConfig::conflicts()`) — Phase 2 needed at least one real
+/// conflicting pair to make the "in-TUI choice, not a raw Nix trace"
+/// benchmark actually true rather than staged. Grew from six to eight
+/// built-ins for this reason (see docs/oligarchy-forge-roadmap.md Phase 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Extension {
@@ -32,16 +39,18 @@ pub enum Extension {
     Rust,
     Python,
     Node,
+    NodeLts,
     Go,
     FaustJack,
 }
 
 impl Extension {
-    pub const ALL: [Extension; 6] = [
+    pub const ALL: [Extension; 7] = [
         Extension::Base,
         Extension::Rust,
         Extension::Python,
         Extension::Node,
+        Extension::NodeLts,
         Extension::Go,
         Extension::FaustJack,
     ];
@@ -53,8 +62,38 @@ impl Extension {
             Extension::Rust => &["rustc", "cargo", "rust-analyzer"],
             Extension::Python => &["python312", "python312Packages.pip"],
             Extension::Node => &["nodejs_22"],
+            Extension::NodeLts => &["nodejs_20"],
             Extension::Go => &["go"],
             Extension::FaustJack => &["faust", "jack2"],
+        }
+    }
+
+    /// Binary names this extension puts on `PATH`. Two selected extensions
+    /// that share a provided name would collide in the generated image's
+    /// `buildEnv` — detected here, in plain Rust, before any Nix
+    /// invocation. `Base`'s bash/coreutils/git never collide with anything
+    /// else in this list, so it's omitted.
+    pub fn provides(self) -> &'static [&'static str] {
+        match self {
+            Extension::Base => &[],
+            Extension::Rust => &["rustc", "cargo"],
+            Extension::Python => &["python3"],
+            Extension::Node => &["node", "npm", "npx"],
+            Extension::NodeLts => &["node", "npm", "npx"],
+            Extension::Go => &["go"],
+            Extension::FaustJack => &["faust"],
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Extension::Base => "base",
+            Extension::Rust => "rust",
+            Extension::Python => "python",
+            Extension::Node => "node (current, v22)",
+            Extension::NodeLts => "node-lts (v20)",
+            Extension::Go => "go",
+            Extension::FaustJack => "faust-jack",
         }
     }
 }
@@ -123,6 +162,36 @@ impl ForgeConfig {
         }
         pkgs
     }
+
+    /// Every pair of currently-selected extensions that provide the same
+    /// binary name, with the shared names — computed in plain Rust against
+    /// `Extension::provides()`, no Nix invocation needed. This is the
+    /// primary conflict-detection mechanism for the TUI's extension picker
+    /// (see docs/oligarchy-forge-roadmap.md Phase 2 for why: our generated
+    /// flake is a flat package list, not a NixOS module composition, so
+    /// there's no `mkOverride`-style eval-time conflict for `nix eval` to
+    /// catch here — a real collision only surfaces as a `buildEnv` file
+    /// clash at build time, which is both too late and a worse error
+    /// message than catching it here first).
+    pub fn conflicts(&self) -> Vec<(Extension, Extension, Vec<&'static str>)> {
+        let selected = &self.project.extensions;
+        let mut out = Vec::new();
+        for i in 0..selected.len() {
+            for j in (i + 1)..selected.len() {
+                let (a, b) = (selected[i], selected[j]);
+                let shared: Vec<&'static str> =
+                    a.provides().iter().filter(|name| b.provides().contains(name)).copied().collect();
+                if !shared.is_empty() {
+                    out.push((a, b, shared));
+                }
+            }
+        }
+        out
+    }
+
+    pub fn to_toml_string(&self) -> anyhow::Result<String> {
+        Ok(toml::to_string_pretty(self)?)
+    }
 }
 
 #[cfg(test)]
@@ -168,5 +237,51 @@ mod tests {
         .unwrap();
         let rustc_count = cfg.nix_packages().iter().filter(|p| **p == "rustc").count();
         assert_eq!(rustc_count, 1);
+    }
+
+    #[test]
+    fn node_and_node_lts_conflict_on_shared_binaries() {
+        let cfg = ForgeConfig::parse(
+            r#"
+            [project]
+            name = "demo"
+            extensions = ["node", "node-lts"]
+            "#,
+        )
+        .unwrap();
+        let conflicts = cfg.conflicts();
+        assert_eq!(conflicts.len(), 1);
+        let (a, b, shared) = &conflicts[0];
+        assert!((*a == Extension::Node && *b == Extension::NodeLts) || (*a == Extension::NodeLts && *b == Extension::Node));
+        assert!(shared.contains(&"node"));
+    }
+
+    #[test]
+    fn unrelated_extensions_do_not_conflict() {
+        let cfg = ForgeConfig::parse(
+            r#"
+            [project]
+            name = "demo"
+            extensions = ["rust", "python", "go", "faust-jack"]
+            "#,
+        )
+        .unwrap();
+        assert!(cfg.conflicts().is_empty());
+    }
+
+    #[test]
+    fn to_toml_string_round_trips() {
+        let cfg = ForgeConfig::parse(
+            r#"
+            [project]
+            name = "demo"
+            extensions = ["go"]
+            "#,
+        )
+        .unwrap();
+        let rendered = cfg.to_toml_string().unwrap();
+        let reloaded = ForgeConfig::parse(&rendered).unwrap();
+        assert_eq!(reloaded.project.name, "demo");
+        assert!(reloaded.project.extensions.contains(&Extension::Go));
     }
 }

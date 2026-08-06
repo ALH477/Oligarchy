@@ -38,7 +38,7 @@
           # Make the theme package available
           config = lib.mkIf config.boot.plymouth.oligarchy.enable {
             boot.plymouth.themePackages = [ 
-              self.packages.${pkgs.system}.oligarchy-plymouth-theme 
+              self.packages.${pkgs.stdenv.hostPlatform.system}.oligarchy-plymouth-theme
             ];
           };
         };

@@ -1,12 +1,13 @@
-{ config, pkgs, lib, theme ? {}, features ? {}, ... }:
+{ config, pkgs, lib, theme ? { }, features ? { }, ... }:
 
 let
-  p = theme;  # Shorthand for palette
-  
+  p = theme; # Shorthand for palette
+
   # Helper scripts directory
   scriptsDir = ".config/hypr/scripts";
-  
-in {
+
+in
+{
   # ════════════════════════════════════════════════════════════════════════════
   # Screenshot Script
   # ════════════════════════════════════════════════════════════════════════════
@@ -164,11 +165,6 @@ in {
     source = ./theme-switch.sh;
   };
 
-  home.file."${scriptsDir}/theme-switcher.sh" = {
-    executable = true;
-    source = ./theme-switcher.sh;
-  };
-
   # ════════════════════════════════════════════════════════════════════════════
   # Keybind Help Script
   # ════════════════════════════════════════════════════════════════════════════
@@ -183,6 +179,23 @@ in {
   home.file.".local/bin/caffeine" = {
     executable = true;
     source = ./caffeine.sh;
+  };
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Idle suspend guard — load/temp-aware `systemctl suspend` for hypridle.
+  # Keeps the machine from suspending into s2idle (fans down) mid-nix-build.
+  # ════════════════════════════════════════════════════════════════════════════
+  home.file."${scriptsDir}/idle-suspend.sh" = {
+    executable = true;
+    source = ./idle-suspend.sh;
+  };
+
+  # Rebuild wrapper — pinned-by-default nixos-rebuild with resource caps.
+  # Replaces the old shell aliases (rebuild / rebuild-test) with a script
+  # that accepts --update, --test, --dry-run, --max-jobs, --cores.
+  home.file.".local/bin/rebuild" = {
+    source = ./rebuild.sh;
+    executable = true;
   };
 
   # Panic/privacy mode + window-layout save/restore (on PATH for binds + UI).
@@ -389,7 +402,7 @@ in {
   };
 
   # ══════════════════════════════════════════════════════════════════════════
-# Gamemode Toggle Script (for gaming performance optimization)
+  # Gamemode Toggle Script (for gaming performance optimization)
   # ══════════════════════════════════════════════════════════════════════════
   home.file."${scriptsDir}/gamemode.sh" = lib.mkIf (features.enableGaming or false) {
     executable = true;

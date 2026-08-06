@@ -37,9 +37,12 @@ enum Command {
         #[arg(long)]
         rebuild: bool,
     },
-    /// Open the read-only session-list + build-log dashboard (also the
-    /// default when no subcommand is given).
+    /// Open the session-list + build-log dashboard (also the default when
+    /// no subcommand is given).
     Tui,
+    /// Open the interactive extension picker for the current directory's
+    /// oligarchy-forge.toml (bootstraps one if it doesn't exist yet).
+    Edit,
 }
 
 fn load_config() -> Result<ForgeConfig> {
@@ -62,6 +65,10 @@ fn run(cli: Cli) -> Result<i32> {
     match cli.command {
         None | Some(Command::Tui) => {
             forge_tui::run()?;
+            Ok(0)
+        }
+        Some(Command::Edit) => {
+            forge_tui::run_edit()?;
             Ok(0)
         }
         Some(Command::Build { rebuild }) => {

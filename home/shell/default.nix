@@ -12,8 +12,6 @@
       grep = "rg";
       ".." = "cd ..";
       "..." = "cd ../..";
-      rebuild = "sudo nixos-rebuild switch --flake .";
-      rebuild-test = "sudo nixos-rebuild test --flake .";
       nix-clean = "sudo nix-collect-garbage -d";
       dps = "docker ps --format 'table {{.Names}}\t{{.Status}}'";
       dpa = "docker ps -a --format 'table {{.Names}}\t{{.Status}}'";
@@ -76,6 +74,17 @@
       # FZF integration
       command -v fzf &>/dev/null && eval "$(fzf --bash)"
       
+      # Guard: bare 'nix flake update' bumps ALL inputs without rebuilding.
+      # Use 'rebuild --update' instead, or 'nix flake update <input>' for selective bumps.
+      nix() {
+        if [ "$1" = "flake" ] && [ "$2" = "update" ] && [ $# -eq 2 ]; then
+          echo "''${YELLOW}!! bare 'nix flake update' bumps ALL inputs without rebuilding.''${RESET}" >&2
+          echo "   Use ''${CYAN}rebuild --update''${RESET} for guided updates, or ''${CYAN}nix flake update <input>''${RESET} for specific inputs." >&2
+          return 1
+        fi
+        command nix "$@"
+      }
+
       # Reload theme colors on theme switch (for theme-switch.sh)
       reload_theme() {
         load_theme_colors
@@ -83,12 +92,13 @@
       }
       
       # Welcome message (only for first login)
-      if [[ -z "$SSH_CONNECTION" ]] && [[ ! -f "$HOME/.config/welcome-shown" ]]; then
-        touch "$HOME/.config/welcome-shown"
+      if [[ -z "$SSH_CONNECTION" ]] && [[ ! -f "$HOME/.config/oligarchy/welcome-shown" ]]; then
+        mkdir -p "$HOME/.config/oligarchy"
+        touch "$HOME/.config/oligarchy/welcome-shown"
         echo ""
         echo -e "''${CYAN}  ╔══════════════════════════════════════════╗''${RESET}"
-        echo -e "''${CYAN}  ║''${RESET}  ''${VIOLET}󰎚''${RESET}  ''${WHITE}DeMoD Workstation''${RESET}                   ''${CYAN}║''${RESET}"
-        echo -e "''${CYAN}  ║''${RESET}  ''${DIM}Turquoise • Violet • Abstract''${RESET}          ''${CYAN}║''${RESET}"
+        echo -e "''${CYAN}  ║''${RESET}  ''${VIOLET}󰎚''${RESET}  ''${WHITE}Oligarchy''${RESET}                            ''${CYAN}║''${RESET}"
+        echo -e "''${CYAN}  ║''${RESET}  ''${DIM}The War Machine''${RESET}                            ''${CYAN}║''${RESET}"
         echo -e "''${CYAN}  ╚══════════════════════════════════════════╝''${RESET}"
         echo ""
       fi

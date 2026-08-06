@@ -8,7 +8,7 @@
 # modules/mcp-servers/ has. See docs/oligarchy-forge-roadmap.md.
 #
 # The top-level flake threads the `oligarchy-forge` sub-flake input through
-# `specialArgs`. This module references `inputs.oligarchy-forge.packages.${pkgs.system}`.
+# `specialArgs`. This module references `inputs.oligarchy-forge.packages.${pkgs.stdenv.hostPlatform.system}`.
 # ═══════════════════════════════════════════════════════════════════════════════
 { config, lib, pkgs, inputs, ... }:
 
@@ -17,8 +17,9 @@ with lib;
 let
   cfg = config.custom.oligarchyForge;
   forge = inputs.oligarchy-forge;
-  package = forge.packages.${pkgs.system}.default or (throw
-    "oligarchy-forge sub-flake has no package for system ${pkgs.system}"
+  system = pkgs.stdenv.hostPlatform.system;
+  package = forge.packages.${system}.default or (throw
+    "oligarchy-forge sub-flake has no package for system ${system}"
   );
 in
 {

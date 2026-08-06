@@ -37,8 +37,9 @@
         Start the DSP VM (and its NETJACK/JACK bridges) automatically at boot.
         When false, the systemd units are still defined and can be launched
         manually (systemctl start archibaldos-dsp), but nothing pulls them in
-        at boot — so a broken guest can't soft-lock the host on startup. The
-        VFIO/hugepage/isolcpus host setup is still applied either way.
+        at boot — so a broken guest can't soft-lock the host on startup.
+        Hugepages are allocated dynamically on service start and released on
+        stop, so no RAM is reserved when the VM is idle.
       '';
     };
 
@@ -63,7 +64,11 @@
     hugepages = lib.mkOption {
       type = lib.types.int;
       default = 1024;
-      description = "Number of 2MB hugepages to reserve.";
+      description = ''
+        Number of 2MB hugepages to allocate when the VM starts.
+        Allocated dynamically via sysctl on service preStart and released on
+        postStop — not reserved at boot. Set to 0 to disable hugepage backing.
+      '';
     };
 
     cpuModel = lib.mkOption {
@@ -277,7 +282,7 @@
           "irqaffinity=1-7"
           "threadirqs"
           "hugepagesz=2M"
-          "hugepages=${toString cfg.hugepages}"
+          "hugepages=0"
           "amd_iommu=on"
           "iommu=pt"
         ]
@@ -329,6 +334,9 @@
           mkdir -p /var/log
           touch /var/log/qemu-${cfg.name}-serial.log
           chmod 666 /var/log/qemu-${cfg.name}-serial.log
+        '' + lib.optionalString (cfg.hugepages > 0) ''
+          # Allocate hugepages dynamically (released in postStop)
+          echo ${toString cfg.hugepages} > /proc/sys/vm/nr_hugepages
         '' + lib.optionalString cfg.ovmf ''
           # Seed a per-VM writable OVMF variable store from the read-only
           # template on first boot (holds UEFI boot entries / NVRAM).
@@ -464,6 +472,7 @@
             ]));
 
           ExecStop = "${pkgs.coreutils}/bin/kill -TERM $MAINPID";
+          ExecStopPost = lib.optionalString (cfg.hugepages > 0) "+${pkgs.coreutils}/bin/echo 0 > /proc/sys/vm/nr_hugepages";
         };
 
         startLimitIntervalSec = 300;

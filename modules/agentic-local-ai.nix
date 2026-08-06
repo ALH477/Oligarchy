@@ -6,7 +6,7 @@ let
   cfg = config.services.ollamaAgentic;
   userName = "asher";
   userHome = config.users.users.${userName}.home or "/home/${userName}";
-  
+
   # Directory structure
   paths = {
     base = "${userHome}/.config/ollama-agentic";
@@ -16,6 +16,11 @@ let
   };
 
   # Hardware presets
+  # contextLength -> OLLAMA_CONTEXT_LENGTH (default is 2048; flash-attention's
+  # benefit only kicks in above ~8k, so anything below "default" leaves it
+  # unused). gpuOverheadBytes -> OLLAMA_GPU_OVERHEAD, only applied when a GPU
+  # acceleration is active — reserves VRAM headroom so a near-full GPU doesn't
+  # OOM and fall back to (far slower) CPU inference mid-session.
   presets = {
     cpu-fallback = {
       shmSize = "8gb";
@@ -23,57 +28,63 @@ let
       maxLoadedModels = 2;
       keepAlive = "12h";
       maxQueue = 128;
-      memoryPressure = "0.90";
+      contextLength = 4096;
+      gpuOverheadBytes = null;
       description = "CPU-only fallback mode";
     };
-    
+
     default = {
       shmSize = "16gb";
       numParallel = 4;
       maxLoadedModels = 4;
       keepAlive = "24h";
       maxQueue = 512;
-      memoryPressure = "0.85";
+      contextLength = 8192;
+      gpuOverheadBytes = null;
       description = "Default GPU configuration";
     };
-    
+
     high-vram = {
       shmSize = "32gb";
       numParallel = 8;
       maxLoadedModels = 6;
       keepAlive = "48h";
       maxQueue = 1024;
-      memoryPressure = "0.80";
+      contextLength = 16384;
+      gpuOverheadBytes = 1073741824; # 1 GiB
       description = "High VRAM GPU (16GB+)";
     };
-    
+
     rocm-multi = {
       shmSize = "48gb";
       numParallel = 12;
       maxLoadedModels = 8;
       keepAlive = "72h";
       maxQueue = 2048;
-      memoryPressure = "0.75";
+      contextLength = 32768;
+      gpuOverheadBytes = 2147483648; # 2 GiB
       description = "AMD ROCm multi-GPU";
     };
-    
+
     cuda = {
       shmSize = "48gb";
       numParallel = 12;
       maxLoadedModels = 8;
       keepAlive = "72h";
       maxQueue = 2048;
-      memoryPressure = "0.75";
+      contextLength = 32768;
+      gpuOverheadBytes = 2147483648; # 2 GiB
       description = "NVIDIA CUDA configuration";
     };
-    
+
     pewdiepie = {
       shmSize = "64gb";
       numParallel = 16;
       maxLoadedModels = 10;
       keepAlive = "72h";
       maxQueue = 2048;
-      memoryPressure = "0.75";
+      contextLength = 32768;
+      gpuOverheadBytes = 2147483648; # 2 GiB
       description = "Maximum performance (64GB+ RAM, 24GB+ VRAM)";
     };
   };
@@ -93,7 +104,7 @@ let
     else "ollama/ollama:latest";
 
   # Generate docker-compose.yml
-   dockerComposeContent = lib.generators.toYAML {} {
+  dockerComposeContent = lib.generators.toYAML { } {
     version = "3.9";
 
     services.ollama = {
@@ -103,6 +114,12 @@ let
       ipc = "host";
       shm_size = currentPreset.shmSize;
       security_opt = [ "no-new-privileges:true" ];
+    } // lib.optionalAttrs (cfg.containerMemoryLimitGB != null) {
+      # cgroup v2 memory.max / memory.swap.max. No mem_swappiness — that
+      # docker flag needs cgroup v1 and errors under this host's cgroup v2.
+      mem_limit = "${toString cfg.containerMemoryLimitGB}g";
+      memswap_limit = "${toString (cfg.containerMemoryLimitGB + (if cfg.dedicatedSwap.enable then cfg.dedicatedSwap.sizeGB else 0))}g";
+    } // {
 
       devices = lib.optionals (effectiveAcceleration == "rocm") [
         "/dev/kfd:/dev/kfd"
@@ -131,11 +148,13 @@ let
         OLLAMA_SCHED_SPREAD = "1";
         OLLAMA_KV_CACHE_TYPE = "q8_0";
         OLLAMA_MAX_QUEUE = toString currentPreset.maxQueue;
-        OLLAMA_MEMORY_PRESSURE_THRESHOLD = currentPreset.memoryPressure;
+        OLLAMA_CONTEXT_LENGTH = toString currentPreset.contextLength;
       } // lib.optionalAttrs (effectiveAcceleration == "rocm") {
         ROCR_VISIBLE_DEVICES = "1, 0";
       } // lib.optionalAttrs (effectiveAcceleration == "rocm" && cfg.advanced.rocm.gfxVersionOverride != null) {
         HSA_OVERRIDE_GFX_VERSION = cfg.advanced.rocm.gfxVersionOverride;
+      } // lib.optionalAttrs (effectiveAcceleration != null && currentPreset.gpuOverheadBytes != null) {
+        OLLAMA_GPU_OVERHEAD = toString currentPreset.gpuOverheadBytes;
       };
 
       healthcheck = {
@@ -251,16 +270,26 @@ let
         
       info)
         echo -e "''${CYAN}=== AI Stack Configuration ===''${NC}"
-        echo "Preset:        ${cfg.preset}"
-        echo "Description:   ${currentPreset.description}"
-        echo "Acceleration:  ${if effectiveAcceleration != null then effectiveAcceleration else "CPU"}"
-        echo "Bind Address:  ${cfg.network.bindAddress}:11434"
-        echo "Shared Memory: ${currentPreset.shmSize}"
-        echo "Parallelism:   ${toString currentPreset.numParallel}"
-        echo "Max Models:    ${toString currentPreset.maxLoadedModels}"
-        echo "Keep Alive:    ${currentPreset.keepAlive}"
+        echo "Preset:         ${cfg.preset}"
+        echo "Description:    ${currentPreset.description}"
+        echo "Acceleration:   ${if effectiveAcceleration != null then effectiveAcceleration else "CPU"}"
+        echo "Bind Address:   ${cfg.network.bindAddress}:11434"
+        echo "Shared Memory:  ${currentPreset.shmSize}"
+        echo "Parallelism:    ${toString currentPreset.numParallel}"
+        echo "Max Models:     ${toString currentPreset.maxLoadedModels}"
+        echo "Keep Alive:     ${currentPreset.keepAlive}"
+        echo "Context Length:  ${toString currentPreset.contextLength}"
+        ${optionalString (effectiveAcceleration != null && currentPreset.gpuOverheadBytes != null) ''
+        echo "GPU Overhead:   $(( ${toString currentPreset.gpuOverheadBytes} / 1073741824 )) GiB"
+        ''}
         ${optionalString (effectiveAcceleration == "rocm" && cfg.advanced.rocm.gfxVersionOverride != null) ''
-        echo "ROCm GFX:      ${cfg.advanced.rocm.gfxVersionOverride}"
+        echo "ROCm GFX:       ${cfg.advanced.rocm.gfxVersionOverride}"
+        ''}
+        ${optionalString cfg.dedicatedSwap.enable ''
+        echo "Dedicated Swap: ${cfg.dedicatedSwap.path} (${toString cfg.dedicatedSwap.sizeGB} GiB, priority ${toString cfg.dedicatedSwap.priority})"
+        ''}
+        ${optionalString (cfg.containerMemoryLimitGB != null) ''
+        echo "Container Mem:  ${toString cfg.containerMemoryLimitGB} GiB RAM + ${toString (cfg.containerMemoryLimitGB + (if cfg.dedicatedSwap.enable then cfg.dedicatedSwap.sizeGB else 0))} GiB swap cap"
         ''}
         ;;
         
@@ -288,7 +317,8 @@ let
     esac
   '';
 
-in {
+in
+{
   options.services.ollamaAgentic = {
     enable = mkEnableOption "Ollama local AI stack";
 
@@ -327,6 +357,47 @@ in {
       description = "HSA_OVERRIDE_GFX_VERSION for ROCm (e.g., '11.0.2' for RDNA3).";
       example = "11.0.2";
     };
+
+    dedicatedSwap = {
+      enable = mkEnableOption "a swapfile dedicated to AI-stack overflow, separate from the system's generic backup swap";
+
+      path = mkOption {
+        type = types.path;
+        default = "/var/lib/ollama-agentic/swapfile";
+        description = "Location of the dedicated swapfile. Lives on the root filesystem so it's always available (unlike ad hoc data-drive mounts).";
+      };
+
+      sizeGB = mkOption {
+        type = types.int;
+        default = 24;
+        description = "Size of the dedicated swapfile in GiB.";
+      };
+
+      priority = mkOption {
+        type = types.int;
+        default = 50;
+        description = ''
+          swapDevices priority. Should sit between zram (typically 100) and
+          the system's generic backup swap (typically 10) — AI overflow
+          drains here first, before falling through to the shared backup
+          tier used by everything else on the box.
+        '';
+      };
+    };
+
+    containerMemoryLimitGB = mkOption {
+      type = types.nullOr types.int;
+      default = null;
+      description = ''
+        Caps the ollama container via docker `mem_limit`/`memswap_limit`
+        (cgroup v2 memory.max / memory.swap.max). Null (default) leaves the
+        container unlimited, as before. When set, memswap_limit is this value
+        plus dedicatedSwap.sizeGB (0 if dedicatedSwap is disabled) — Linux has
+        no true per-cgroup swap *reservation*, only a cap, so this bounds
+        Ollama's swap usage rather than reserving the dedicated file
+        exclusively for it.
+      '';
+    };
   };
 
   config = mkIf cfg.enable {
@@ -359,6 +430,16 @@ in {
       chown -R ${userName}:users "${paths.base}" "${paths.ollama}"
       chmod 700 "${paths.ollama}"
     '';
+
+    # AI-dedicated overflow tier — separate from the generic backup swap in
+    # configuration.nix. This is a list-type option so it merges with that
+    # one automatically; NixOS's `size`-based auto-creation handles the file
+    # since dedicatedSwap.path lives on the (always-mounted) root ext4 fs.
+    swapDevices = lib.optional cfg.dedicatedSwap.enable {
+      device = cfg.dedicatedSwap.path;
+      size = cfg.dedicatedSwap.sizeGB * 1024;
+      priority = cfg.dedicatedSwap.priority;
+    };
 
     # Firewall for LAN access — explicit opt-in only; a non-loopback bind no
     # longer silently opens the port.

@@ -37,9 +37,7 @@ let
     export DCF_HYPR_TELE_CHANNEL="${cfg.telemetryChannel}"
     export DCF_HYPR_CTL_BIN="${cfg.ctlBin}"
     export DCF_HYPR_PYTHON_MCP="${hydramesh}/python/MCP"
-    # DCF-Text/frame codecs are pure stdlib (see docs/DCF_HYPR_SPEC.md) — no
-    # extra Python packages, same posture as dcf-mesh-agent.
-    exec ${pkgs.python3}/bin/python3 ${./hypr_bridge.py} "$@"
+    exec ${pkgs.python3.withPackages (ps: [ ps.pynacl ])}/bin/python3 ${./hypr_bridge.py} "$@"
   '';
 in
 {
@@ -156,6 +154,26 @@ in
         no-op unless services.avahi is enabled.
       '';
     };
+
+    sshAuth = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Generate a build-unique Ed25519 key pair for HyprController
+        pairing-auth and SSH access. Each build-all.sh run creates a fresh
+        key; the previous one is implicitly revoked when nixos-rebuild
+        overwrites authorized_keys and the SPA peer file. The private key is
+        baked into the APK via BuildConfig; the public key is installed in
+        the configured user's authorized_keys and as a DCF-SPA peer
+        credential for bridge pairing-auth.
+      '';
+    };
+
+    sshAuthUser = mkOption {
+      type = types.str;
+      default = "asher";
+      description = "User whose authorized_keys receives the controller's public key.";
+    };
   };
 
   config = mkIf cfg.enable (mkMerge [
@@ -204,7 +222,7 @@ in
       # actually keeps udpPort dark until a signed knock lands.
       networking.firewall.spaGate = {
         enable = true;
-        package = hydramesh.packages.${pkgs.system}.dcf-spa-authorizer;
+        package = hydramesh.packages.${pkgs.stdenv.hostPlatform.system}.dcf-spa-authorizer;
         meshPort = cfg.udpPort;
         credsDir = cfg.spaCredsDir;
       };
@@ -221,6 +239,20 @@ in
           </service>
         </service-group>
       '';
+    })
+    (mkIf cfg.sshAuth {
+      # SSH authorized key from the build-generated public key.
+      # current-key.pub is overwritten by build-all.sh before each rebuild;
+      # it's a per-build artifact (gitignored), not a sops secret — the
+      # public key isn't secret, and rotation is by rebuild.
+      users.users.${cfg.sshAuthUser}.openssh.authorizedKeys.keys =
+        [ (builtins.readFile ./current-key.pub) ];
+
+      # DCF-SPA peer credential (raw Ed25519 public key, 64 hex chars) for
+      # bridge pairing-auth verification. Same posture as the SPA creds dir —
+      # public key, no sops needed.
+      environment.etc."dcf-spa/peers/0001.pub".source =
+        ./current-key-raw.pub;
     })
   ]);
 }

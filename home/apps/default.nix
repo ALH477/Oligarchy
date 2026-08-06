@@ -18,6 +18,7 @@ in
     ./wlogout.nix # Wlogout power menu
     ./hyprlock.nix # Hyprlock screen lock
     ./control-center.nix # Unified control hub (oligarchy-menu / -control / -ctl)
+    ./desktop-entries.nix # App launcher entries for Wofi
   ];
 
   # ════════════════════════════════════════════════════════════════════════════

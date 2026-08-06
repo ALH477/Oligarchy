@@ -10,7 +10,7 @@ in {
     
     package = mkOption {
       type = types.package;
-      default = (import ../demod-voice/flake.nix).packages.${pkgs.system}.demod-voice;
+      default = (import ../demod-voice/flake.nix).packages.${pkgs.stdenv.hostPlatform.system}.demod-voice;
       description = "The demod-voice package to use";
     };
     

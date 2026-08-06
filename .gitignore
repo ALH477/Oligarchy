@@ -23,6 +23,10 @@ modules/greeting/target/
 modules/mcp-servers/target/
 
 # Android/Gradle build artifacts (modules/hypr-controller/android)
+# HyprController build-generated key artifacts (overwritten each build)
+modules/hypr-controller/current-key.pub
+modules/hypr-controller/current-key-raw.pub
+
 modules/hypr-controller/android/.gradle/
 modules/hypr-controller/android/build/
 modules/hypr-controller/android/app/build/
@@ -30,3 +34,13 @@ modules/hypr-controller/android/local.properties
 modules/hypr-controller/android/gradle/wrapper/gradle-wrapper.jar
 modules/hypr-controller/android/.idea/
 *.iml
+
+# Hermes session artifacts
+.hermes/plans/
+
+# Build artifacts
+HyprController-bundle.zip
+
+# MCP audit logs (runtime state, accidentally created with literal ~ path)
+~/.local/
+audit.log

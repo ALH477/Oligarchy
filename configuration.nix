@@ -128,13 +128,11 @@
         # Framework hardware check: only the genuine Framework 16 board
         # (custom.platform.framework, set per-host in flake.nix) gets told
         # it's based; the Intel/Optimus hosts get the plain branding line.
-        bottomText = if config.custom.platform.framework then "You are based." else "A NixOS distro";
+        bottomText = if config.custom.platform.framework then "Framework 16 · NixOS · Hyprland" else "NixOS · The War Machine";
 
-        # Optional: Your logo (PNG or animated GIF)
-        # Re-enable once the asset is added & git-tracked (assets/modretro.png is
-        # absent from the repo, so referencing it fails pure flake eval).
-        # logoImage = ./assets/modretro.png;
-        # logoScale = 0.5;
+        # Logo overlay (DeMoD logo from assets)
+        logoImage = ./assets/demod-logo.png;
+        logoScale = 0.5;
 
         # Audio source — MIDI gets synthesized, audio files normalized
         # soundFile = ./assets/boot-chime.mid;
@@ -275,10 +273,54 @@
       # ──────────────────────────────────────────────────────────────────────────
       # Memory Configuration
       # ──────────────────────────────────────────────────────────────────────────
-      # swapDevices = [
-      #   { device = "/swapfile";
-      #     size = 32768; }  # 32 GiB — disabled to free disk space
-      # ];
+      # Disk swap, LOW priority — deliberately below zram (100) so it only
+      # engages once the ~11 GiB zram cushion is actually exhausted. This is a
+      # backup for oversized local-LLM loads (a 30-70B model can outrun RAM +
+      # zram combined), not everyday overflow — the RT-audio latency concern
+      # that originally kept disk swap off (see the zram block below) mostly
+      # doesn't apply here: the "studio" persona already turns AI off
+      # (custom.persona.active=studio -> aiEnable=false in modules/personas.nix),
+      # so heavy LLM use and low-latency audio work aren't expected to
+      # coincide. Two devices, both nofail so a missing/unmounted swapfile
+      # never blocks boot:
+      #   1. /swapfile on the root ext4 (nvme1n1, system drive) — plain
+      #      NixOS-managed swapfile; `size` makes NixOS create it on switch.
+      #   2. A swapfile on the btrfs data drive (nvme0n1). btrfs swapfiles
+      #      MUST be nodatacow (the kernel refuses a COW swapfile) — NixOS's
+      #      own `size`-based auto-creation doesn't know that, so it's left
+      #      unmanaged here (no `size`) and instead created idempotently and
+      #      correctly by the activation script below.
+      swapDevices = [
+        {
+          device = "/swapfile";
+          size = 32768; # 32 GiB
+          priority = 10;
+        }
+        {
+          device = "/run/media/asher/a82fcfcf-e913-413e-ab4f-4a3b104b2de0/.swapfile";
+          priority = 10;
+          options = [ "nofail" ];
+        }
+      ];
+
+      # Creates the btrfs data-drive swapfile correctly (nodatacow, no holes)
+      # if it doesn't exist yet. Idempotent — safe to run on every switch.
+      # Skips quietly if the drive isn't mounted at activation time (it's an
+      # ad hoc udisks2 automount, not a NixOS-declared filesystem, so it may
+      # not be present yet at early boot/pre-login switch) — the `nofail`
+      # swapDevices entry above then just doesn't activate that leg, same as
+      # any other missing backup device.
+      system.activationScripts.btrfsSwapfile = ''
+        swapfile=/run/media/asher/a82fcfcf-e913-413e-ab4f-4a3b104b2de0/.swapfile
+        mountpoint=/run/media/asher/a82fcfcf-e913-413e-ab4f-4a3b104b2de0
+        if [ -d "$mountpoint" ] && ${pkgs.util-linux}/bin/mountpoint -q "$mountpoint" && [ ! -e "$swapfile" ]; then
+          ${pkgs.coreutils}/bin/truncate -s 0 "$swapfile"
+          ${pkgs.e2fsprogs}/bin/chattr +C "$swapfile" 2>/dev/null || true
+          ${pkgs.util-linux}/bin/fallocate -l 32G "$swapfile"
+          ${pkgs.coreutils}/bin/chmod 600 "$swapfile"
+          ${pkgs.util-linux}/bin/mkswap "$swapfile"
+        fi
+      '';
       #
       # ── zram: OOM cushion without the disk cost or the RT-audio penalty ──────
       # There was NO swap of any kind on this box (22 GiB RAM, swapDevices empty
@@ -305,6 +347,18 @@
         memoryPercent = 50; # ~11 GiB of compressed swap space on 22 GiB RAM
         priority = 100; # prefer zram over any disk swap added later
       };
+
+      # ── AI-stack dedicated swap + container memory accounting ────────────────
+      # See modules/agentic-local-ai.nix for the module that owns these options.
+      # Swap tier ordering: zram (100) > AI-dedicated (50) > generic backup (10).
+      # The AI-only swapfile lives on root ext4 (always mounted), and the
+      # container mem/swap caps prevent Ollama from eating the entire system.
+      services.ollamaAgentic.dedicatedSwap = {
+        enable = true;
+        sizeGB = 24;
+        priority = 50;
+      };
+      services.ollamaAgentic.containerMemoryLimitGB = 18;
 
       # ── Hibernate support ────────────────────────────────────────────────────
       # upower.criticalPowerAction below is "Hibernate". Without resumeDevice +
@@ -390,7 +444,7 @@
         name = "archibaldos-dsp";
         isolatedCores = [ 0 1 ];
         memoryMB = 2048;
-        hugepages = 2048; # 4GB of 2MB hugepages (2x VM memory for safety)
+        hugepages = 1024; # 2GB of 2MB hugepages (matches VM memory exactly; allocated dynamically, not at boot)
         cpuModel = "host";
 
         archibaldOS = {
@@ -649,9 +703,17 @@
       services.greetd = {
         enable = true;
         settings.default_session = {
-          command = "${pkgs.tuigreet}/bin/tuigreet --time --remember --remember-session --asterisks --greeting 'OLIGARCHY // war machine'";
+          command = "${pkgs.tuigreet}/bin/tuigreet --time --remember --remember-session --asterisks --greeting 'OLIGARCHY // The War Machine'";
           user = "greeter";
+          vt = 1;
         };
+      };
+
+      # Ensure greetd starts after the boot intro clears the framebuffer,
+      # avoiding visual artifacts from mpv's GPU state lingering on tty1.
+      systemd.services.greetd = {
+        after = [ "boot-intro-player.service" ];
+        wants = [ "boot-intro-player.service" ];
       };
 
       programs.hyprland = {
@@ -922,10 +984,11 @@
           percentageLow = 20;
           percentageCritical = 10;
           percentageAction = 5;
-          # No swap is configured on this machine (swapDevices is commented out),
-          # so Hibernate/HybridSleep can't work — power off cleanly at critical
-          # battery instead. Switch back to "Hibernate" only after setting up swap
-          # + boot.resumeDevice (see the hibernate block near swapDevices above).
+          # swapDevices exist now (see the Memory Configuration block above)
+          # but boot.resumeDevice is still unset, so Hibernate/HybridSleep
+          # still can't resume — power off cleanly at critical battery
+          # instead. Switch back to "Hibernate" only after filling in
+          # resumeDevice + resume_offset (see the hibernate block above).
           criticalPowerAction = "PowerOff";
         };
 
@@ -1256,7 +1319,6 @@
 
         vlc
         pandoc
-        zathura
         floorp-bin
         thunderbird
         brave
@@ -1274,12 +1336,14 @@
         brightnessctl
         zip
         unzip
+        xarchiver
         obsidian
 
         gimp
         kdePackages.kdenlive
         inkscape
         blender
+        openscad
         libreoffice
         krita
         synfigstudio

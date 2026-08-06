@@ -15,12 +15,9 @@
     # Hardware support
     nixos-hardware.url = "github:NixOS/nixos-hardware";
 
-    # Framework fan control
-    fw-fanctrl.url = "github:TamtamHero/fw-fanctrl/packaging/nix";
-
     # Custom modules
     demod-ip-blocker.url = "git+https://github.com/ALH477/DeMoD-IP-Blocker.git";
-    minecraft.url = "github:ALH477/NixOS-MineCraft";
+    minecraft.url = "path:./modules/minecraft";
 
     # Secure Boot (opt-in via custom.secureBoot.enable). Tracks the default
     # branch for reliable locking; pin a release tag if you prefer.
@@ -109,7 +106,6 @@
     , nixpkgs-unstable
     , determinate
     , nixos-hardware
-    , fw-fanctrl
     , demod-ip-blocker
     , minecraft
     , greeting
@@ -260,7 +256,6 @@
       # Framework 16 AMD 7040 — the original target, behaviour unchanged.
       nixosConfigurations.nixos = mkHost [
         nixos-hardware.nixosModules.framework-16-7040-amd
-        fw-fanctrl.nixosModules.default
         ./modules/hardware-configuration.nix
         { custom.platform = { gpu = "amd"; cpu = "amd"; framework = true; }; }
       ];
@@ -314,7 +309,6 @@
             # Installer image targets the Framework 16 AMD (status quo). Hardware
             # modules are now per-host, so re-add them explicitly here.
             nixos-hardware.nixosModules.framework-16-7040-amd
-            fw-fanctrl.nixosModules.default
             ./modules/hardware-configuration.nix
             { custom.platform = { gpu = "amd"; cpu = "amd"; framework = true; }; }
 

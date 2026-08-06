@@ -61,6 +61,28 @@ pub fn persist_config(dir: &Path, cfg: &ForgeConfig) -> Result<()> {
         .with_context(|| format!("writing {}/oligarchy-forge.toml", dir.display()))
 }
 
+/// Writes `cfg` as pretty TOML to an exact file path — the TUI extension
+/// picker's write-back target (`./oligarchy-forge.toml` in the project the
+/// user is editing), as opposed to `persist_config`'s fixed-filename
+/// snapshot under a state directory.
+pub fn write_project_toml(path: &Path, cfg: &ForgeConfig) -> Result<()> {
+    let toml_str = cfg.to_toml_string().context("serializing config")?;
+    std::fs::write(path, toml_str).with_context(|| format!("writing {}", path.display()))
+}
+
+/// Loads `path` if it exists; otherwise bootstraps a fresh config named
+/// after `project_name` (just the implicit `base` extension). Lets the
+/// TUI's edit mode open a project directory that has no
+/// `oligarchy-forge.toml` yet.
+pub fn load_or_default_project_toml(path: &Path, project_name: &str) -> Result<ForgeConfig> {
+    if path.exists() {
+        let raw = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        ForgeConfig::parse(&raw)
+    } else {
+        ForgeConfig::parse(&format!("[project]\nname = \"{project_name}\"\n"))
+    }
+}
+
 /// `nix build path:<dir>#default --no-link --print-out-paths`. Returns the
 /// store path of the built `streamLayeredImage` script.
 pub fn nix_build(dir: &Path) -> Result<PathBuf> {
@@ -216,6 +238,28 @@ mod tests {
         assert_eq!(reloaded.project.name, "roundtrip");
         assert!(reloaded.project.extensions.contains(&Extension::Python));
         assert!(reloaded.project.extensions.contains(&Extension::Base));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn load_or_default_project_toml_bootstraps_when_missing() {
+        let dir = std::env::temp_dir().join(format!(
+            "oligarchy-forge-core-test-{}-{}",
+            std::process::id(),
+            "load-or-default"
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("oligarchy-forge.toml");
+
+        let cfg = load_or_default_project_toml(&path, "fresh-project").unwrap();
+        assert_eq!(cfg.project.name, "fresh-project");
+        assert_eq!(cfg.project.extensions, vec![Extension::Base]);
+        assert!(!path.exists(), "load_or_default must not write anything itself");
+
+        write_project_toml(&path, &cfg).unwrap();
+        let reloaded = load_or_default_project_toml(&path, "ignored-when-file-exists").unwrap();
+        assert_eq!(reloaded.project.name, "fresh-project");
 
         std::fs::remove_dir_all(&dir).ok();
     }

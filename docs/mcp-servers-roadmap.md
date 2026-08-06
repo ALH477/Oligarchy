@@ -10,7 +10,7 @@
 
 ## 1. Purpose
 
-Replace the single monolithic `oligarchy-mcp` Python server with **eight
+Replace the single monolithic `oligarchy-mcp` Python server with **nine
 dedicated, read-only Model Context Protocol servers**, one per OS aspect, plus
 a brand-new **port/API security-audit server**. Goals:
 
@@ -30,7 +30,7 @@ a brand-new **port/API security-audit server**. Goals:
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Split granularity | **8 dedicated servers** | maximal separation; one process per scope |
+| Split granularity | **9 dedicated servers** | maximal separation; one process per scope |
 | Capability posture | **Read-only + dry-run** | matches zero-trust model; mutations stay a manual user action |
 | Runtime | **Rust + `rmcp` SDK** | memory-safe, no Python interpreter attack surface, matches repo's Rust sub-flake idiom (greeting, boot-intro, blipply) |
 | Legacy `oligarchy-mcp` | **Keep as umbrella router** | `.mcp.json` and `custom.oligarchyMcp` option unchanged; umbrella spawns aspect binaries |
@@ -64,7 +64,7 @@ modules/mcp-servers/
     └── ports-sec/         # oligarchy-ports-sec-mcp  ← dedicated API/port auditor
 ```
 
-## 4. The 8 dedicated servers
+## 4. The 9 dedicated servers
 
 Each server shells out to the system's **existing** CLIs (no new system CLIs
 are invented) through a **compile-time-checked allowlist** defined in
@@ -89,12 +89,22 @@ Tools: `network_status`, `egress_status`, `egress_test_host`, `dns_resolve`,
 Allowlist: `strict-egress-status`, `strict-egress-test`, `nft list`,
 `resolvectl`, `ip`, `demod-ip-blocker`.
 
-### 4.3 `oligarchy-dcf-mcp` — DeMoD Compute Fabric mesh
-Tools: `dcf_status`, `mesh_peers`, `identity_status` (sops key **presence**
-metadata only, never decrypted), `tray_status`.
+### 4.3 `oligarchy-dcf-mcp` — Oligarchy DCF services
+Tools: `dcf_status` (the community-node container), `mesh_peers`,
+`identity_status` (sops key **presence** metadata only, never decrypted),
+`tray_status`.
 
-Allowlist: `hydramesh-status`, `hydramesh-peers`, `oligarchy-ctl dcf-*`,
-`systemctl status dcf-*`.
+Allowlist: `hydramesh`, `oligarchy-ctl dcf-*`, `systemctl status dcf-*`,
+`docker inspect`.
+
+> **Fixed 2026-07-25.** `dcf_status` and `mesh_peers` used to shell out to
+> `hydramesh-status` / `hydramesh-peers`. Neither was ever on the host: they
+> are `writeShellScriptBin` docker wrappers declared only in the ArchibaldOS
+> *guest* flake (`modules/ArchibaldOS/modules/hydramesh.nix`), whose input is
+> not wired into the top-level flake — and `hydramesh-peers` was never defined
+> anywhere at all. Both tools returned `[error] command unavailable on PATH`
+> on every invocation. The mesh/protocol surface now lives in §4.9; this
+> aspect keeps the Oligarchy-service-level view.
 
 ### 4.4 `oligarchy-dsp-mcp` — real-time audio + DSP coprocessor
 Tools: `dsp_status`, `audio_pipeline_status`, `dsp_vm_status`,
@@ -175,6 +185,44 @@ not TCP — flagged "good no port"), `dcf-tray` DBus-only surface (flagged
 flagged "good, no port") plus the ports each VM forwards (read from
 `modules/vm-manager/config/*`). Versioned in the crate, so additions to the
 project surface are intentional — you update the table when you add an API.
+
+### 4.9 `oligarchy-hydramesh-mcp` — HydraMesh / DCF mesh + modem ← NEW
+
+Where §4.3 covers the *Oligarchy DCF services*, this aspect covers the
+**mesh and protocol stack itself** — the SDK CLIs that HydraMesh installs.
+HydraMesh is a hard requirement of the distro (`modules/hydramesh.nix`,
+`custom.hydramesh.enable` defaults to **true**), so these binaries are always
+on `PATH` on an installed system.
+
+| Tool | Backing command |
+|---|---|
+| `hydramesh_status` | `hydramesh status` |
+| `hydramesh_peers` | `hydramesh list-peers` |
+| `hydramesh_metrics` | `hydramesh metrics` |
+| `hydramesh_version` | `hydramesh version`, falling back to `dcf version` |
+| `dcf_node_status` | `dcf status` (Rust SDK, JSON) |
+| `dcf_node_peers` | `dcf list-peers` (Rust SDK, JSON) |
+| `node_service_status` | `systemctl status docker-dcf-sdk`, falling back to `docker inspect dcf-sdk` |
+| `node_config` | sandboxed read of `/etc/hydramesh/dcf_config.toml` — no exec |
+| `hydramodem_status` | presence probe of the `hydramodem-tools` binaries — executes nothing |
+| `hydramodem_loopback` | `dcf_loopback`, the local DSP self-test; requires `confirm="yes"` |
+
+Allowlist: `hydramesh`, `dcf`, `dcf_loopback`, `systemctl`, `docker`.
+
+The transmit-side HydraModem tools (`frame_tx`, `tx_campaign`, `sense_node`,
+`sstv_send`, …) are deliberately **absent** from the allowlist — they put
+energy on the audio/RF plane and have no place behind a read-only surface. A
+unit test asserts they stay unreachable. `dcf_loopback` is purely local DSP
+and is additionally behind a confirmation argument, mirroring the `[denied]`
+guard in `system::dry_build`.
+
+**Not to be confused with `services.dcf-mesh-agent`**
+(`modules/dcf-mesh-agent.nix`), which wraps HydraMesh's Python
+`matrix-bridge/mesh_mcp.py`. That endpoint binds a UDP socket at import,
+exposes `mesh_send` / `mesh_recv`, and offers a streamable-HTTP transport — it
+is read-write and is **not** part of this surface. It is off by default, kept
+out of `.mcp.json`, and `mcp_self_audit` now fails the build if it appears
+there.
 
 ## 5. Umbrella router (`crates/umbrella/`, replaces Python `oligarchy-mcp`)
 
@@ -460,7 +508,7 @@ land a phase. Format:
 
 ### 2026-07-25 — Living document created
 - Initial design + roadmap captured from the planning conversation.
-- Locked: 8 dedicated Rust servers, read-only + dry-run, umbrella router,
+- Locked: 9 dedicated Rust servers, read-only + dry-run, umbrella router,
   `oligarchy-<aspect>-mcp` naming, per-aspect audit logs, stdio-only
   transport, `ports-sec` is the only socket opener (loopback, gated).
 - Open questions §10 (defaults noted); awaiting maintainer confirmation

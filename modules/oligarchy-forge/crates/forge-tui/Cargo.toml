@@ -3,10 +3,11 @@ name = "forge-tui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Read-only Ratatui dashboard for oligarchy-forge: session list + live nix build log"
+description = "Ratatui dashboard for oligarchy-forge: session list, live nix build log, extension picker"
 
 [dependencies]
 forge-core = { path = "../forge-core" }
-ratatui = "0.29"
-crossterm = "0.28"
+ratatui = "0.30"
+crossterm = "0.29"
+tui-tree-widget = "0.24"
 anyhow = "1"

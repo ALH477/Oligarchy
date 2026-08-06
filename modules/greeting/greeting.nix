@@ -6,7 +6,7 @@ let
   cfg = config.services.oligarchyGreeting;
   
   # Get the package from the flake
-  oligarchy-greeting = flake.packages.${pkgs.system}.default or null;
+  oligarchy-greeting = flake.packages.${pkgs.stdenv.hostPlatform.system}.default or null;
   
   # Generate config file
   configFile = pkgs.writeText "oligarchy-greeting.json" (builtins.toJSON {

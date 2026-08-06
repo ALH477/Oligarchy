@@ -81,7 +81,7 @@ in {
 
     label {
       monitor =
-      text = 󱄅  DeMoD Workstation
+      text = 󱄅  Oligarchy
       font_size = 12
       font_family = JetBrainsMono Nerd Font
       color = rgba(${lib.removePrefix "#" p.textDim}88)

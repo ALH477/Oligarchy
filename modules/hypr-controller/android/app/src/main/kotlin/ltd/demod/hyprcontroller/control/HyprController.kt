@@ -18,6 +18,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import ltd.demod.hyprcontroller.auth.PairingAuth
 import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -168,7 +169,7 @@ class HyprController(
     // ── reliability classes (DCF_HYPR_SPEC.md §L4) ──────────────────────────────────
 
     /** State-changing ops: ACK required, exponential backoff, capped retries. */
-    private suspend fun sendReliable(op: String, args: String, maxTries: Int = 5, baseTimeoutMs: Long = 250): Result<String> {
+    internal suspend fun sendReliable(op: String, args: String, maxTries: Int = 5, baseTimeoutMs: Long = 250): Result<String> {
         val host = peerHost ?: return Result.failure(IllegalStateException("not connected"))
         val id = nextRequestId()
         val line = if (args.isEmpty()) "$id $op" else "$id $op $args"
@@ -187,7 +188,7 @@ class HyprController(
 
     /** Event/latest-wins ops (rapid D-pad taps): fire once, no ACK wait — a dropped tap
      * is corrected by the next one, which matters more for feel than one guaranteed hit. */
-    private fun sendFireAndForget(op: String, args: String) {
+    internal fun sendFireAndForget(op: String, args: String) {
         val host = peerHost ?: return
         val id = nextRequestId()
         sendText(if (args.isEmpty()) "$id $op" else "$id $op $args", controlChannel, host)
@@ -233,6 +234,49 @@ class HyprController(
     suspend fun ctlCats(): Result<String> = sendReliable("ctl", "cats")
     suspend fun ctlItems(category: String): Result<String> = sendReliable("ctl", "items $category")
     suspend fun ctlRun(actionId: String): Result<String> = sendReliable("ctl", "run $actionId")
+
+    // ── keyboard input ───────────────────────────────────────────────────────────────
+    // These ride the existing `hypr` op family — no protocol or bridge changes needed.
+    // Hyprland dispatchers: sendkeystate mod,key,state[,window], sendshortcut mod,key[,window].
+    // Modifier bitmask: Shift=1, Caps=2, Ctrl=4, Alt=8, Super=16.
+    // State: 0=pressed, 1=released, 2=repeat.
+
+    /** Send a raw key state event (down/up/repeat). */
+    suspend fun sendKeyState(mod: Int, key: String, state: Int, window: String = ""): Result<String> {
+        val args = if (window.isNotEmpty()) "sendkeystate $mod,$key,$state,$window" else "sendkeystate $mod,$key,$state"
+        return sendReliable("hypr", args)
+    }
+
+    /** Send a key combo (press+release with modifiers). */
+    suspend fun sendShortcut(mod: Int, key: String, window: String = ""): Result<String> {
+        val args = if (window.isNotEmpty()) "sendshortcut $mod,$key,$window" else "sendshortcut $mod,$key"
+        return sendReliable("hypr", args)
+    }
+
+    /** Type a string via wtype on the host (requires wtype installed). */
+    suspend fun typeText(text: String): Result<String> = sendReliable("hypr", "exec wtype $text")
+
+    /** Press then release a key — convenience for hardware keyboard forwarding. */
+    suspend fun sendKeyTap(mod: Int, key: String) {
+        sendKeyState(mod, key, 0)
+        sendKeyState(0, key, 1)
+    }
+
+    // ── pairing-auth ─────────────────────────────────────────────────────────────
+    // If PairingAuth is enabled (private key embedded at build time), send a
+    // signed hello message to authenticate this controller with the bridge.
+    // Must be called after setPeer() and before any ops; the bridge rejects
+    // unauthenticated ops when pairing auth is configured.
+    //
+    // The hello goes through sendReliable as an "auth" op so we get an ACK.
+    // Bridge response: "<id> ok" on success, "<id> err <reason>" on failure.
+
+    suspend fun sendSignedHello(): Result<String> {
+        if (!PairingAuth.isEnabled) return Result.success("auth disabled")
+        val helloMessage = PairingAuth.signedHello()
+        // signedHello() returns "hello <ts> <sig_hex>" — send as: "<id> auth hello <ts> <sig_hex>"
+        return sendReliable("auth", helloMessage)
+    }
 }
 
 /** Parses the "id|Label" lines oligarchy-ctl's `cats`/`items` emit. */

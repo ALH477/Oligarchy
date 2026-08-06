@@ -20,12 +20,28 @@ SERIAL_LOG="/var/log/qemu-archibaldos-dsp-serial.log"
 MONITOR_SOCK="/run/qemu-archibaldos-dsp.sock"
 ARCHIBALDOS_DIR="${HOME}/ArchibaldOS"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+# Theme (runtime from ~/.config/demod/theme.json — same source as oligarchy/oligarchy-update)
+THEME_JSON="$HOME/.config/demod/theme.json"
+accent="#00F5D4"; fg="#EAEAEA"; bg="#1A1A2E"; purple="#8B5CF6"
+green="#39FF14"; yellow="#FFE814"; red="#FF3B5C"; dim="#808080"
+if [ -r "$THEME_JSON" ] && command -v jq >/dev/null 2>&1; then
+  accent="$(jq -r '.accent // .borderFocus // "#00F5D4"' "$THEME_JSON" 2>/dev/null)"
+  fg="$(jq -r '.text // "#EAEAEA"' "$THEME_JSON" 2>/dev/null)"
+  bg="$(jq -r '.bg // "#1A1A2E"' "$THEME_JSON" 2>/dev/null)"
+  purple="$(jq -r '.purple // "#8B5CF6"' "$THEME_JSON" 2>/dev/null)"
+  green="$(jq -r '.success // "#39FF14"' "$THEME_JSON" 2>/dev/null)"
+  yellow="$(jq -r '.warning // "#FFE814"' "$THEME_JSON" 2>/dev/null)"
+  red="$(jq -r '.error // "#FF3B5C"' "$THEME_JSON" 2>/dev/null)"
+  dim="$(jq -r '.textDim // "#808080"' "$THEME_JSON" 2>/dev/null)"
+fi
+hex_rgb() { printf '%d;%d;%d' "0x${1:1:2}" "0x${1:3:2}" "0x${1:5:2}"; }
+CYAN=$(printf '\033[38;2;%sm' "$(hex_rgb "$accent")")
+VIOLET=$(printf '\033[38;2;%sm' "$(hex_rgb "$purple")")
+GREEN=$(printf '\033[38;2;%sm' "$(hex_rgb "$green")")
+YELLOW=$(printf '\033[38;2;%sm' "$(hex_rgb "$yellow")")
+RED=$(printf '\033[38;2;%sm' "$(hex_rgb "$red")")
+DIM=$(printf '\033[38;2;%sm' "$(hex_rgb "$dim")")
+BOLD=$'\033[1m'; NC=$'\033[0m'
 
 print_status() {
     echo -e "${BLUE}[DSP VM]${NC} $1"
@@ -206,7 +222,7 @@ cmd_rebuild() {
     
     print_status "Copying image to $VM_IMAGE..."
     sudo cp result-dsp-vm/nixos.qcow2 "$VM_IMAGE"
-    sudo chown asher:users "$VM_IMAGE"
+    sudo chown "$(id -un):$(id -gn)" "$VM_IMAGE"
     
     print_success "Image rebuilt successfully"
     echo ""

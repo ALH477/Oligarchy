@@ -25,18 +25,15 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import ltd.demod.hyprcontroller.control.ConnState
 import ltd.demod.hyprcontroller.ui.components.DPad
 import ltd.demod.hyprcontroller.ui.components.SierpinskiMark
 import ltd.demod.hyprcontroller.ui.components.SignalWaveform
-import ltd.demod.hyprcontroller.ui.theme.CrtBackground
 import ltd.demod.hyprcontroller.ui.theme.DeModColors
 import ltd.demod.hyprcontroller.ui.theme.neonGlow
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ControllerScreen(vm: ControllerViewModel = viewModel()) {
+fun ControllerScreen(vm: ControllerViewModel) {
     val connection by vm.connection.collectAsState()
     val activeWorkspace by vm.activeWorkspace.collectAsState()
     val activeWindow by vm.activeWindow.collectAsState()
@@ -53,15 +50,12 @@ fun ControllerScreen(vm: ControllerViewModel = viewModel()) {
 
     LaunchedEffect(Unit) { vm.loadCategories() }
 
-    CrtBackground {
-        Scaffold(containerColor = Color.Transparent) { padding ->
-            Column(
-                modifier = Modifier
-                    .padding(padding)
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 18.dp, vertical = 8.dp),
-            ) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 18.dp, vertical = 8.dp),
+    ) {
                 Header(
                     connected = connection is ConnState.Connected,
                     onManualToggle = { showManualEntry = !showManualEntry },
@@ -207,8 +201,6 @@ fun ControllerScreen(vm: ControllerViewModel = viewModel()) {
                 }
                 Spacer(Modifier.height(28.dp))
             }
-        }
-    }
 }
 
 @Composable

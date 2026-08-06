@@ -40,6 +40,16 @@ import sys
 import threading
 import time
 
+# ── pairing-auth (Ed25519 signed hello) ──────────────────────────────────
+# PyNaCl wraps libsodium (already on NixOS); if unavailable, the bridge
+# runs in open mode — backward compatible with no pairing key configured.
+try:
+    from nacl.signing import VerifyKey
+    from nacl.exceptions import BadSignatureError
+    _HAS_NACL = True
+except ImportError:
+    _HAS_NACL = False
+
 # ── vendor the canonical reference codecs from the pinned hydramesh input ──────────
 _MCP_DIR = os.environ.get("DCF_HYPR_PYTHON_MCP")
 if _MCP_DIR and _MCP_DIR not in sys.path:
@@ -56,6 +66,29 @@ TELE_CHANNEL = text.channel_id(os.environ.get("DCF_HYPR_TELE_CHANNEL", "demod-hy
 CTL_BIN = os.environ.get("DCF_HYPR_CTL_BIN", "oligarchy-ctl")
 
 ACK_OK, ACK_ERR = "ok", "err"
+
+# ── pairing-auth config ───────────────────────────────────────────────────
+# If a raw Ed25519 public key file exists at the DCF-SPA peers path, the
+# bridge requires a signed hello before accepting ops. If the file is absent
+# or PyNaCl is missing, open mode (no auth required) is used.
+PAIRING_PUB_PATH = os.environ.get("DCF_HYPR_PAIRING_PUB", "/etc/dcf-spa/peers/0001.pub")
+PAIRING_VERIFY_KEY: VerifyKey | None = None
+PAIRING_AUTH_ENABLED = False
+
+if _HAS_NACL:
+    try:
+        with open(PAIRING_PUB_PATH, "r") as _f:
+            _pub_hex = _f.read().strip()
+        if _pub_hex:
+            PAIRING_VERIFY_KEY = VerifyKey(bytes.fromhex(_pub_hex))
+            PAIRING_AUTH_ENABLED = True
+            print(f"demod-hypr-bridge: pairing-auth ENABLED (key from {PAIRING_PUB_PATH})", file=sys.stderr)
+    except FileNotFoundError:
+        print("demod-hypr-bridge: pairing-auth disabled (no peer key file)", file=sys.stderr)
+    except Exception as e:
+        print(f"demod-hypr-bridge: pairing-auth disabled (key load error: {e})", file=sys.stderr)
+else:
+    print("demod-hypr-bridge: pairing-auth disabled (PyNaCl not available)", file=sys.stderr)
 
 
 def now_us() -> int:
@@ -120,6 +153,7 @@ class Bridge:
         self.start_time = time.time()
         self._packet_id = 0
         self._lock = threading.Lock()
+        self._authenticated_peers: set[str] = set()  # source IPs that completed hello
 
     def _next_packet_id(self) -> int:
         with self._lock:
@@ -148,6 +182,51 @@ class Bridge:
             return
         req_id, op = parts[0], parts[1]
         rest = parts[2] if len(parts) > 2 else ""
+        # ── pairing-auth hello ──────────────────────────────────────────
+        # Format: "<req_id> auth hello <timestamp_ms> <signature_hex>"
+        # The signature covers the UTF-8 bytes of "hello <timestamp_ms>".
+        # Timestamp must be within 30s of the bridge's clock (replay protection).
+        if op == "auth":
+            hello_parts = rest.split()
+            if len(hello_parts) < 3 or hello_parts[0] != "hello":
+                self._reply(req_id, False, "auth malformed", addr)
+                return
+            if not PAIRING_AUTH_ENABLED:
+                # No key configured — open mode, accept immediately
+                self._authenticated_peers.add(addr[0])
+                self._reply(req_id, True, "auth ok (open mode)", addr)
+                return
+            ts_ms = hello_parts[1]
+            sig_hex_val = hello_parts[2]
+            try:
+                ts = int(ts_ms)
+            except ValueError:
+                self._reply(req_id, False, "auth bad-timestamp", addr)
+                return
+            # Replay protection: timestamp must be within 30 seconds
+            now_ms = int(time.time() * 1000)
+            if abs(now_ms - ts) > 30_000:
+                self._reply(req_id, False, "auth timestamp-expired", addr)
+                return
+            try:
+                sig_bytes = bytes.fromhex(sig_hex_val)
+            except ValueError:
+                self._reply(req_id, False, "auth bad-signature-hex", addr)
+                return
+            message = f"hello {ts_ms}".encode("utf-8")
+            try:
+                assert PAIRING_VERIFY_KEY is not None
+                PAIRING_VERIFY_KEY.verify(message, sig_bytes)
+            except (BadSignatureError, Exception):
+                self._reply(req_id, False, "auth invalid-signature", addr)
+                return
+            self._authenticated_peers.add(addr[0])
+            self._reply(req_id, True, "auth ok", addr)
+            return
+        # ── auth gate ───────────────────────────────────────────────────
+        if PAIRING_AUTH_ENABLED and addr[0] not in self._authenticated_peers:
+            self._send_text(f"{req_id} err auth required", CTRL_CHANNEL, addr)
+            return
         if op == "hypr":
             ok, body = hypr_dispatch(f"dispatch {rest}" if not rest.startswith("j/") else rest)
         elif op == "ctl":

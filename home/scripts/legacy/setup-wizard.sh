@@ -1,3 +1,6 @@
+# LEGACY: This script targets the standalone home-manager workflow and is NOT
+# compatible with the Oligarchy flake. Kept for reference only.
+
 #!/usr/bin/env bash
 # Interactive Setup Wizard for Nix Home Configuration
 

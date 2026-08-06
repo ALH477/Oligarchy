@@ -249,8 +249,8 @@ launch_persona_apps() {
 
 run() {
   case "$1" in
-    theme-menu)     "$HOME/.config/hypr/scripts/theme-switcher.sh" menu ;;
-    theme-next)     "$HOME/.config/hypr/scripts/theme-switcher.sh" ;;
+    theme-menu)     "$HOME/.config/hypr/scripts/theme-switch.sh" gui ;;
+    theme-next)     "$HOME/.config/hypr/scripts/theme-switch.sh" toggle ;;
     anim-toggle)    hypr_toggle animations:enabled ;;
     blur-toggle)    hypr_toggle decoration:blur:enabled ;;
 

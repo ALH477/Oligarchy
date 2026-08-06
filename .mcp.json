@@ -7,6 +7,7 @@
     "oligarchy-ai":        { "command": "oligarchy-mcp", "args": ["ai"]        },
     "oligarchy-secrets":   { "command": "oligarchy-mcp", "args": ["secrets"]   },
     "oligarchy-vm":        { "command": "oligarchy-mcp", "args": ["vm"]        },
-    "oligarchy-ports-sec": { "command": "oligarchy-mcp", "args": ["ports-sec"] }
+    "oligarchy-ports-sec": { "command": "oligarchy-mcp", "args": ["ports-sec"] },
+    "oligarchy-hydramesh": { "command": "oligarchy-mcp", "args": ["hydramesh"] }
   }
 }

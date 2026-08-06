@@ -22,7 +22,7 @@ in {
 # Auto-generated from Nix Home Manager
 # ═══════════════════════════════════════════════════════════════════════════
 
-ThemeDescription="${p.name} - DeMoD Workstation"
+ThemeDescription="${p.name} - Oligarchy"
 TitleBarHeight=28
 
 # Colors

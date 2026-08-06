@@ -1,8 +1,8 @@
-{ config, pkgs, lib, theme ? {}, features ? {}, ... }:
+{ config, pkgs, lib, theme ? { }, features ? { }, ... }:
 
 let
   p = theme;
-  
+
   # Monitor configuration - auto-detect based on hardware
   # To customize: override monitors.laptop or monitors.desktop in your config
   monitors = {
@@ -26,15 +26,17 @@ let
       scale = "1";
     };
   };
-  
+
   # Determine monitor based on hardware features
   # If hasBattery, assume laptop; otherwise desktop
   # Override in your flake if you have a different setup
-  currentMonitor = if features.hasBattery or false 
-    then monitors.laptop 
+  currentMonitor =
+    if features.hasBattery or false
+    then monitors.laptop
     else monitors.desktop;
-  
-in {
+
+in
+{
   wayland.windowManager.hyprland = {
     enable = true;
 
@@ -50,25 +52,25 @@ in {
         # Environment setup - critical for proper session integration
         [ "dbus-update-activation-environment --systemd --all" ]
         [ "systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XDG_CURRENT_DESKTOP" ]
-        
+
         # Core services
         [ "waybar" "hyprpaper" "hypridle" "mako" ]
         [ "${pkgs.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1" ]
-        
+
         # System tray apps
         [ "nm-applet --indicator" "udiskie --automount --notify" ]
         (lib.optional features.hasBluetooth "blueman-applet")
-        
+
         # Clipboard
         [ "wl-paste --type text --watch cliphist store" ]
         [ "wl-paste --type image --watch cliphist store" ]
-        
+
         # Directory setup
         [ "mkdir -p ~/.cache/hypr" "mkdir -p ~/Pictures/Screenshots" "mkdir -p ~/Videos/Recordings" "mkdir -p ~/Videos/Replays" ]
-        
+
         # Initialize theme
         [ "echo '${p.name}' > ~/.cache/hypr/current-palette" ]
-        
+
         # Ensure XWayland has proper cursor
         [ "sleep 1 && hyprctl setcursor idTech4 24" ]
 
@@ -79,6 +81,9 @@ in {
         [ "[workspace special:term silent] kitty --class scratch-term" ]
         [ "[workspace special:notes silent] kitty --class scratch-notes -e nvim ~/Documents/notes.md" ]
         [ "[workspace special:mon silent] kitty --class scratch-mon -e htop" ]
+
+        # First-boot welcome — essential keybinds shown once on fresh login
+        [ "bash -c 'test ! -f ~/.config/oligarchy/welcome-shown && sleep 5 && notify-send -t 15000 \"Welcome to Oligarchy\" \"Super+Return: Terminal\nSuper+D: Control Center\nSuper+Space: App Launcher\nSuper+F1: Keybind Help\nSuper+Escape: Logout\" && mkdir -p ~/.config/oligarchy && touch ~/.config/oligarchy/welcome-shown'" ]
       ];
 
       # Environment variables - comprehensive for all use cases
@@ -92,16 +97,16 @@ in {
         "QT_WAYLAND_DISABLE_WINDOWDECORATION,1"
         "QT_AUTO_SCREEN_SCALE_FACTOR,1"
         "QT_SCALE_FACTOR_ROUNDING_POLICY,RoundPreferFloor"
-        
+
         # GTK Theming
         "GTK_THEME,Adwaita:dark"
         "GDK_BACKEND,wayland,x11,*"
-        
+
         # XDG & Desktop
         "XDG_CURRENT_DESKTOP,Hyprland"
         "XDG_SESSION_TYPE,wayland"
         "XDG_SESSION_DESKTOP,Hyprland"
-        
+
         # Wayland Native
         "CLUTTER_BACKEND,wayland"
         "SDL_VIDEODRIVER,wayland,x11"
@@ -109,27 +114,27 @@ in {
         "MOZ_DBUS_REMOTE,1"
         "ELECTRON_OZONE_PLATFORM_HINT,x11"
         "_JAVA_AWT_WM_NONREPARENTING,1"
-        
+
         # Cursor
         "XCURSOR_SIZE,24"
         "XCURSOR_THEME,idTech4"
         "HYPRCURSOR_SIZE,24"
         "HYPRCURSOR_THEME,idTech4"
-        
+
         # Gaming - VRR & Performance (only when gaming enabled)
         (lib.optional (features.enableGaming or false) "STEAM_FORCE_DESKTOPUI_SCALING,1")
         (lib.optional (features.enableGaming or false) "__GL_GSYNC_ALLOWED,1")
         (lib.optional (features.enableGaming or false) "__GL_VRR_ALLOWED,1")
-        
+
         # AMD Gaming
         (lib.optional (features.enableGaming or false) "AMD_VULKAN_ICD,RADV")
         (lib.optional (features.enableGaming or false) "RADV_PERFTEST,gpl")
-        
+
         # Wine/Proton Gaming
         (lib.optional (features.enableGaming or false) "WINE_FULLSCREEN_FSR,1")
         (lib.optional (features.enableGaming or false) "DXVK_ASYNC,1")
         (lib.optional (features.enableGaming or false) "GAMEMODERUNEXEC,env")
-        
+
         # SSH
         "SSH_AUTH_SOCK,$XDG_RUNTIME_DIR/gcr/ssh"
       ];
@@ -143,7 +148,7 @@ in {
         repeat_rate = 50;
         sensitivity = 0;
         accel_profile = "flat";
-        
+
         touchpad = lib.mkIf (features.hasTouchpad or false) {
           natural_scroll = true;
           "tap-to-click" = true;
@@ -172,7 +177,7 @@ in {
         dim_inactive = true;
         dim_strength = 0.08;
         dim_special = 0.3;
-        
+
         blur = {
           enabled = true;
           size = 8;
@@ -182,7 +187,7 @@ in {
           popups = true;
           special = true;
         };
-        
+
         shadow = {
           enabled = true;
           range = 12;
@@ -225,7 +230,7 @@ in {
         smart_resizing = true;
         special_scale_factor = 0.92;
       };
-      
+
       # Master layout
       master = {
         new_status = "master";
@@ -289,13 +294,13 @@ in {
       # Keybindings - complete set (flattened: lib.optional entries nest lists)
       bind = lib.flatten [
         # Help & Core
-        "$mod, F1, exec, ~/.config/hypr/scripts/keybind-help.sh"
+        "$mod, F1, exec, $terminal -e oligarchy"
         "$mod, Return, exec, $terminal"
         "$mod SHIFT, Return, exec, $terminal --class floating-term"
-        
+
         # App launchers
         "$mod, Space, exec, $menu"
-        "$mod, D, exec, oligarchy-menu"   # unified control center (was a duplicate drun)
+        "$mod, D, exec, oligarchy-menu" # unified control center (was a duplicate drun)
         "$mod, B, exec, $browser"
         "$mod, E, exec, thunar"
         (lib.optional (features.enableDev or false) "$mod, C, exec, code")
@@ -325,13 +330,13 @@ in {
         "$mod, right, movefocus, r"
         "$mod, up, movefocus, u"
         "$mod, down, movefocus, d"
-        
+
         # Move windows
         "$mod SHIFT, H, movewindow, l"
         "$mod SHIFT, L, movewindow, r"
         "$mod SHIFT, K, movewindow, u"
         "$mod SHIFT, J, movewindow, d"
-        
+
         "$mod, U, focusurgentorlast"
 
         # Workspaces
@@ -345,7 +350,7 @@ in {
         "$mod, 8, workspace, 8"
         "$mod, 9, workspace, 9"
         "$mod, 0, workspace, 10"
-        
+
         # Move to workspaces
         "$mod SHIFT, 1, movetoworkspace, 1"
         "$mod SHIFT, 2, movetoworkspace, 2"
@@ -357,7 +362,7 @@ in {
         "$mod SHIFT, 8, movetoworkspace, 8"
         "$mod SHIFT, 9, movetoworkspace, 9"
         "$mod SHIFT, 0, movetoworkspace, 10"
-        
+
         # Workspace overview (hyprexpo). grave was a redundant "workspace previous"
         # — back_and_forth + the e-1/e+1 binds already cover that.
         "$mod, grave, hyprexpo:expo, toggle"
@@ -396,15 +401,15 @@ in {
 
         # Clipboard
         "$mod, V, exec, cliphist list | wofi --dmenu -p 'Clipboard' | cliphist decode | wl-copy"
-        
+
         # Session
         "$mod, Escape, exec, wlogout -p layer-shell"
         "$mod CTRL, L, exec, hyprlock"
         "$mod SHIFT, Escape, exit"
 
         # Theme switching
-        "$mod, F8, exec, ~/.config/hypr/scripts/theme-switcher.sh"
-        "$mod SHIFT, F8, exec, ~/.config/hypr/scripts/theme-switcher.sh menu"
+        "$mod, F8, exec, ~/.config/hypr/scripts/theme-switch.sh toggle"
+        "$mod SHIFT, F8, exec, ~/.config/hypr/scripts/theme-switch.sh gui"
 
         # Resolution cycling
         "$mod, F5, exec, ~/.config/hypr/scripts/resolution-cycle.sh"
@@ -414,13 +419,13 @@ in {
         "$mod, equal, exec, gnome-calculator"
         "$mod, F2, exec, $terminal --class warroom -e oligarchy-warroom"
         "$mod SHIFT, Delete, exec, panic"
-        
+
         # Battery/sleep (laptop only)
         (lib.optional (features.hasBattery or false) "$mod, F12, exec, ~/.config/hypr/scripts/lid.sh toggle")
-        
+
         # DCF (DeMoD Communication Framework) — moved off Super+D (now the control center)
         (lib.optional (features.enableDCF or false) "$mod SHIFT, D, exec, $terminal --title 'DCF Control' -e dcf-control")
-        
+
         # Gaming - Full support
         (lib.optional (features.enableGaming or false) "$mod, F9, exec, ~/.config/hypr/scripts/gamemode.sh toggle")
         (lib.optional (features.enableGaming or false) "$mod SHIFT, F9, exec, mangohud --dlsym")
@@ -438,6 +443,9 @@ in {
         "$mod, A, submap, audio"
         "$mod, period, exec, audio-dev next sink"
         "$mod SHIFT, period, exec, audio-dev next source"
+        # Quick-access system commands
+        "$mod SHIFT, U, exec, oligarchy-update"
+        "$mod CTRL, S, exec, oligarchy-security status"
       ];
 
       # Volume/Brightness (with waybar reload)
@@ -500,29 +508,29 @@ in {
         "float, class:^(steam)$, title:^(.*Steam Guard.*)$"
         "stayfocused, class:^(steam)$, title:^()$"
         "minsize 1 1, class:^(steam)$, title:^()$"
-        
+
         # Gaming - Lutris
         "workspace 9 silent, class:^(lutris)$"
         "float, class:^(lutris)$, title:^(Lutris)$"
-        
+
         # Gaming - GameScope (fullscreen compositor)
         "fullscreen, class:^(gamescope)$"
         "immediate, class:^(gamescope)$"
         "noblur, class:^(gamescope)$"
         "noshadow, class:^(gamescope)$"
-        
+
         # Gaming - Wine/Proton (immediate rendering, no effects)
         "immediate, class:^(steam_app_.*)$"
         "fullscreen, class:^(steam_app_.*)$, title:^(?!.*Settings).*$"
         "noblur, class:^(steam_app_.*)$"
         "noshadow, class:^(steam_app_.*)$"
         "idleinhibit always, class:^(steam_app_.*)$"
-        
+
         # Generic game windows
         "immediate, class:^(.*[Gg]ame.*)$"
         "idleinhibit always, class:^(.*[Gg]ame.*)$"
         "idleinhibit always, fullscreen:1"
-        
+
         # Wine
         "float, class:^(wine)$"
         "float, class:^(.*.exe)$"
@@ -532,7 +540,7 @@ in {
         # XWayland - proper rendering and focus
         "rounding 8, xwayland:1"
         "forcergbx, xwayland:1"
-        
+
         # XWayland apps
         "float, class:^(Gimp.*)$, title:^((?!GNU Image).*)$"
         "float, class:^(feh)$"
@@ -547,7 +555,7 @@ in {
         "idleinhibit fullscreen, class:^(brave-browser|firefox|mpv|vlc)$"
       ];
     };
-    
+
     # Extra configuration
     extraConfig = ''
       workspace = 1, default:true
@@ -617,6 +625,13 @@ in {
   # (30m). Honors idle inhibitors, so the Super+F10 caffeine toggle and
   # fullscreen video pause all of it. (The old config blanked the screen after
   # 60s and had no dim/suspend step.)
+  #
+  # The suspend rung goes through idle-suspend.sh rather than calling
+  # `systemctl suspend` directly. systemd-sleep only freezes `user.slice`, so a
+  # nix build (nix-daemon.service, a system unit, holding no inhibitor lock)
+  # would happily keep running while the EC applied its suspend fan policy —
+  # i.e. a fully loaded CPU with the fans pinned low. The guard polls and only
+  # suspends once the machine is actually idle and cool; on-resume cancels it.
   home.file.".config/hypr/hypridle.conf".text = ''
     general {
       lock_cmd = pidof hyprlock || hyprlock
@@ -643,14 +658,16 @@ in {
     }
     listener {
       timeout = 1800
-      on-timeout = systemctl suspend
+      on-timeout = ~/.config/hypr/scripts/idle-suspend.sh start
+      on-resume = ~/.config/hypr/scripts/idle-suspend.sh cancel
     }
   '';
 
   # Hyprpaper configuration
+  home.file.".config/hypr/wallpapers/default.jpg".source = ../../assets/wallpaper.jpg;
   home.file.".config/hypr/hyprpaper.conf".text = ''
-    preload = ~/.config/hypr/wallpapers/default.png
-    wallpaper = ,~/.config/hypr/wallpapers/default.png
+    preload = ~/.config/hypr/wallpapers/default.jpg
+    wallpaper = ,~/.config/hypr/wallpapers/default.jpg
     splash = false
     ipc = on
   '';

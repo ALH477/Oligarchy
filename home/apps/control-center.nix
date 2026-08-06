@@ -35,4 +35,14 @@
     source = ./control-center/oligarchy-dsp.sh;
     executable = true;
   };
+  # Unified command center TUI — delegates to all other oligarchy-* commands.
+  home.file.".local/bin/oligarchy" = {
+    source = ./control-center/oligarchy.sh;
+    executable = true;
+  };
+  # Guided update TUI — was missing from PATH (existed in source but never installed).
+  home.file.".local/bin/oligarchy-update" = {
+    source = ./control-center/oligarchy-update.sh;
+    executable = true;
+  };
 }

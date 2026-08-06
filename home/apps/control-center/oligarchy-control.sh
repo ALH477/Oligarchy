@@ -7,11 +7,16 @@
 set -uo pipefail
 
 THEME_JSON="$HOME/.config/demod/theme.json"
-accent="#00D4AA"; fg="#EAEAEA"; bg="#1A1A2E"
+accent="#00F5D4"; fg="#EAEAEA"; bg="#1A1A2E"; purple="#8B5CF6"; green="#39FF14"; yellow="#FFE814"; red="#FF3B5C"; dim="#808080"
 if [ -r "$THEME_JSON" ] && command -v jq >/dev/null 2>&1; then
-  accent="$(jq -r '.accent // .borderFocus // "#00D4AA"' "$THEME_JSON" 2>/dev/null)"
+  accent="$(jq -r '.accent // .borderFocus // "#00F5D4"' "$THEME_JSON" 2>/dev/null)"
   fg="$(jq -r '.text // "#EAEAEA"' "$THEME_JSON" 2>/dev/null)"
   bg="$(jq -r '.bg // "#1A1A2E"' "$THEME_JSON" 2>/dev/null)"
+  purple="$(jq -r '.purple // "#8B5CF6"' "$THEME_JSON" 2>/dev/null)"
+  green="$(jq -r '.success // "#39FF14"' "$THEME_JSON" 2>/dev/null)"
+  yellow="$(jq -r '.warning // "#FFE814"' "$THEME_JSON" 2>/dev/null)"
+  red="$(jq -r '.error // "#FF3B5C"' "$THEME_JSON" 2>/dev/null)"
+  dim="$(jq -r '.textDim // "#808080"' "$THEME_JSON" 2>/dev/null)"
 fi
 export FZF_DEFAULT_OPTS="--no-multi --height=85% --layout=reverse --border=rounded --color=fg:$fg,bg:$bg,hl:$accent,fg+:$accent,pointer:$accent,prompt:$accent,header:$accent"
 
