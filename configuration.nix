@@ -407,14 +407,34 @@
       # Gaming
       # ──────────────────────────────────────────────────────────────────────────
       custom.steam.enable = true;
+
+      # Isolate Steam + games from swap (DDR5-only): under memory pressure
+      # games were dipping into the disk swapfile / zram and stalling hard
+      # enough to effectively die. MemorySwapMax=0 on this slice blocks that
+      # cgroup from swapping at all (zram counts as swap here too) — an
+      # allocation that would have spilled to swap instead OOM-kills just
+      # the game, instead of thrashing the whole system into unplayability.
+      #
+      # Launched via a systemd-run wrapper rather than by wrapping
+      # programs.steam.package itself: the steam NixOS module calls
+      # `.override` on cfg.package internally (to inject
+      # extraCompatPackages etc.), which a runCommand/symlinkJoin-wrapped
+      # derivation doesn't have — that breaks eval outright. Keeping
+      # programs.steam.package as a plain steam.override chain (still
+      # overridable) and routing the *launchers* (icewm menu, desktop entry)
+      # through systemd-run instead sidesteps that.
+      systemd.user.slices."steam-noswap".sliceConfig.MemorySwapMax = "0";
+
       programs.steam = lib.mkIf config.custom.steam.enable {
         enable = true;
         extraCompatPackages = [ pkgs.proton-ge-bin ];
-        package = pkgs.steam.override {
+        # Only force dGPU routing when custom.platform.displayGpu = "dgpu"
+        # (the default) — see modules/platform.nix and docs/dgpu-steam-forcing.md.
+        package = lib.mkIf (config.custom.platform.displayGpu == "dgpu") (pkgs.steam.override {
           extraEnv = {
-            DRI_PRIME = "pci-0000_03_00_0"; # Navi 33 dGPU (renderD128)
+            DRI_PRIME = "pci-" + lib.replaceStrings [ ":" "." ] [ "_" "_" ] config.custom.platform.dgpuPciId;
           };
-        };
+        });
       };
       hardware.steam-hardware.enable = lib.mkIf config.custom.steam.enable true;
       # gamemode is owned by the active persona (on for the "gaming" persona).
@@ -645,7 +665,41 @@
         RestartOnFailure=1
       '';
 
-      environment.etc."icewm/menu".text = ''
+      environment.etc."icewm/menu".text =
+        let
+          # See the "Gaming" section below for the steam-noswap.slice (swap
+          # isolation) and the hardening property list (blast-radius
+          # containment). Plain `systemd-run --user` (no --scope): a scope
+          # just attaches an already-running process to a cgroup and can
+          # only carry resource-control properties — systemd never forks/
+          # execs it, so it can't apply the namespace/seccomp-backed
+          # Protect*/NoNewPrivileges directives. A transient service does.
+          # Blast-radius containment for a compromised game process. Deliberately
+          # excludes RestrictNamespaces/SystemCallFilter (Steam's own Proton
+          # sandbox, pressure-vessel, needs unshare/mount/pivot_root to build its
+          # per-game container — blocking those breaks every Proton game),
+          # MemoryDenyWriteExecute (breaks Wine's JIT and Unity/Mono), and
+          # RestrictRealtime (GameMode may grant RT scheduling for frame pacing).
+          steamHardeningProps = [
+            "NoNewPrivileges=yes"
+            "RestrictSUIDSGID=yes"
+            "ProtectHostname=yes"
+            "ProtectClock=yes"
+            "ProtectKernelTunables=yes"
+            "ProtectKernelLogs=yes"
+            "ProtectKernelModules=yes"
+            "ProtectControlGroups=yes"
+            "ProtectHome=yes"
+            "LockPersonality=yes"
+          ];
+          steamNoSwapLauncher = pkgs.writeShellScript "steam-noswap" ''
+            exec ${pkgs.systemd}/bin/systemd-run --user --collect --slice=steam-noswap.slice \
+              --description=steam-hardened \
+              ${lib.concatMapStringsSep " " (p: "-p ${p}") steamHardeningProps} \
+              -- /run/current-system/sw/bin/steam "$@"
+          '';
+        in
+        ''
         # IceWM Menu Configuration
         # Basic applications menu for backup system
 
@@ -692,7 +746,7 @@
 
         separator
         menu Games {
-          prog "Steam" steam "/run/current-system/sw/bin/steam"
+          prog "Steam" steam "${steamNoSwapLauncher}"
           prog "Doom 3" dhewm3 "/run/current-system/sw/bin/dhewm3"
         }
       '';
@@ -711,9 +765,19 @@
 
       # Ensure greetd starts after the boot intro clears the framebuffer,
       # avoiding visual artifacts from mpv's GPU state lingering on tty1.
+      #
+      # restartIfChanged = false: greetd's ExecStart embeds ${pkgs.tuigreet}
+      # and the global PATH, both of which change on nearly every rebuild.
+      # nixos-rebuild switch restarts any changed unit by default, and
+      # restarting greetd.service kills the live Hyprland session it spawned
+      # (it's not a separately-managed logind session) — that's the crash
+      # that was forcing a hard reboot after every switch. The new unit
+      # definition still takes effect on the next login/boot; it just isn't
+      # force-applied to an already-running session.
       systemd.services.greetd = {
         after = [ "boot-intro-player.service" ];
         wants = [ "boot-intro-player.service" ];
+        restartIfChanged = false;
       };
 
       programs.hyprland = {
@@ -834,18 +898,24 @@
         auditd = false;
       };
 
-      # Strict egress filtering (modules/security/strict-egress.nix) — DRY-RUN:
-      # logs STRICT-EGRESS-WOULDBLOCK without dropping. Soak for a few days,
-      # add missing domains from the journal, then set dryRun = false.
+      # Strict egress filtering (modules/security/strict-egress.nix) —
+      # ENFORCING as of the 2026-08-09 audit soak. failOpen stays true (see
+      # recovery.failOpen) so a broken allowlist can't brick nixos-rebuild.
       networking.firewall.strictEgress = {
         enable = true;
         preset = "developer";
-        recovery.dryRun = true;
+        recovery.dryRun = false;
         allow = {
           domains = [
             # Tailscale coordination + DERP relays (extend from soak logs)
             "controlplane.tailscale.com"
             "login.tailscale.com"
+            # ollama (model pulls) + blipply-assistant (model downloads)
+            "ollama.com"
+            "registry.ollama.ai"
+            "huggingface.co"
+            # dcf-node-binary
+            "api.demod.ltd"
           ];
           # WireGuard direct connections between tailscale peers
           ports = [{ port = 41641; proto = "udp"; }];

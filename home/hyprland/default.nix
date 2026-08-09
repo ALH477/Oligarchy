@@ -1,7 +1,27 @@
-{ config, pkgs, lib, theme ? { }, features ? { }, ... }:
+{ config, pkgs, lib, theme ? { }, features ? { }, osConfig ? { }, ... }:
 
 let
   p = theme;
+
+  # ── GPU targeting (dGPU-priority by default, see custom.platform.displayGpu) ──
+  # Client-app device selection ONLY (Mesa/Vulkan DRI_PRIME) — never touch
+  # Aquamarine's own backend/KMS device. The dGPU has no display engine path
+  # of its own (see docs/dgpu-steam-forcing.md); telling Hyprland's backend
+  # to open it as primary is a fatal, unrecoverable abort with no fallback,
+  # not a graceful degrade (confirmed via coredump: CCompositor::initServer
+  # -> throwError -> SIGABRT). The compositor stays on whatever Mesa/KMS
+  # picks by default (the iGPU); only client processes get steered.
+  platform = osConfig.custom.platform or { };
+  gpuEnv =
+    let
+      pciUnderscore = id: "pci-" + lib.replaceStrings [ ":" "." ] [ "_" "_" ] id;
+      dgpu = platform.dgpuPciId or "0000:03:00.0";
+      igpu = platform.igpuPciId or "0000:c5:00.0";
+      primary = if (platform.displayGpu or "dgpu") == "dgpu" then dgpu else igpu;
+    in
+    lib.optionals ((platform.gpu or "amd") == "amd") [
+      "DRI_PRIME,${pciUnderscore primary}"
+    ];
 
   # Monitor configuration - auto-detect based on hardware
   # To customize: override monitors.laptop or monitors.desktop in your config
@@ -137,6 +157,9 @@ in
 
         # SSH
         "SSH_AUTH_SOCK,$XDG_RUNTIME_DIR/gcr/ssh"
+
+        # GPU targeting — see custom.platform.displayGpu
+        gpuEnv
       ];
 
       # Input configuration

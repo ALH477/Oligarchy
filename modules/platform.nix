@@ -29,6 +29,40 @@ in
       description = "CPU vendor (selects pstate/thermal policy).";
     };
 
+    displayGpu = mkOption {
+      type = types.enum [ "dgpu" "igpu" ];
+      default = "dgpu";
+      description = ''
+        Which AMD GPU client apps (games, Steam, anything launched from
+        Hyprland) render on, on hosts with both an iGPU and a dGPU, via
+        Mesa's DRI_PRIME device-select. "dgpu" (default) prioritizes the
+        discrete GPU; "igpu" pins client rendering to the integrated GPU
+        for battery/thermal efficiency. Only applied when
+        custom.platform.gpu == "amd".
+
+        This does NOT affect Hyprland/Aquamarine's own backend device — the
+        compositor always uses whatever Mesa/KMS picks by default (the
+        iGPU). Do not try to steer Aquamarine's own device (e.g. via
+        AQ_DRM_DEVICES) to the dGPU: it has no display engine path of its
+        own (see docs/dgpu-steam-forcing.md), and telling the compositor's
+        backend to open it as primary is a fatal, unrecoverable crash
+        (CCompositor::initServer -> throwError -> SIGABRT) with no
+        fallback — this took the whole session and greetd down when tried.
+      '';
+    };
+
+    dgpuPciId = mkOption {
+      type = types.str;
+      default = "0000:03:00.0"; # Navi 33 / RX 7700S dGPU expansion module
+      description = "PCI bus id of the discrete AMD GPU (from `lspci`).";
+    };
+
+    igpuPciId = mkOption {
+      type = types.str;
+      default = "0000:c5:00.0"; # Phoenix1 780M, drives eDP
+      description = "PCI bus id of the integrated AMD GPU (from `lspci`).";
+    };
+
     framework = mkOption {
       type = types.bool;
       default = true;

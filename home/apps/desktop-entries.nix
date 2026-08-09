@@ -1,4 +1,27 @@
-{ pkgs, ... }:
+{ pkgs, lib, ... }:
+
+let
+  # Kept in sync with configuration.nix's icewm-menu launcher — see that
+  # comment block for why RestrictNamespaces/SystemCallFilter/
+  # MemoryDenyWriteExecute/RestrictRealtime are deliberately excluded
+  # (they break Proton's pressure-vessel sandbox, Wine/Mono JIT, or
+  # GameMode's realtime scheduling respectively).
+  steamHardeningProps = [
+    "NoNewPrivileges=yes"
+    "RestrictSUIDSGID=yes"
+    "ProtectHostname=yes"
+    "ProtectClock=yes"
+    "ProtectKernelTunables=yes"
+    "ProtectKernelLogs=yes"
+    "ProtectKernelModules=yes"
+    "ProtectControlGroups=yes"
+    "ProtectHome=yes"
+    "LockPersonality=yes"
+  ];
+  steamExec = "${pkgs.systemd}/bin/systemd-run --user --collect --slice=steam-noswap.slice --description=steam-hardened "
+    + lib.concatMapStringsSep " " (p: "-p ${p}") steamHardeningProps
+    + " -- /run/current-system/sw/bin/steam %U";
+in
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Oligarchy Desktop Entries
@@ -38,6 +61,22 @@
     Exec=${pkgs.kitty}/bin/kitty --class warroom -e oligarchy-warroom
     Categories=System;Monitor;
     Terminal=false
+  '';
+
+  # Overrides the system steam.desktop (same desktop-id, user data dir takes
+  # XDG precedence) so launchers going through the desktop entry (wofi,
+  # oligarchy-menu) also land in steam-noswap.slice — see configuration.nix
+  # "Gaming" section for why. The IceWM menu's hardcoded launch path is
+  # fixed separately there, since it bypasses desktop entries entirely.
+  home.file.".local/share/applications/steam.desktop".text = ''
+    [Desktop Entry]
+    Name=Steam
+    Icon=steam
+    Exec=${steamExec}
+    Terminal=false
+    Type=Application
+    Categories=Network;FileTransfer;Game;
+    MimeType=x-scheme-handler/steam;
   '';
 
   home.file.".local/share/applications/dsp-status.desktop".text = ''
