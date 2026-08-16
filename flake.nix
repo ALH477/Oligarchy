@@ -76,6 +76,11 @@
     # docs/oligarchy-forge-roadmap.md for the full design + living roadmap.
     oligarchy-forge.url = "path:./modules/oligarchy-forge";
 
+    # DCF-Talk — decentralized voice + text over the 17-byte DeModFrame.
+    # Off by default (services.demod-talk.enable); see modules/demod-talk/README.md.
+    # Plaintext by design, so the module REQUIRES a WireGuard interface.
+    demod-talk.url = "path:./modules/demod-talk";
+
     # DeMoD Voice - Local TTS and Voice Cloning
     demod-voice.url = "path:./modules/demod-voice";
 
@@ -107,6 +112,7 @@
     , determinate
     , nixos-hardware
     , demod-ip-blocker
+    , demod-talk
     , minecraft
     , greeting
     , boot-intro
@@ -148,6 +154,7 @@
         # Uncomment when archibaldos is available:
         # inherit archibaldos;
         inherit vm-manager dsp-ctl oligarchy-forge mcp-servers hydramesh;
+        inherit demod-talk;
       };
 
       # ════════════════════════════════════════════════════════════════════════
@@ -166,6 +173,7 @@
         determinate.nixosModules.default
         sops-nix.nixosModules.sops
         demod-ip-blocker.nixosModules.default
+        demod-talk.nixosModules.demod-talk
 
         # Hardware platform abstraction (custom.platform.{gpu,cpu,framework,...}).
         # Per-host modules set the gpu/cpu; default is the Framework 16 AMD config.
