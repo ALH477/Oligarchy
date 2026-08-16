@@ -312,7 +312,13 @@ let
 
       clear
       tput civis
-      trap 'tput cnorm; rm -f "$SOCK"' EXIT
+      # Reset terminal and framebuffer state for clean greetd handoff, in the
+      # EXIT trap (not plain sequential code) so it still runs if the unit is
+      # killed via TimeoutStartSec or an external stop — mpv --vo=gpu holds
+      # DRM master, and on exit the primary plane may still show the last
+      # video frame; force a blank+unblank cycle to repaint regardless of how
+      # mpv/the script exited.
+      trap 'tput cnorm; rm -f "$SOCK"; clear; printf "\033[2J\033[H\033[?25h" > /dev/tty1; ${pkgs.kbd}/bin/setterm --blank force > /dev/tty1 2>/dev/null || true; ${pkgs.kbd}/bin/setterm --blank poke > /dev/tty1 2>/dev/null || true' EXIT
 
       ${optionalString (cfg.startupDelay > 0) "sleep ${toString cfg.startupDelay}"}
 
@@ -353,13 +359,6 @@ let
       ''}
 
       "''${MPV_CMD[@]}" || true
-      clear
-      # Reset terminal and framebuffer state for clean greetd handoff.
-      # mpv --vo=gpu holds DRM master; on exit the primary plane may still
-      # show the last video frame. Force a blank+unblank cycle to repaint.
-      printf '\033[2J\033[H\033[?25h' > /dev/tty1
-      ${pkgs.kbd}/bin/setterm --blank force > /dev/tty1 2>/dev/null || true
-      ${pkgs.kbd}/bin/setterm --blank poke > /dev/tty1 2>/dev/null || true
     '';
   };
 
@@ -553,9 +552,12 @@ in {
     systemd.services.boot-intro-player = {
       description = "DeMoD Boot Intro${optionalString (!cfg.performanceMode) " [Compatibility Mode]"}";
 
+      # No plymouth-quit-wait.service dependency here: boot.plymouth is never
+      # enabled in this repo, so that unit doesn't exist and the ordering
+      # would be inert.
       after = if cfg.startEarly
-              then [ "systemd-udevd.service" "plymouth-quit-wait.service" ]
-              else [ "systemd-user-sessions.service" "plymouth-quit-wait.service" "sound.target" ];
+              then [ "systemd-udevd.service" ]
+              else [ "systemd-user-sessions.service" "sound.target" ];
       wants = if cfg.startEarly then [ ] else [ "sound.target" ];
       before = [ "display-manager.service" ];
       wantedBy = [ "multi-user.target" ];

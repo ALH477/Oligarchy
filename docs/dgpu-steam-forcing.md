@@ -74,6 +74,12 @@ succeed at. The compositor's own backend has to stay on the iGPU regardless
 of `displayGpu`; only client-app rendering (`DRI_PRIME`, above) can be
 routed to the dGPU. Don't re-attempt this.
 
+This is now also enforced by a Home Manager assertion in
+`home/hyprland/default.nix` (checked at build time against
+`wayland.windowManager.hyprland.settings.env`), not comments alone — a
+regression that re-adds `AQ_DRM_DEVICES`/`WLR_DRM_DEVICES` will fail the
+build instead of only failing at runtime.
+
 ### Why `pci-0000_03_00_0`
 
 The explicit-PCI form (`pci-` + bus address with underscores) is unambiguous

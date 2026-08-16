@@ -327,6 +327,7 @@
             framework = true;
             frameworkModel = "13";
             hasDgpu = false;
+            displayGpu = "igpu"; # no dGPU on this chassis — see hasDgpu assertion in modules/platform.nix
           };
         }
       ];

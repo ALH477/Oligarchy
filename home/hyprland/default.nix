@@ -22,7 +22,7 @@ let
     # Skip DRI_PRIME entirely on iGPU-only hosts (e.g. Framework 13) — there's
     # no second GPU to route to, and pointing it at a nonexistent PCI device
     # is worse than doing nothing.
-    lib.optionals ((platform.gpu or "amd") == "amd" && (platform.hasDgpu or true)) [
+    lib.optionals ((platform.gpu or "amd") == "amd" && (platform.hasDgpu or false)) [
       "DRI_PRIME,${pciUnderscore primary}"
     ];
 
@@ -63,6 +63,18 @@ in
   wayland.windowManager.hyprland = {
     enable = true;
 
+    # Explicit pin of the HM default: this is what generates
+    # hyprland-session.target (BindsTo=graphical-session.target) and a
+    # synchronized `dbus-update-activation-environment && systemctl --user
+    # stop/start hyprland-session.target` exec-once line, run before anything
+    # ordered After=hyprland-session.target. That target is the anchor the
+    # supervised services below (waybar, hyprpaper, hypridle, mako, polkit
+    # agent) are bound to, replacing the old unordered manual env-import lines.
+    systemd = {
+      enable = true;
+      variables = [ "--all" ];
+    };
+
     # Workspace overview plugin — bound to Super+grave; configured in extraConfig.
     plugins = [ pkgs.hyprlandPlugins.hyprexpo ];
 
@@ -72,14 +84,6 @@ in
 
       # Startup applications - optimized, no gnome-keyring
       exec-once = lib.flatten [
-        # Environment setup - critical for proper session integration
-        [ "dbus-update-activation-environment --systemd --all" ]
-        [ "systemctl --user import-environment DISPLAY WAYLAND_DISPLAY XDG_CURRENT_DESKTOP" ]
-
-        # Core services
-        [ "waybar" "hyprpaper" "hypridle" "mako" ]
-        [ "${pkgs.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1" ]
-
         # System tray apps
         [ "nm-applet --indicator" "udiskie --automount --notify" ]
         (lib.optional features.hasBluetooth "blueman-applet")
@@ -643,6 +647,60 @@ in
       bindl = , switch:off:Lid Switch, exec, ~/.config/hypr/scripts/lid.sh open
     '';
   };
+
+  # Guards against regressing the documented dGPU-backend-SIGABRT hazard
+  # (see the gpuEnv comment above and docs/dgpu-steam-forcing.md): turns the
+  # comment-only warning into a build-time check.
+  assertions = [{
+    assertion = !(lib.any
+      (v: lib.hasPrefix "AQ_DRM_DEVICES," v || lib.hasPrefix "WLR_DRM_DEVICES," v)
+      (lib.flatten (config.wayland.windowManager.hyprland.settings.env or [])));
+    message = "Do not set AQ_DRM_DEVICES/WLR_DRM_DEVICES toward the dGPU — it has no display path and fatally SIGABRTs Hyprland (see docs/dgpu-steam-forcing.md).";
+  }];
+
+  # Session daemon supervision — bound to hyprland-session.target (see the
+  # `systemd` block above). Previously these were unsupervised exec-once
+  # commands: if any one failed a transient startup race, Hyprland reported
+  # "running" but the session was visibly broken (no bar/wallpaper/idle-lock/
+  # notifications/polkit prompts) with nothing to retry it. Restart=on-failure
+  # + PartOf/After=hyprland-session.target fixes both the recovery and the
+  # lifecycle (they die cleanly when Hyprland exits instead of lingering).
+  systemd.user.services =
+    let
+      mkSessionService = { description, execStart }: {
+        Unit = {
+          inherit description;
+          After = [ "hyprland-session.target" ];
+          PartOf = [ "hyprland-session.target" ];
+          StartLimitIntervalSec = 60;
+          StartLimitBurst = 5;
+        };
+        Service = {
+          ExecStart = execStart;
+          Restart = "on-failure";
+          RestartSec = 2;
+        };
+        Install.WantedBy = [ "hyprland-session.target" ];
+      };
+    in
+    {
+      hyprpaper = mkSessionService {
+        description = "Hyprland wallpaper daemon";
+        execStart = "${pkgs.hyprpaper}/bin/hyprpaper";
+      };
+      hypridle = mkSessionService {
+        description = "Hyprland idle daemon (dim/lock/suspend ladder)";
+        execStart = "${pkgs.hypridle}/bin/hypridle";
+      };
+      mako = mkSessionService {
+        description = "Mako notification daemon";
+        execStart = "${config.services.mako.package}/bin/mako";
+      };
+      polkit-gnome-authentication-agent-1 = mkSessionService {
+        description = "polkit-gnome authentication agent";
+        execStart = "${pkgs.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1";
+      };
+    };
 
   # Wallpaper directory is created by the .keep file in home.nix; a bare
   # home.file with only `recursive` and no source is invalid.

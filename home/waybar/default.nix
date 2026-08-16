@@ -31,8 +31,14 @@ let
 in {
   programs.waybar = {
     enable = true;
-    systemd.enable = false;
-    
+    # Supervised by Home Manager's own waybar-module unit — gets
+    # ConditionEnvironment=WAYLAND_DISPLAY and config/style hot-reload for
+    # free, and restarts on crash instead of leaving the bar silently absent.
+    systemd = {
+      enable = true;
+      target = "hyprland-session.target";
+    };
+
     settings.mainBar = {
       # Layout
       layer = "top";

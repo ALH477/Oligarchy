@@ -125,6 +125,16 @@ in
             Find them with: lspci | grep -E 'VGA|3D|Display'  (convert "01:00.0" -> "PCI:1:0:0").
           '';
         }
+        {
+          # displayGpu/hasDgpu only matter on the AMD dual-GPU path — both
+          # consumers (home/hyprland's gpuEnv, the Steam package override)
+          # gate their DRI_PRIME routing on gpu == "amd" already.
+          assertion = cfg.gpu != "amd" || cfg.displayGpu != "dgpu" || cfg.hasDgpu;
+          message = ''
+            custom.platform.displayGpu = "dgpu" requires custom.platform.hasDgpu = true
+            (this host has no discrete GPU configured).
+          '';
+        }
       ];
     }
 

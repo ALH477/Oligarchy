@@ -140,13 +140,39 @@ input.
 
 | Sub-flake | What it builds | NixOS module it exposes |
 |---|---|---|
-| `modules/greeting/` | Rust login greeter (Kitty graphics TUI) | `nixosModules.greeting` |
-| `modules/boot-intro/` | Rust boot-intro suite (FFmpeg-rendered CRT cinematic, 9 themes) | `boot-intro`/`-tui`/`-api` |
+| `modules/greeting/` | Rust login-*shell* MOTD (Kitty graphics TUI), run via `programs.bash.loginShellInit` — not the greetd/login-prompt greeter (that's `tuigreet`, wired directly in `configuration.nix`). Disabled by default: `services.oligarchyGreeting.enable` is never set to `true`. | `nixosModules.greeting` |
+| `modules/boot-intro/` | Rust boot-intro suite (FFmpeg-rendered CRT cinematic, 9 themes) | `boot-intro`/`default` (no `-tui`/`-api` variants exist) |
 | `modules/blipply-assistant/` | Rust voice assistant (STT/TTS/VAD, UI, ollama integration) | its own `nixosModule` |
 | `modules/demod-voice/` | local TTS / voice cloning (Coqui XTTS-v2, Piper) | `nixos-module.nix` |
 | `modules/dsp-ctl/` | Rust TUI/CLI for the ArchibaldOS DSP VM | its own `nixosModule` |
 | `modules/mcp-servers/` | 11-crate Rust workspace: 9 dedicated read-only aspect MCP servers + umbrella `oligarchy-mcp` + ports-sec auditor | `nixosModules.default` |
 | `modules/ArchibaldOS/` | the RT DSP guest OS, its own flake under `modules/ArchibaldOS/modules/` | its own modules |
+
+### 5a. Boot → login ordering
+
+```
+sysinit.target
+  └─ framework-based-banner.service      (Framework hardware only; before= the next two)
+multi-user.target
+  └─ boot-intro-player.service           (mpv --vo=gpu on /dev/tty1, before= display-manager.service)
+graphical.target
+  └─ display-manager.service (= greetd)  (after/wants= boot-intro-player.service, restartIfChanged = false)
+       └─ tuigreet → Hyprland session
+```
+
+`mpv --vo=gpu` holds DRM master while playing the boot-intro video; on exit
+the primary plane can still show the last frame. The blank/unblank repaint
+(`clear`/`printf`/`setterm --blank force|poke`) that fixes this lives in
+`boot-intro-player`'s `EXIT` trap so it still runs if the unit is killed via
+`TimeoutStartSec` or an external stop, not just on the natural-exit path.
+`services.greetd.useTextGreeter = true` (since `tuigreet` is a TUI greeter)
+makes nixpkgs's own `greetd.nix` module apply `TTYPath`/`TTYReset`/
+`TTYVHangup`/`TTYVTDisallocate` to greetd's unit, so the VT greetd claims is
+independently guaranteed clean regardless of what boot-intro left behind.
+`restartIfChanged = false` on `greetd.service` is a separate, older fix:
+without it, `nixos-rebuild switch` restarts greetd on nearly every rebuild
+(its `ExecStart` embeds the store path + `$PATH`, which change every
+generation), which kills the live Hyprland session it spawned.
 
 ## 6. `vm-manager/` — VMs
 

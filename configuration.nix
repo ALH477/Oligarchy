@@ -764,10 +764,14 @@
       # programs.hyprland.enable, so --remember-session selects Hyprland.
       services.greetd = {
         enable = true;
+        # tuigreet is a TUI greeter; without this, greetd's unit gets none of
+        # TTYPath/TTYReset/TTYVHangup/TTYVTDisallocate, so nothing on the
+        # greetd side guarantees a clean VT regardless of what boot-intro left
+        # behind on tty1. useTextGreeter wires all of that in for free.
+        useTextGreeter = true;
         settings.default_session = {
           command = "${pkgs.tuigreet}/bin/tuigreet --time --remember --remember-session --asterisks --greeting 'OLIGARCHY // The War Machine'";
           user = "greeter";
-          vt = 1;
         };
       };
 
