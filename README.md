@@ -217,8 +217,10 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 - **Modular Package Management**: Nix declarative control — Steam, Lutris, Snap, NVIDIA optional.
 - **Desktop Arsenal**: Hyprland primary (blazing Wayland), Plasma 6 optional, Cinnamon/X11 fallback.
 - **Streamlined Installation**: Calamares conquers encrypted setup, user creation, and full stack deployment.
-- **Customization Scripts**: Resolution cycling, theme switching, web apps, DCF control, keybinding cheatsheets — all via Wofi or hotkeys.
+- **Customization Scripts**: Resolution cycling, *live* theme switching (8 palettes, re-skins waybar/wofi/hyprlock/GTK/Kvantum/kitty in place — no rebuild), web apps, DCF control, keybinding cheatsheets — all via Wofi or hotkeys.
+- **Unified Command Palette**: `Super+D` opens the control center — flat fuzzy-search across every action, or browse by category (appearance, AI, DSP, DCF, network, security, power, persona, rig, system). Same registry backs the fzf terminal front-end and the phone-bridge passthrough.
 - **Snap Support**: Optional, expands arsenal without breaking reproducibility.
+- **Sandboxed Coding-Agent Runner** (`oligarchy-forge`): declarative `oligarchy-forge.toml` → generated flake → rootless Podman/Docker sandbox. Pick your toolchain (Rust/Python/Node/Go/Faust-JACK) and your agent — Claude Code, OpenCode, Ollama, Codex, Aider, Cursor, or Oh My Pi — and it's on `PATH` inside the box, never on the host.
 - **DCF Compute Fabric**: Real-time multiplayer/edge fabric with community node, identity/billing, tray controller, and hardened containers.
 - **Virtual Camera**: `v4l2loopback` for streaming domination.
 - **Rust Greeting System**: Kitty graphics protocol for displaying brand images directly in terminal, adaptive layout based on terminal size, system info display, and interactive TUI launcher.
