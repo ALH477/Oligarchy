@@ -192,13 +192,30 @@ builds a feature/profile set (`defaultFeatures`, `profiles/`) that gates
 desktop pieces, and a theme/palette system in `home/themes/` (the
 `p` / `activeTheme` shorthand seen throughout).
 
+8 palettes live in `home/themes/default.nix` as the single source of
+truth; `home/apps/theme-variants.nix` renders every palette (not just the
+active one) to `~/.config/oligarchy/themes/<id>/` — a JSON palette dump
+plus each themed app's own pre-rendered config variant (waybar CSS, wofi
+CSS, hyprlock conf, GTK3/4 CSS, a Kvantum theme directory per palette,
+a kitty colors-only conf). `theme-switch.sh` reads only these Nix-rendered
+files (`toggle`/`set <id>`/`gui`/`cli`/`current`/`list`) and actually
+re-skins every consumer live — no rebuild needed — by re-pointing each
+app's Home-Manager-managed symlink at the selected variant, rewriting
+Kvantum's active-theme pointer, and pushing new colors into running kitty
+windows via `kitty @ set-colors` (kitty.nix sets `allow_remote_control` +
+a `{kitty_pid}`-suffixed `listen_on`, since the three pre-spawned
+scratchpad kitty processes would otherwise collide on one static socket
+path). The next `home-manager switch` still resets everything to whatever
+`activeThemeName` declares — this is a live preview/override, not a second
+source of truth.
+
 Layout split:
 
 ```
 home/
 ├── apps/      — KDE/Qt/GTK theming
 ├── hyprland/  — Hyprland config
-├── waybar/    — Waybar widgets (DCF/Ollama/DSP/caffeine indicators)
+├── waybar/    — Waybar widgets (DCF/Ollama/DSP/caffeine/repo-update indicators)
 ├── x11/       — X11 fallbacks
 ├── terminal/ — Kitty/foot/shell integrations
 ├── shell/     — zsh/fish aliases, completions, prompts
@@ -208,6 +225,49 @@ home/
 Many `home/apps/*` modules take a `theme`/palette argument rather than
 reading global config, so the same module builds differently against
 different palettes.
+
+### 7a. Control center (`home/apps/control-center/`)
+
+Plain bash, deployed to `~/.local/bin`, sharing one action registry so the
+two front-ends and the phone-bridge passthrough (`modules/hypr-controller/`)
+never duplicate dispatch logic:
+
+- `oligarchy-ctl` — the registry itself: `status` / `cats` / `items <cat>`
+  / `all-items` (every category's actions flattened into one list, for
+  fuzzy search) / `run <action-id>`. ~50 actions across 10 categories
+  (appearance, ai, dsp, dcf, network, security, power, persona, rig,
+  system). Mutates live state (`hyprctl keyword`, `pw-metadata`,
+  `powerprofilesctl`) and persists build-time choices (persona/kernel/gpu)
+  to `oligarchy-local.nix` — this is the read-write control layer,
+  deliberately separate from the read-only MCP surface.
+- `oligarchy-menu` (wofi, Super+D) / `oligarchy-control` (fzf, terminal) —
+  both support the category→action browse and a flat "🔎 Search all
+  actions…" entry point.
+- `persona-menu` (`oligarchy-ctl run persona-menu`) — one-shot picker
+  showing all 4 personas with the active one checked, switching via the
+  same `apply_persona` logic the flat items use.
+- `dcf-control` — small fzf panel over the `dcf` category's read-only
+  status (`hydramesh-status`/`-logs`) and mutating actions
+  (`hydramesh-restart`/`-pull`); bound directly to `$mod SHIFT, D` when
+  `features.enableDCF`.
+- `ai` category's `forge-agent` entry launches `oligarchy-forge run --
+  $OLIGARCHY_FORGE_AGENT` (default `claude`, a `home.sessionVariables`
+  override) when `oligarchy-forge` is installed — see §10 for the agent
+  catalog that command can select from.
+- `system` category's `repo-check` / `repo-pull` wrap
+  `home/scripts/repo-update-check.sh` and a fast-forward-only `git pull`.
+  That same script backs waybar's `custom/repo-updates` badge
+  (`features.enableDev`-gated): a systemd user timer fetches every 30
+  minutes and notifies once per new remote SHA (never repeats for a commit
+  already surfaced); the badge itself only polls cached refs (no network
+  call) and renders nothing at all when clean — confirmed by screenshotting
+  a live instance with deliberately obnoxious CSS on the module, not just
+  assumed from an empty string. Resolves whichever branch is actually
+  checked out and its real upstream (`@{u}`, falling back to
+  `origin/main`/`origin/master`) rather than assuming a branch named
+  `main` — the real deployed checkout at `/etc/nixos` is on `master` with
+  no upstream configured at all, which a hardcoded comparison would have
+  silently done nothing for.
 
 ## 8. Security — the iron curtain
 
@@ -222,7 +282,7 @@ rollout runbook.
 | AppArmor + auditd | `custom.security.hardening.{apparmor,auditd}` | off (soak first) | Flip on after a clean soak; complain-first profiles |
 | USBGuard | `custom.security.hardening.usbguard` (preset `paranoid`) | off | Blocks newly-plugged USB; disruptive with Framework expansion cards |
 | Strict egress firewall | `networking.firewall.strictEgress` | **on, enforcing** | Default-deny outbound allowlist as a standalone nft `output` table (coexists with the ingress firewall + IP blocker). Flipped from dry-run to `recovery.dryRun = false` on the soaked `nixos` host allowlist (`preset = "developer"` + ollama/blipply-assistant/dcf-node-binary domains); `recovery.failOpen = true` still flushes the chain if `cache.nixos.org` becomes unreachable, so a bad allowlist can't brick a rebuild |
-| Malware Shield | `custom.malwareShield` (level `monitor`) | **on** | ClamAV + lynis/unhide + AIDE + YARA; log-only until you raise to `quarantine`. YARA walks via `find(1)` (no `-L`) to dodge symlink cycles. `custom.malwareShield.yara.excludePaths` skips e.g. Claude Code transcripts. Closure scanned at build via `nix build .#malwareScan` |
+| Malware Shield | `custom.malwareShield` (level `monitor`) | **on** | ClamAV + lynis/unhide + AIDE + YARA; log-only until you raise to `quarantine`. YARA walks via `find(1)` (no `-L`) to dodge symlink cycles. `custom.malwareShield.yara.excludePaths` skips known structural false positives: Claude Code transcripts, and this repo's own `modules/security/yara-rules/eicar.yar` + `docs/security-hardening.md` (both legitimately contain the EICAR test string — the rule *is* the EICAR test, and self-matches whenever a checkout of this repo lives under a scanned path). Closure scanned at build via `nix build .#malwareScan` |
 | Ingress IP blocklist | `services.demod-ip-blocker` | **on** | Refreshes every 24h |
 | Rootless Docker | `virtualisation.docker.rootless` | **on** | Daemon runs as the user; no root-equivalent `docker` group |
 | Secure Boot | `custom.secureBoot.enable` | off | lanzaboote signed chain + optional TPM2 LUKS |

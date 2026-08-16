@@ -71,12 +71,41 @@ modules/oligarchy-forge/
 ### `forge-core` (`crates/forge-core/src/`)
 
 - `schema.rs` — `ForgeConfig`/`Project`/`Runtime`/`Backend`/`VolumeMode`/
-  `Extension`. `Extension::ALL` is the six built-ins:
+  `Extension`/`Agent`. `Extension::ALL` is the seven built-in toolchains:
   `base` (always implicit — bash, coreutils, git), `rust`, `python`,
-  `node`, `go`, `faust-jack` (nod to the Faust/JACK stack this distro
-  already ships via `demod-voice`/`ArchibaldOS`). Adding a seventh
+  `node`, `node-lts`, `go`, `faust-jack` (nod to the Faust/JACK stack this
+  distro already ships via `demod-voice`/`ArchibaldOS`). Adding another
   extension means adding one `Extension` variant + one `packages()` arm —
   nothing else.
+
+  `Agent::ALL` is the coding-agent-CLI catalog (`[project].agents` in
+  `oligarchy-forge.toml`, separate from `extensions` — an agent isn't a
+  toolchain, and `run -- <cmd>` stays free-form for anything not in this
+  catalog): `oh-my-pi`, `claude`, `opencode`, `ollama`, `codex`, `aider`,
+  `cursor`. Two shapes:
+  - **Plain nixpkgs package** (`opencode`, `ollama`, `codex`, `aider` →
+    `aider-chat`, `cursor` → `cursor-cli`): just an `Agent::packages()`
+    entry, `wrapper_script()` returns `""`. `cursor-cli` is nixpkgs-unfree,
+    which is why the generated flake's own `pkgs` sets
+    `config.allowUnfree = true` (matching the parent flake's own stance).
+  - **Custom wrapper** (`oh-my-pi`, `claude`): `wrapper_script()` returns a
+    Nix expression spliced into the generated flake's `contents` list.
+    `oh-my-pi` fetches a version-pinned Bun release and lazily installs the
+    npm package on first container run (nixpkgs' `bun` is too old for it).
+    `claude` isn't in nixpkgs at all (npm-only upstream) — sourced from the
+    community `github:sadjow/claude-code-nix` flake, referenced directly as
+    `claude-code-nix.packages.${system}.claude-code` rather than merged in
+    via that flake's overlay (avoids any nixpkgs-revision mismatch between
+    its own pinned `nixpkgs-unstable` and this template's `nixos-25.11`).
+    That extra flake input is only ever declared — and therefore only ever
+    fetched — when `claude` is actually selected for a project
+    (`Agent::needs_flake_input()` / `ForgeConfig::needs_claude_code_nix()`
+    gate a `{% if %}` block in `templates/flake.nix.tera`); a project that
+    never picks Claude never pays for it. Adding another plain-package
+    agent means one `Agent` variant + one `packages()` arm, same as an
+    extension; adding another flake-sourced agent additionally means a
+    `needs_flake_input()` arm and a second conditional input in the
+    template.
 - `render.rs` — `render_flake()`: Tera-renders the embedded
   `templates/flake.nix.tera` (via `include_str!`, no runtime path lookup)
   into a self-contained `flake.nix` defining
@@ -349,6 +378,30 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ## Changelog (living document — append newest at top)
 
+- **Agent catalog expanded (2026-08-16):** `Agent::ALL` grew from one
+  entry (`oh-my-pi`) to seven: `claude`, `opencode`, `ollama`, `codex`,
+  `aider`, `cursor` added. Five of the six new agents are plain nixpkgs
+  packages (one `packages()` arm each, no wrapper); `claude` isn't in
+  nixpkgs at all (npm-only upstream) and is sourced from the community
+  `github:sadjow/claude-code-nix` flake, referenced directly rather than
+  merged in via its overlay — that extra flake input is only ever declared
+  in the generated project flake (and therefore only ever fetched) when
+  `claude` is actually selected, via a `{% if %}` block in
+  `templates/flake.nix.tera` gated on `ForgeConfig::needs_claude_code_nix()`.
+  Real issues caught by actually building an image, not just `cargo test`:
+  (1) `cursor-cli` is nixpkgs-unfree; the generated flake's `pkgs` didn't
+  set `config.allowUnfree`, so `oligarchy-forge build` failed outright with
+  Cursor selected even though every unit test passed — fixed by matching
+  the parent Oligarchy flake's own "unfree + broken allowed" stance in the
+  template. (2) `#[serde(rename_all = "kebab-case")]`'s auto-derivation
+  would have produced the TOML key `"open-code"` for the one-word tool
+  `opencode` — caught by a test asserting the real command name, fixed
+  with an explicit `#[serde(rename = "opencode")]`. Verified end-to-end:
+  built a real sandbox image with all 7 agents selected, loaded it into
+  podman, and ran every agent's `--version` inside the running container
+  (`claude` 2.1.233, `codex-cli` 0.92.0, `aider` 0.86.1, `cursor-agent`
+  2025.11.06, `opencode` 1.1.14, `ollama` client 0.21.1, `omp`'s
+  lazy-install path triggering correctly).
 - **Phase 1 landed (2026-07-26):** `forge-tui` (session list + live build
   log) implemented, tested, and wired in as part of the existing
   `oligarchy-forge` binary rather than a second one. Real issues caught by
