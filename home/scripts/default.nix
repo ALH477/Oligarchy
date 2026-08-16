@@ -664,4 +664,32 @@ in
       "pink": "${p.pink}"
     }
   '';
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # Repo update notifier — quiet, deduped check for new commits on
+  # origin/main (see home/scripts/repo-update-check.sh for the "non-annoying"
+  # design: at most one low-urgency notification per new remote SHA, plus a
+  # cheap --quiet mode for the waybar badge that never touches the network).
+  # ════════════════════════════════════════════════════════════════════════════
+  home.file.".local/bin/repo-update-check" = {
+    executable = true;
+    source = ./repo-update-check.sh;
+  };
+
+  systemd.user.services.repo-update-check = {
+    Unit.Description = "Check origin/main for new commits";
+    Service = {
+      Type = "oneshot";
+      ExecStart = "%h/.local/bin/repo-update-check";
+    };
+  };
+
+  systemd.user.timers.repo-update-check = {
+    Unit.Description = "Periodic origin/main update check";
+    Timer = {
+      OnStartupSec = "5m";
+      OnUnitActiveSec = "30m";
+    };
+    Install.WantedBy = [ "timers.target" ];
+  };
 }

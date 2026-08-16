@@ -171,6 +171,8 @@ gpu-amd|GPU → amd
 gpu-intel|GPU → intel
 gpu-optimus|GPU → nvidia-optimus
 rebuild-cmd|Copy rebuild command
+repo-check|Check for repo updates now
+repo-pull|Pull repo updates (fast-forward only)
 EOF
       ;;
   esac
@@ -353,6 +355,8 @@ run() {
     gpu-intel)      set_local gpu intel ;;
     gpu-optimus)    set_local gpu nvidia-optimus ;;
     rebuild-cmd)    rebuild_cmd_copy ;;
+    repo-check)     visible repo-update-check ;;
+    repo-pull)      visible git -C "$FLAKE_DIR" pull --ff-only ;;
 
     dsp-bench)       visible dsp-bench ;;
     persona-menu)    persona_menu ;;
