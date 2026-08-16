@@ -520,11 +520,11 @@
     "hydramesh-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1785975675,
-        "narHash": "sha256-jGNFidU1iAwD7oliFTTTCmF+R/MfXp2tIrycali7OV8=",
+        "lastModified": 1786912233,
+        "narHash": "sha256-O1iOGtBN1hGCtdX34issi43uZQkW94lrdBtialzLTd4=",
         "owner": "ALH477",
         "repo": "HydraMesh",
-        "rev": "54b9d216d9ab2dbbf096f3868345541bab4e7355",
+        "rev": "8af248358348f23bc7086cfbc005b720bfb7d473",
         "type": "github"
       },
       "original": {
