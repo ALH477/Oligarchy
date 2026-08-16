@@ -884,7 +884,26 @@
         clamav = { enable = true; onAccess = false; };
         rootkit.enable = true;
         aide.enable = true;
-        yara.enable = true;
+        yara = {
+          enable = true;
+          # Setting excludePaths here replaces the module's default outright,
+          # so both original entries are repeated below — dropping them would
+          # silently re-enable the .claude/projects false positives the
+          # default was written to prevent.
+          excludePaths = [
+            "/home/*/.claude/projects"
+            "/home/*/.claude/file-history"
+            # This repo's own EICAR pipeline-test fixture and the doc that
+            # demonstrates it (modules/security/yara-rules/eicar.yar,
+            # docs/security-hardening.md) both contain the literal EICAR
+            # test string by design — the same structural false positive as
+            # the two paths above, just from a second source the default
+            # list didn't anticipate: a checkout of this repo living under a
+            # scanned path.
+            "/home/*/Documents/oligarchy2/Oligarchy/modules/security/yara-rules"
+            "/home/*/Documents/oligarchy2/Oligarchy/docs/security-hardening.md"
+          ];
+        };
       };
 
       # sops-nix wiring (modules/secrets.nix). Safe with zero consumers:
