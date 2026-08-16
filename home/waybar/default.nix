@@ -23,6 +23,7 @@ let
       "group/network"
       (lib.optional (features.enableGaming or false) "custom/gamemode")
       "custom/caffeine"
+      (lib.optional (features.enableDev or false) "custom/repo-updates")
       "tray"
       "custom/power"
     ];
@@ -238,6 +239,19 @@ in {
         tooltip = true;
         tooltip-format = "Caffeine — idle inhibitor\\nClick to toggle (Super+F10)";
         on-click = "caffeine toggle";
+      };
+
+      # Silent when clean (empty text -> effectively invisible; no polling
+      # network calls — reads state a systemd user timer refreshes every
+      # 30m, see home/scripts/default.nix). Only appears as a small "⇡ N"
+      # badge once there's actually something to know about.
+      "custom/repo-updates" = {
+        format = "{}";
+        exec = "repo-update-check --quiet";
+        return-type = "json";
+        interval = 300;
+        tooltip = true;
+        on-click = "kitty --class floating-term -e bash -c 'repo-update-check --log; echo; read -n1 -p \"press any key\"'";
       };
 
       "custom/dsp" = {
