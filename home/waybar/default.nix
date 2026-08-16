@@ -1,4 +1,4 @@
-{ config, pkgs, lib, theme ? {}, features ? {}, ... }:
+{ config, pkgs, lib, theme ? {}, features ? {}, themes ? {}, ... }:
 
 let
   p = theme;  # Shorthand for palette
@@ -29,249 +29,9 @@ let
     ];
   };
   
-in {
-  programs.waybar = {
-    enable = true;
-    # Supervised by Home Manager's own waybar-module unit — gets
-    # ConditionEnvironment=WAYLAND_DISPLAY and config/style hot-reload for
-    # free, and restarts on crash instead of leaving the bar silently absent.
-    systemd = {
-      enable = true;
-      target = "hyprland-session.target";
-    };
-
-    settings.mainBar = {
-      # Layout
-      layer = "top";
-      position = "top";
-      height = 50;
-      margin-top = 6;
-      margin-left = 10;
-      margin-right = 10;
-      spacing = 0;
-
-      modules-left = mkWaybarModules.left;
-      modules-center = mkWaybarModules.center;
-      modules-right = mkWaybarModules.right;
-
-      # ══════════════════════════════════════════════════════════════════════════
-      # Module Configurations
-      # ══════════════════════════════════════════════════════════════════════════
-      
-      "custom/logo" = {
-        format = "󱄅";
-        tooltip = true;
-        tooltip-format = "Oligarchy · The War Machine\n\n<b>Keybindings</b>\n󰌨 Super+D: App Launcher\n󰍜 Super+Return: Terminal\n󰀻 Super+F: Fullscreen\n\n<b>Quick Actions</b>\n󱓞 Click: App Launcher\n󰍜 Right: System Info";
-        on-click = "wofi --show drun -I";
-        on-click-right = "kitty --class floating-term -e btop";
-      };
-
-      "hyprland/workspaces" = {
-        format = "{icon}";
-        format-icons = {
-          "1" = "󰎤"; "2" = "󰎧"; "3" = "󰎪"; "4" = "󰎭"; "5" = "󰎯";
-          "6" = "󰎰"; "7" = "󰎱"; "8" = "󰎳"; "9" = "󰎶"; "10" = "󰎸";
-          urgent = "󰀫"; active = "󰀺"; default = "󰎤"; special = "󰠱";
-        };
-        on-click = "activate";
-        on-scroll-up = "hyprctl dispatch workspace e+1";
-        on-scroll-down = "hyprctl dispatch workspace e-1";
-        persistent-workspaces = { "*" = 10; };
-        all-outputs = false;
-        show-special = true;
-        special-visible-only = false;
-      };
-
-      "hyprland/submap" = {
-        format = "{}";
-        tooltip = false;
-      };
-
-      "hyprland/window" = {
-        format = "{title}";
-        max-length = 40;
-        separate-outputs = true;
-        rewrite = {
-          "(.*) — Mozilla Firefox" = " $1";
-          "(.*) - Brave" = "󰖟 $1";
-          "(.*) - Visual Studio Code" = "󰨞 $1";
-          "(.*)kitty" = " Terminal";
-          "" = " Desktop";
-        };
-      };
-
-      "clock" = {
-        interval = 1;
-        format = "󰥔  {:%H:%M}";
-        format-alt = "󰃭  {:%A, %B %d   󰥔  %H:%M:%S}";
-        tooltip = true;
-        tooltip-format = "<big><b>{:%B %Y}</b></big>\n\n<tt>{calendar}</tt>";
-        actions = {
-          "on-scroll-up" = "tz_up";
-          "on-scroll-down" = "tz_down";
-        };
-      };
-
-      "custom/media" = {
-        format = "{icon} {}";
-        format-icons = {
-          default = "";
-          playing = "";
-          paused = "";
-        };
-        exec = "playerctl -a metadata --format='{{title}} - {{artist}}' --follow 2>/dev/null | head -n-1";
-        exec-if = "pgrep playerctl";
-        on-click = "playerctl play-pause";
-        on-click-right = "playerctl next";
-        interval = 2;
-        tooltip-format-players = "{}";
-        tooltip-format = "{{player}}: {{title}} - {{artist}} ({{duration(position)}}/{{duration(mpris:length)}})";
-      };
-
-      "group/audio" = {
-        orientation = "inherit";
-        modules = [ "wireplumber" "custom/wireplumber-microphone" ];
-      };
-
-      # Top-level definition — waybar resolves group members by name from the
-      # root config; a definition nested inside the group block is ignored.
-      "custom/wireplumber-microphone" = {
-        format = "{format_source}";
-        format-source = "󰍬 {volume}%";
-        format-source-muted = "󰍭 Muted";
-        tooltip-format = "Microphone: {volume}%";
-        on-click = "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle";
-      };
-
-      "wireplumber" = {
-        format = "{icon} {volume}%";
-        format-muted = "󰖁 Muted";
-        format-icons = {
-          headphone = "󰋋";
-          hands-free = "󰋐";
-          headset = "󰋎";
-          phone = "󰍲";
-          portable = "󱘯";
-          car = "󰄋";
-          default = ["󰕿" "󰖀" "󰕾"];
-        };
-        on-click = "pavucontrol";
-        on-scroll-up = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+";
-        on-scroll-down = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-";
-        tooltip-format = "{desc}";
-      };
-
-      "backlight" = {
-        # device omitted — auto-detects amdgpu_bl* on the Framework 16.
-        # The old hardcoded "intel_backlight" matched nothing on AMD.
-        format = "{icon} {percent}%";
-        format-icons = [ "󰃞" "󰃟" "󰃠" ];
-        on-scroll-up = "brightnessctl set 5%+";
-        on-scroll-down = "brightnessctl set 5%-";
-        tooltip-format = "Brightness: {percent}%";
-      };
-
-      "battery" = {
-        states = {
-          warning = 30;
-          critical = 15;
-        };
-        format = "{icon} {capacity}%";
-        format-charging = "󰂄 {capacity}%";
-        format-plugged = "󱘖 {capacity}%";
-        format-alt = "{icon} {capacity}%";
-        format-icons = [ "󰁺" "󰁻" "󰁼" "󰁽" "󰁾" "󰁿" "󰂀" "󰂁" "󰂂" "󰂁" "󰂀" ];
-        tooltip-format = "{timeTo} {power}W";
-        on-click = "powerprofilesctl set performance";
-        on-click-right = "powerprofilesctl set power-saver";
-      };
-
-      "group/network" = {
-        orientation = "inherit";
-        modules = [ "network" ];
-      };
-
-      "network" = {
-        format-wifi = "󰖩 {signalStrength}%";
-        format-ethernet = "󰈀 {ifname}";
-        tooltip-format-wifi = "󰖩 {essid} ({signalStrength}%)\n {bandwidthDownBits} 󰕒 {bandwidthUpBits}";
-        tooltip-format-ethernet = "󰈀 {ifname}\n {bandwidthDownBits} 󰕒 {bandwidthUpBits}";
-        format-linked = "󰖪 {ifname} (No IP)";
-        format-disconnected = "󰖪 Disconnected";
-        format-alt = "󰀂 {ifname}: {ipaddr}/{cidr}";
-        on-click = "nm-connection-editor";
-        on-click-right = "kitty --class floating-term -e nmtui";
-        interval = 5;
-      };
-
-      "tray" = {
-        icon-size = 18;
-        spacing = 8;
-        show-passive-items = false;
-        tooltip-format = "{}";
-      };
-
-      "custom/power" = {
-        format = "󰐥";
-        tooltip = true;
-        tooltip-format = "Power Menu\n󰍃 Click: Logout\n󰜉 Right: Reboot\n󰐥 Middle: Shutdown";
-        on-click = "hyprctl dispatch exit";
-        on-click-right = "reboot";
-        on-click-middle = "shutdown now";
-      };
-
-      # Always defined; only *referenced* in modules-right when enableGaming.
-      # (lib.mkIf inside JSON-serialized settings leaks _type/condition attrs
-      # into the generated config file — never use it here.)
-      "custom/gamemode" = {
-        format = "{}";
-        exec = "~/.config/hypr/scripts/gamemode.sh status";
-        return-type = "json";
-        interval = 2;
-        tooltip = true;
-        on-click = "~/.config/hypr/scripts/gamemode.sh toggle";
-      };
-
-      "custom/caffeine" = {
-        format = "{}";
-        exec = "test \"$(caffeine status)\" = on && echo '󰅶' || echo '󰾪'";
-        interval = 2;
-        tooltip = true;
-        tooltip-format = "Caffeine — idle inhibitor\\nClick to toggle (Super+F10)";
-        on-click = "caffeine toggle";
-      };
-
-      # Silent when clean (empty text -> effectively invisible; no polling
-      # network calls — reads state a systemd user timer refreshes every
-      # 30m, see home/scripts/default.nix). Only appears as a small "⇡ N"
-      # badge once there's actually something to know about.
-      "custom/repo-updates" = {
-        format = "{}";
-        exec = "repo-update-check --quiet";
-        return-type = "json";
-        interval = 300;
-        tooltip = true;
-        on-click = "kitty --class floating-term -e bash -c 'repo-update-check --log; echo; read -n1 -p \"press any key\"'";
-      };
-
-      "custom/dsp" = {
-        format = "🎛 {}";
-        exec = "dsp-latency";
-        interval = 3;
-        tooltip = true;
-        tooltip-format = "DSP latency · active rig\\nScroll: volume · Click: Control Center · Right: next output · Middle: mute";
-        on-click = "oligarchy-menu";
-        on-click-right = "audio-dev next sink";
-        on-click-middle = "audio-dev mute sink";
-        on-scroll-up = "swayosd-client --output-volume raise --max-volume 100";
-        on-scroll-down = "swayosd-client --output-volume lower";
-      };
-    };
-
-    # ════════════════════════════════════════════════════════════════════════════
-    # Enhanced Waybar Stylesheet with Animations
-    # ════════════════════════════════════════════════════════════════════════════
-    style = ''
+  # See home/apps/wofi.nix for why this is factored into a function of
+  # `p` — theme-switch.sh symlinks a pre-rendered variant into place live.
+  renderStyle = p: ''
       * {
         font-family: "JetBrainsMono Nerd Font", monospace;
         font-size: 14px;
@@ -604,6 +364,256 @@ in {
 
       /* NOTE: @media queries removed — GTK CSS has no media-query support;
          waybar logged parse errors and ignored those blocks anyway. */
-    '';
+  '';
+
+in {
+  programs.waybar = {
+    enable = true;
+    # Supervised by Home Manager's own waybar-module unit — gets
+    # ConditionEnvironment=WAYLAND_DISPLAY and config/style hot-reload for
+    # free, and restarts on crash instead of leaving the bar silently absent.
+    systemd = {
+      enable = true;
+      target = "hyprland-session.target";
+    };
+
+    settings.mainBar = {
+      # Layout
+      layer = "top";
+      position = "top";
+      height = 50;
+      margin-top = 6;
+      margin-left = 10;
+      margin-right = 10;
+      spacing = 0;
+
+      modules-left = mkWaybarModules.left;
+      modules-center = mkWaybarModules.center;
+      modules-right = mkWaybarModules.right;
+
+      # ══════════════════════════════════════════════════════════════════════════
+      # Module Configurations
+      # ══════════════════════════════════════════════════════════════════════════
+      
+      "custom/logo" = {
+        format = "󱄅";
+        tooltip = true;
+        tooltip-format = "Oligarchy · The War Machine\n\n<b>Keybindings</b>\n󰌨 Super+D: App Launcher\n󰍜 Super+Return: Terminal\n󰀻 Super+F: Fullscreen\n\n<b>Quick Actions</b>\n󱓞 Click: App Launcher\n󰍜 Right: System Info";
+        on-click = "wofi --show drun -I";
+        on-click-right = "kitty --class floating-term -e btop";
+      };
+
+      "hyprland/workspaces" = {
+        format = "{icon}";
+        format-icons = {
+          "1" = "󰎤"; "2" = "󰎧"; "3" = "󰎪"; "4" = "󰎭"; "5" = "󰎯";
+          "6" = "󰎰"; "7" = "󰎱"; "8" = "󰎳"; "9" = "󰎶"; "10" = "󰎸";
+          urgent = "󰀫"; active = "󰀺"; default = "󰎤"; special = "󰠱";
+        };
+        on-click = "activate";
+        on-scroll-up = "hyprctl dispatch workspace e+1";
+        on-scroll-down = "hyprctl dispatch workspace e-1";
+        persistent-workspaces = { "*" = 10; };
+        all-outputs = false;
+        show-special = true;
+        special-visible-only = false;
+      };
+
+      "hyprland/submap" = {
+        format = "{}";
+        tooltip = false;
+      };
+
+      "hyprland/window" = {
+        format = "{title}";
+        max-length = 40;
+        separate-outputs = true;
+        rewrite = {
+          "(.*) — Mozilla Firefox" = " $1";
+          "(.*) - Brave" = "󰖟 $1";
+          "(.*) - Visual Studio Code" = "󰨞 $1";
+          "(.*)kitty" = " Terminal";
+          "" = " Desktop";
+        };
+      };
+
+      "clock" = {
+        interval = 1;
+        format = "󰥔  {:%H:%M}";
+        format-alt = "󰃭  {:%A, %B %d   󰥔  %H:%M:%S}";
+        tooltip = true;
+        tooltip-format = "<big><b>{:%B %Y}</b></big>\n\n<tt>{calendar}</tt>";
+        actions = {
+          "on-scroll-up" = "tz_up";
+          "on-scroll-down" = "tz_down";
+        };
+      };
+
+      "custom/media" = {
+        format = "{icon} {}";
+        format-icons = {
+          default = "";
+          playing = "";
+          paused = "";
+        };
+        exec = "playerctl -a metadata --format='{{title}} - {{artist}}' --follow 2>/dev/null | head -n-1";
+        exec-if = "pgrep playerctl";
+        on-click = "playerctl play-pause";
+        on-click-right = "playerctl next";
+        interval = 2;
+        tooltip-format-players = "{}";
+        tooltip-format = "{{player}}: {{title}} - {{artist}} ({{duration(position)}}/{{duration(mpris:length)}})";
+      };
+
+      "group/audio" = {
+        orientation = "inherit";
+        modules = [ "wireplumber" "custom/wireplumber-microphone" ];
+      };
+
+      # Top-level definition — waybar resolves group members by name from the
+      # root config; a definition nested inside the group block is ignored.
+      "custom/wireplumber-microphone" = {
+        format = "{format_source}";
+        format-source = "󰍬 {volume}%";
+        format-source-muted = "󰍭 Muted";
+        tooltip-format = "Microphone: {volume}%";
+        on-click = "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle";
+      };
+
+      "wireplumber" = {
+        format = "{icon} {volume}%";
+        format-muted = "󰖁 Muted";
+        format-icons = {
+          headphone = "󰋋";
+          hands-free = "󰋐";
+          headset = "󰋎";
+          phone = "󰍲";
+          portable = "󱘯";
+          car = "󰄋";
+          default = ["󰕿" "󰖀" "󰕾"];
+        };
+        on-click = "pavucontrol";
+        on-scroll-up = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+";
+        on-scroll-down = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-";
+        tooltip-format = "{desc}";
+      };
+
+      "backlight" = {
+        # device omitted — auto-detects amdgpu_bl* on the Framework 16.
+        # The old hardcoded "intel_backlight" matched nothing on AMD.
+        format = "{icon} {percent}%";
+        format-icons = [ "󰃞" "󰃟" "󰃠" ];
+        on-scroll-up = "brightnessctl set 5%+";
+        on-scroll-down = "brightnessctl set 5%-";
+        tooltip-format = "Brightness: {percent}%";
+      };
+
+      "battery" = {
+        states = {
+          warning = 30;
+          critical = 15;
+        };
+        format = "{icon} {capacity}%";
+        format-charging = "󰂄 {capacity}%";
+        format-plugged = "󱘖 {capacity}%";
+        format-alt = "{icon} {capacity}%";
+        format-icons = [ "󰁺" "󰁻" "󰁼" "󰁽" "󰁾" "󰁿" "󰂀" "󰂁" "󰂂" "󰂁" "󰂀" ];
+        tooltip-format = "{timeTo} {power}W";
+        on-click = "powerprofilesctl set performance";
+        on-click-right = "powerprofilesctl set power-saver";
+      };
+
+      "group/network" = {
+        orientation = "inherit";
+        modules = [ "network" ];
+      };
+
+      "network" = {
+        format-wifi = "󰖩 {signalStrength}%";
+        format-ethernet = "󰈀 {ifname}";
+        tooltip-format-wifi = "󰖩 {essid} ({signalStrength}%)\n {bandwidthDownBits} 󰕒 {bandwidthUpBits}";
+        tooltip-format-ethernet = "󰈀 {ifname}\n {bandwidthDownBits} 󰕒 {bandwidthUpBits}";
+        format-linked = "󰖪 {ifname} (No IP)";
+        format-disconnected = "󰖪 Disconnected";
+        format-alt = "󰀂 {ifname}: {ipaddr}/{cidr}";
+        on-click = "nm-connection-editor";
+        on-click-right = "kitty --class floating-term -e nmtui";
+        interval = 5;
+      };
+
+      "tray" = {
+        icon-size = 18;
+        spacing = 8;
+        show-passive-items = false;
+        tooltip-format = "{}";
+      };
+
+      "custom/power" = {
+        format = "󰐥";
+        tooltip = true;
+        tooltip-format = "Power Menu\n󰍃 Click: Logout\n󰜉 Right: Reboot\n󰐥 Middle: Shutdown";
+        on-click = "hyprctl dispatch exit";
+        on-click-right = "reboot";
+        on-click-middle = "shutdown now";
+      };
+
+      # Always defined; only *referenced* in modules-right when enableGaming.
+      # (lib.mkIf inside JSON-serialized settings leaks _type/condition attrs
+      # into the generated config file — never use it here.)
+      "custom/gamemode" = {
+        format = "{}";
+        exec = "~/.config/hypr/scripts/gamemode.sh status";
+        return-type = "json";
+        interval = 2;
+        tooltip = true;
+        on-click = "~/.config/hypr/scripts/gamemode.sh toggle";
+      };
+
+      "custom/caffeine" = {
+        format = "{}";
+        exec = "test \"$(caffeine status)\" = on && echo '󰅶' || echo '󰾪'";
+        interval = 2;
+        tooltip = true;
+        tooltip-format = "Caffeine — idle inhibitor\\nClick to toggle (Super+F10)";
+        on-click = "caffeine toggle";
+      };
+
+      # Silent when clean (empty text -> effectively invisible; no polling
+      # network calls — reads state a systemd user timer refreshes every
+      # 30m, see home/scripts/default.nix). Only appears as a small "⇡ N"
+      # badge once there's actually something to know about.
+      "custom/repo-updates" = {
+        format = "{}";
+        exec = "repo-update-check --quiet";
+        return-type = "json";
+        interval = 300;
+        tooltip = true;
+        on-click = "kitty --class floating-term -e bash -c 'repo-update-check --log; echo; read -n1 -p \"press any key\"'";
+      };
+
+      "custom/dsp" = {
+        format = "🎛 {}";
+        exec = "dsp-latency";
+        interval = 3;
+        tooltip = true;
+        tooltip-format = "DSP latency · active rig\\nScroll: volume · Click: Control Center · Right: next output · Middle: mute";
+        on-click = "oligarchy-menu";
+        on-click-right = "audio-dev next sink";
+        on-click-middle = "audio-dev mute sink";
+        on-scroll-up = "swayosd-client --output-volume raise --max-volume 100";
+        on-scroll-down = "swayosd-client --output-volume lower";
+      };
+    };
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # Enhanced Waybar Stylesheet with Animations
+    # ════════════════════════════════════════════════════════════════════════════
+    style = renderStyle p;
   };
+
+  home.file = lib.mapAttrs'
+    (id: pal: lib.nameValuePair ".config/oligarchy/themes/${id}/waybar.css" {
+      text = renderStyle pal;
+    })
+    themes;
 }

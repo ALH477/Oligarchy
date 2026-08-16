@@ -88,8 +88,11 @@ in
         [ "nm-applet --indicator" "udiskie --automount --notify" ]
         (lib.optional features.hasBluetooth "blueman-applet")
 
-        # Clipboard
-        [ "wl-paste --type text --watch cliphist store" ]
+        # Clipboard — text goes through clip-filter (home/scripts/clip-filter.sh)
+        # first, which refuses to persist anything secret-shaped (private
+        # keys, cloud credential prefixes, JWTs) into cliphist's history.
+        # Images aren't text-pattern-filterable, so they go straight through.
+        [ "wl-paste --type text --watch clip-filter" ]
         [ "wl-paste --type image --watch cliphist store" ]
 
         # Directory setup
@@ -100,9 +103,6 @@ in
 
         # Ensure XWayland has proper cursor
         [ "sleep 1 && hyprctl setcursor idTech4 24" ]
-
-        # OSD daemon (volume/brightness popups)
-        [ "swayosd-server" ]
 
         # Dropdown scratchpads — pre-spawned hidden on their special workspaces
         [ "[workspace special:term silent] kitty --class scratch-term" ]
@@ -430,7 +430,7 @@ in
         "$mod CTRL, R, exec, ~/.config/hypr/scripts/record.sh replay-toggle"
 
         # Clipboard
-        "$mod, V, exec, cliphist list | wofi --dmenu -p 'Clipboard' | cliphist decode | wl-copy"
+        "$mod, V, exec, clipboard-picker"
 
         # Session
         "$mod, Escape, exec, wlogout -p layer-shell"
@@ -443,6 +443,17 @@ in
 
         # Resolution cycling
         "$mod, F5, exec, ~/.config/hypr/scripts/resolution-cycle.sh"
+
+        # Display scale cycling (1x / 1.25x / 1.5x) — live via hyprctl, no
+        # rebuild; reverts to the static per-monitor scale above on reload.
+        "$mod, F6, exec, scale-cycle"
+
+        # Window layout save/restore (persona-layout) — previously only
+        # reachable two menu hops deep in oligarchy-ctl's persona category;
+        # it's functionally distinct from persona switching, so it gets its
+        # own direct keybind.
+        "$mod, F3, exec, persona-layout restore"
+        "$mod SHIFT, F3, exec, persona-layout save"
 
         # System
         "$mod, M, exec, gnome-system-monitor"
@@ -699,6 +710,12 @@ in
       polkit-gnome-authentication-agent-1 = mkSessionService {
         description = "polkit-gnome authentication agent";
         execStart = "${pkgs.polkit_gnome}/libexec/polkit-gnome-authentication-agent-1";
+      };
+      # The last remaining unsupervised exec-once daemon — moved here for the
+      # same reason as the four above (see comment block at the top).
+      swayosd-server = mkSessionService {
+        description = "swayosd on-screen display daemon";
+        execStart = "${pkgs.swayosd}/bin/swayosd-server";
       };
     };
 

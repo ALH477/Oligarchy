@@ -6,9 +6,13 @@ let
 
   # ── Theme ──────────────────────────────────────────────────────────────────
   # Single source of truth: home/themes/default.nix. Every module below
-  # receives this palette via _module.args.theme.
+  # receives the active palette via _module.args.theme, and the full palette
+  # set via _module.args.themes (for rendering per-theme variant files so
+  # theme-switch.sh can flip live without a rebuild — see home/apps/theme-
+  # variants.nix). Change the default by editing activeThemeName there, not
+  # here, so there is exactly one place that picks the build-time default.
   themeSystem = import ./themes { inherit lib; };
-  activeTheme = themeSystem.palettes.demod;
+  activeTheme = themeSystem.activePalette;
 
   # ── Features ───────────────────────────────────────────────────────────────
   # Static Framework 16 laptop profile. Deliberately NOT lib.pathExists:
@@ -50,6 +54,7 @@ in {
   # that option, not this file, when forking for another account.
   _module.args = {
     theme = activeTheme;
+    themes = themeSystem.palettes;
     inherit features;
     username = user;
   };
@@ -63,6 +68,10 @@ in {
       EDITOR = "nvim";
       BROWSER = "brave";
       TERMINAL = "kitty";
+      # Default agent command for oligarchy-ctl's "Launch coding agent" menu
+      # entry (oligarchy-forge run -- $OLIGARCHY_FORGE_AGENT). Override here
+      # rather than in the script, e.g. to "aider" or "omp".
+      OLIGARCHY_FORGE_AGENT = "claude";
     };
     sessionPath = [ "$HOME/.local/bin" ];
 

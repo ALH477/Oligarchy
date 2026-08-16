@@ -35,6 +35,10 @@
     source = ./control-center/oligarchy-dsp.sh;
     executable = true;
   };
+  home.file.".local/bin/dcf-control" = {
+    source = ./control-center/dcf-control.sh;
+    executable = true;
+  };
   # Unified command center TUI — delegates to all other oligarchy-* commands.
   home.file.".local/bin/oligarchy" = {
     source = ./control-center/oligarchy.sh;

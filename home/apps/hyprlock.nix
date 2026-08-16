@@ -1,12 +1,10 @@
-{ config, pkgs, lib, theme ? {}, ... }:
+{ config, pkgs, lib, theme ? {}, themes ? {}, ... }:
 
 let
   p = theme;
-in {
-  # ══════════════════════════════════════════════════════════════════════════
-  # Hyprlock Screen Lock Configuration
-  # ══════════════════════════════════════════════════════════════════════════
-  home.file.".config/hypr/hyprlock.conf".text = ''
+
+  # See home/apps/wofi.nix for why this is factored into a function of `p`.
+  renderConf = p: ''
     general {
       disable_loading_bar = false
       hide_cursor = true
@@ -90,4 +88,15 @@ in {
       valign = center
     }
   '';
+in {
+  # ══════════════════════════════════════════════════════════════════════════
+  # Hyprlock Screen Lock Configuration
+  # ══════════════════════════════════════════════════════════════════════════
+  home.file = {
+    ".config/hypr/hyprlock.conf".text = renderConf p;
+  } // (lib.mapAttrs'
+    (id: pal: lib.nameValuePair ".config/oligarchy/themes/${id}/hyprlock.conf" {
+      text = renderConf pal;
+    })
+    themes);
 }

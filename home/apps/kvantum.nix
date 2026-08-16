@@ -1,22 +1,14 @@
-{ config, pkgs, lib, theme ? {}, ... }:
+{ config, pkgs, lib, theme ? {}, themes ? {}, ... }:
 
 let
   p = theme;
-  themeName = lib.toLower p.name;
-in
-{
-  # ════════════════════════════════════════════════════════════════════════════
-  # Kvantum Theme Configuration - Theme-aware Qt styling engine
-  # ════════════════════════════════════════════════════════════════════════════
-  
-  # Main Kvantum config
-  home.file.".config/Kvantum/kvantum.kvconfig".text = ''
-    [General]
-    theme=${p.name}
-  '';
 
-  # Kvantum theme configuration
-  home.file.".config/Kvantum/${p.name}/${p.name}.kvconfig".text = ''
+  # Kvantum keys themes by directory name natively, so — unlike the other
+  # themed apps — there's no need for a separate ~/.config/oligarchy/themes/
+  # mirror here: rendering every palette's own named Kvantum dir up front
+  # means live-switching is just rewriting kvantum.kvconfig's `theme=` line
+  # (see theme-switch.sh) to point at one that already exists on disk.
+  renderKvconfig = p: ''
     [%General]
     author=DeMoD
     comment=${p.name} Dark Theme - Theme-aware Qt styling
@@ -113,8 +105,7 @@ in
     style_vertical_toolbars=false
   '';
 
-  # Kvantum theme SVG
-  home.file.".config/Kvantum/${p.name}/${p.name}.svg".text = ''
+  renderSvg = p: ''
     <?xml version="1.0" encoding="UTF-8"?>
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
       <defs>
@@ -125,4 +116,29 @@ in
       </defs>
     </svg>
   '';
+in
+{
+  # ════════════════════════════════════════════════════════════════════════════
+  # Kvantum Theme Configuration - Theme-aware Qt styling engine
+  # ════════════════════════════════════════════════════════════════════════════
+
+  home.file = {
+    # Main Kvantum config — selects the active theme by directory name.
+    # theme-switch.sh rewrites this line to switch live; every palette's own
+    # directory already exists below, so it never needs to render anything.
+    ".config/Kvantum/kvantum.kvconfig".text = ''
+      [General]
+      theme=${p.name}
+    '';
+  }
+  // (lib.mapAttrs'
+    (id: pal: lib.nameValuePair ".config/Kvantum/${pal.name}/${pal.name}.kvconfig" {
+      text = renderKvconfig pal;
+    })
+    themes)
+  // (lib.mapAttrs'
+    (id: pal: lib.nameValuePair ".config/Kvantum/${pal.name}/${pal.name}.svg" {
+      text = renderSvg pal;
+    })
+    themes);
 }

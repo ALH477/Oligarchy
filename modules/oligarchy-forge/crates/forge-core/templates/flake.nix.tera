@@ -3,11 +3,19 @@
 
   # Pinned to match the parent Oligarchy repo's channel (see CLAUDE.md).
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
-
-  outputs = { self, nixpkgs }:
+{% if needs_claude_code_nix %}
+  # Claude Code isn't in nixpkgs (npm-only upstream) — only declared (and
+  # therefore only ever fetched) when the "claude" agent is actually
+  # selected for this project, see Agent::needs_flake_input().
+  inputs.claude-code-nix.url = "github:sadjow/claude-code-nix";
+{% endif %}
+  outputs = { self, nixpkgs{% if needs_claude_code_nix %}, claude-code-nix{% endif %} }:
     let
       system = "x86_64-linux";
-      pkgs = import nixpkgs { inherit system; };
+      # Matches the parent Oligarchy flake's own stance (CLAUDE.md: "Unfree +
+      # broken allowed") — needed for real agents in the catalog, e.g. Cursor
+      # CLI (nixpkgs marks cursor-cli unfree; refuses to evaluate otherwise).
+      pkgs = import nixpkgs { inherit system; config.allowUnfree = true; };
     in
     {
       packages.${system}.default = pkgs.dockerTools.streamLayeredImage {

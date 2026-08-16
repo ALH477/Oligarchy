@@ -181,6 +181,21 @@ in
     source = ./caffeine.sh;
   };
 
+  home.file.".local/bin/clip-filter" = {
+    executable = true;
+    source = ./clip-filter.sh;
+  };
+
+  home.file.".local/bin/clipboard-picker" = {
+    executable = true;
+    source = ./clipboard-picker.sh;
+  };
+
+  home.file.".local/bin/scale-cycle" = {
+    executable = true;
+    source = ./scale-cycle.sh;
+  };
+
   # ════════════════════════════════════════════════════════════════════════════
   # Idle suspend guard — load/temp-aware `systemctl suspend` for hypridle.
   # Keeps the machine from suspending into s2idle (fans down) mid-nix-build.
