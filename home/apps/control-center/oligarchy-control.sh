@@ -20,10 +20,24 @@ if [ -r "$THEME_JSON" ] && command -v jq >/dev/null 2>&1; then
 fi
 export FZF_DEFAULT_OPTS="--no-multi --height=85% --layout=reverse --border=rounded --color=fg:$fg,bg:$bg,hl:$accent,fg+:$accent,pointer:$accent,prompt:$accent,header:$accent"
 
+SEARCH_ALL="🔎 Search all actions…"
+
+# Flat fuzzy search across every category's actions in one list — fzf's own
+# fuzzy matching does the work. Falls back to the two-level browse below.
+search_all() {
+  local hdr act_label act_id
+  hdr="$(oligarchy-ctl status 2>/dev/null)"
+  act_label="$(oligarchy-ctl all-items | awk -F'|' '{print $2}' | fzf --header="$hdr" --prompt='⌁ search ❯ ')" || return 0
+  [ -z "$act_label" ] && return 0
+  act_id="$(oligarchy-ctl all-items | awk -F'|' -v l="$act_label" '$2==l{print $1; exit}')"
+  [ -n "$act_id" ] && oligarchy-ctl run "$act_id"
+}
+
 while true; do
   hdr="$(oligarchy-ctl status 2>/dev/null)"
-  cat_label="$(oligarchy-ctl cats | awk -F'|' '{print $2}' | fzf --header="$hdr" --prompt='⌁ category ❯ ')" || exit 0
+  cat_label="$( { echo "$SEARCH_ALL"; oligarchy-ctl cats | awk -F'|' '{print $2}'; } | fzf --header="$hdr" --prompt='⌁ category ❯ ')" || exit 0
   [ -z "$cat_label" ] && exit 0
+  if [ "$cat_label" = "$SEARCH_ALL" ]; then search_all; continue; fi
   cat_id="$(oligarchy-ctl cats | awk -F'|' -v l="$cat_label" '$2==l{print $1; exit}')"
   [ -z "$cat_id" ] && continue
 

@@ -79,12 +79,15 @@ anim-toggle|Toggle animations
 blur-toggle|Toggle blur
 EOF
       ;;
-    ai) cat <<'EOF'
+    ai)
+      cat <<'EOF'
 ai-status|AI status
 ai-start|Start AI stack
 ai-stop|Stop AI stack
 ai-pull|Pull a model…
 EOF
+      command -v oligarchy-forge >/dev/null 2>&1 && \
+        echo "forge-agent|🤖 Launch coding agent (${OLIGARCHY_FORGE_AGENT:-claude})"
       ;;
     dsp) cat <<'EOF'
 out-cycle|🔊 Output → next device
@@ -106,7 +109,10 @@ rt-check|Realtime check
 dsp-bench|Benchmark DSP latency
 EOF
       ;;
-    persona) cat <<'EOF'
+    persona)
+      local active; active="$(cat /etc/oligarchy/persona 2>/dev/null || echo dev)"
+      echo "persona-menu|🎚 Switch persona… (current: $active)"
+      cat <<'EOF'
 persona-show|Current persona
 persona-studio|Studio — DSP, lowest latency
 persona-gaming|Gaming — FPS + gamemode
@@ -130,7 +136,6 @@ dcf-status|Mesh status
 dcf-logs|Mesh logs
 dcf-restart|Restart node
 dcf-pull|Pull updates
-dcf-control|DCF control
 EOF
       ;;
     network) cat <<'EOF'
@@ -168,6 +173,46 @@ gpu-optimus|GPU → nvidia-optimus
 rebuild-cmd|Copy rebuild command
 EOF
       ;;
+  esac
+}
+
+# Every action across every category, flattened into one searchable list —
+# "action-id|Category · Action label" — for the front-ends' flat-search mode
+# (Omarchy-style "type a few letters, hit enter" instead of two-level
+# category→action navigation). The two-level browse stays available too.
+all_items() {
+  local cat_id cat_label
+  cats | while IFS='|' read -r cat_id cat_label; do
+    items "$cat_id" | while IFS='|' read -r act_id act_label; do
+      [ -n "$act_id" ] && echo "$act_id|$cat_label · $act_label"
+    done
+  done
+}
+
+# One-shot persona picker: shows all 4 personas with the active one marked,
+# switches with a single selection. Reuses apply_persona (below) via `run`
+# so there is exactly one place persona-switch logic lives.
+persona_menu() {
+  local active choice
+  active="$(cat /etc/oligarchy/persona 2>/dev/null || echo dev)"
+  picker() {
+    local label id
+    for id in studio gaming dev battery; do
+      label="$(items persona | awk -F'|' -v i="persona-$id" '$1==i{print $2}')"
+      if [ "$id" = "$active" ]; then echo "✓ $label"; else echo "  $label"; fi
+    done
+  }
+  if [ -t 0 ]; then
+    choice="$(picker | fzf --prompt='persona ❯ ' --header="current: $active")"
+  else
+    choice="$(picker | wofi --dmenu -i -p "Persona (current: $active)")"
+  fi
+  [ -z "${choice:-}" ] && return 0
+  case "$choice" in
+    *Studio*)  run persona-studio ;;
+    *Gaming*)  run persona-gaming ;;
+    *Dev*)     run persona-dev ;;
+    *Battery*) run persona-battery ;;
   esac
 }
 
@@ -258,6 +303,7 @@ run() {
     ai-start)       visible ai-stack start ;;
     ai-stop)        visible ai-stack stop ;;
     ai-pull)        ai_pull ;;
+    forge-agent)    in_term oligarchy-forge run -- "${OLIGARCHY_FORGE_AGENT:-claude}" ;;
 
     dsp-status)     visible dsp-status ;;
     dsp-console)    in_term dsp-console ;;
@@ -309,6 +355,7 @@ run() {
     rebuild-cmd)    rebuild_cmd_copy ;;
 
     dsp-bench)       visible dsp-bench ;;
+    persona-menu)    persona_menu ;;
     persona-show)    note "Persona: $(cat /etc/oligarchy/persona 2>/dev/null || echo dev)" ;;
     persona-studio)  apply_persona studio  performance 0 64 ;;
     persona-gaming)  apply_persona gaming  performance 1 256 ;;
@@ -329,9 +376,10 @@ run() {
 }
 
 case "${1:-}" in
-  status) status ;;
-  cats)   cats ;;
-  items)  items "${2:-}" ;;
-  run)    shift; run "$@" ;;
-  *) echo "usage: oligarchy-ctl {status|cats|items <cat>|run <action>}" >&2; exit 2 ;;
+  status)    status ;;
+  cats)      cats ;;
+  items)     items "${2:-}" ;;
+  all-items) all_items ;;
+  run)       shift; run "$@" ;;
+  *) echo "usage: oligarchy-ctl {status|cats|items <cat>|all-items|run <action>}" >&2; exit 2 ;;
 esac
