@@ -17,6 +17,7 @@ pub fn render_flake(cfg: &ForgeConfig) -> Result<String> {
     ctx.insert("image_name", &cfg.image_name());
     ctx.insert("packages", &cfg.nix_packages().join(" "));
     ctx.insert("agent_wrappers", &cfg.agent_wrappers_nix());
+    ctx.insert("needs_claude_code_nix", &cfg.needs_claude_code_nix());
 
     tera.render("flake.nix", &ctx)
         .context("rendering flake.nix from template")
@@ -68,6 +69,58 @@ mod tests {
         )
         .unwrap();
         let out = render_flake(&cfg).unwrap();
+        assert!(!out.contains("writeShellScriptBin"));
+    }
+
+    #[test]
+    fn claude_agent_pulls_in_claude_code_nix_as_a_flake_input() {
+        let cfg = ForgeConfig::parse(
+            r#"
+            [project]
+            name = "demo"
+            agents = ["claude"]
+            "#,
+        )
+        .unwrap();
+        let out = render_flake(&cfg).unwrap();
+        assert!(out.contains("inputs.claude-code-nix.url = \"github:sadjow/claude-code-nix\";"));
+        assert!(out.contains("outputs = { self, nixpkgs, claude-code-nix }:"));
+        assert!(out.contains("claude-code-nix.packages.${system}.claude-code"));
+    }
+
+    #[test]
+    fn claude_code_nix_input_absent_when_claude_not_selected() {
+        let cfg = ForgeConfig::parse(
+            r#"
+            [project]
+            name = "demo"
+            agents = ["oh-my-pi", "opencode", "ollama"]
+            "#,
+        )
+        .unwrap();
+        let out = render_flake(&cfg).unwrap();
+        assert!(!out.contains("claude-code-nix"));
+        assert!(out.contains("outputs = { self, nixpkgs }:"));
+        // Plain nixpkgs agents land in the packages list, not the wrapper list.
+        assert!(out.contains("opencode"));
+        assert!(out.contains("ollama"));
+    }
+
+    #[test]
+    fn codex_aider_cursor_are_plain_nixpkgs_packages() {
+        let cfg = ForgeConfig::parse(
+            r#"
+            [project]
+            name = "demo"
+            agents = ["codex", "aider", "cursor"]
+            "#,
+        )
+        .unwrap();
+        let out = render_flake(&cfg).unwrap();
+        assert!(out.contains("codex"));
+        assert!(out.contains("aider-chat"));
+        assert!(out.contains("cursor-cli"));
+        assert!(!out.contains("claude-code-nix"));
         assert!(!out.contains("writeShellScriptBin"));
     }
 }

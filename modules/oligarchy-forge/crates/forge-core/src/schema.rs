@@ -121,10 +121,36 @@ impl Extension {
 #[serde(rename_all = "kebab-case")]
 pub enum Agent {
     OhMyPi,
+    Claude,
+    // Overrides the derived kebab-case "open-code" — the actual tool/binary
+    // is one word, "opencode".
+    #[serde(rename = "opencode")]
+    OpenCode,
+    Ollama,
+    Codex,
+    Aider,
+    Cursor,
 }
 
 impl Agent {
-    pub const ALL: [Agent; 1] = [Agent::OhMyPi];
+    pub const ALL: [Agent; 7] = [
+        Agent::OhMyPi,
+        Agent::Claude,
+        Agent::OpenCode,
+        Agent::Ollama,
+        Agent::Codex,
+        Agent::Aider,
+        Agent::Cursor,
+    ];
+
+    /// True for agents whose CLI comes from a flake input rather than a
+    /// plain nixpkgs attribute or a `wrapper_script()`-built derivation —
+    /// see `Agent::Claude` and `ForgeConfig::needs_claude_code_nix()`. The
+    /// generated flake only declares (and therefore only ever fetches) the
+    /// `claude-code-nix` input when this is true for some selected agent.
+    pub fn needs_flake_input(self) -> bool {
+        matches!(self, Agent::Claude)
+    }
 
     /// nixpkgs attribute names this agent's wrapper needs at runtime, beyond
     /// what `wrapper_script()` already brings in via its own `let` block
@@ -133,12 +159,27 @@ impl Agent {
     pub fn packages(self) -> &'static [&'static str] {
         match self {
             Agent::OhMyPi => &[],
+            // Claude Code isn't in nixpkgs at all (Anthropic ships it as an
+            // npm package only) — sourced from the claude-code-nix flake
+            // input instead, see `wrapper_script()`.
+            Agent::Claude => &[],
+            Agent::OpenCode => &["opencode"],
+            Agent::Ollama => &["ollama"],
+            Agent::Codex => &["codex"],
+            Agent::Aider => &["aider-chat"],
+            Agent::Cursor => &["cursor-cli"],
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
             Agent::OhMyPi => "oh-my-pi",
+            Agent::Claude => "claude",
+            Agent::OpenCode => "opencode",
+            Agent::Ollama => "ollama",
+            Agent::Codex => "codex",
+            Agent::Aider => "aider",
+            Agent::Cursor => "cursor",
         }
     }
 
@@ -151,6 +192,35 @@ impl Agent {
                  (1.3.3), which fails to parse its bundle. Installed lazily and \
                  version-pinned on first use instead of baked in at image-build time \
                  (nixpkgs has no reproducible-build helper for Bun package installs)."
+            }
+            Agent::Claude => {
+                "Claude Code (`claude`) — Anthropic's agentic coding CLI. Not in \
+                 nixpkgs (npm-only upstream); packaged reproducibly via the \
+                 community github:sadjow/claude-code-nix flake, pulled in as an \
+                 extra flake input only when this agent is selected for a project."
+            }
+            Agent::OpenCode => {
+                "OpenCode (`opencode`) — open-source terminal coding agent, \
+                 multi-provider (works with local Ollama models as well as \
+                 hosted ones). Plain nixpkgs package, no wrapper needed."
+            }
+            Agent::Ollama => {
+                "Ollama (`ollama`) — local model runtime, for troubleshooting \
+                 fully offline or as OpenCode's/a custom agent's backend. Plain \
+                 nixpkgs package; pull a model yourself on first use \
+                 (`ollama pull <model>`) — no model is baked into the image."
+            }
+            Agent::Codex => {
+                "OpenAI Codex CLI (`codex`) — lightweight terminal coding agent. \
+                 Plain nixpkgs package, no wrapper needed."
+            }
+            Agent::Aider => {
+                "Aider (`aider`) — AI pair programming in the terminal, git-aware \
+                 diffs. Plain nixpkgs package (`aider-chat`), no wrapper needed."
+            }
+            Agent::Cursor => {
+                "Cursor CLI (`cursor-agent`) — Cursor's terminal coding agent. \
+                 Plain nixpkgs package (`cursor-cli`), no wrapper needed."
             }
         }
     }
@@ -203,6 +273,19 @@ in pkgs.writeShellScriptBin "omp" ''
   exec "$bin" "$@"
 '')"#
             }
+            // No wrapper needed: claude-code-nix's own package is already a
+            // complete, reproducible derivation for the real `claude`
+            // binary. The generated flake only declares this input at all
+            // when Agent::Claude is selected — see
+            // ForgeConfig::needs_claude_code_nix() and the Tera template.
+            Agent::Claude => "claude-code-nix.packages.${system}.claude-code",
+            // Plain nixpkgs packages — packages() above is sufficient,
+            // nothing to bake in here.
+            Agent::OpenCode => "",
+            Agent::Ollama => "",
+            Agent::Codex => "",
+            Agent::Aider => "",
+            Agent::Cursor => "",
         }
     }
 }
@@ -285,6 +368,14 @@ impl ForgeConfig {
     /// `contents` list (see `Agent::wrapper_script()`).
     pub fn agent_wrappers_nix(&self) -> String {
         self.project.agents.iter().map(|a| a.wrapper_script()).collect::<Vec<_>>().join(" ")
+    }
+
+    /// Whether any selected agent needs a flake input beyond plain nixpkgs
+    /// (currently: Agent::Claude, via claude-code-nix). The generated
+    /// flake's `inputs` only ever grow to include claude-code-nix when this
+    /// is true, so a project that never selects Claude never fetches it.
+    pub fn needs_claude_code_nix(&self) -> bool {
+        self.project.agents.iter().any(|a| a.needs_flake_input())
     }
 
     /// Every pair of currently-selected extensions that provide the same
