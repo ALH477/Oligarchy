@@ -19,7 +19,10 @@ let
       igpu = platform.igpuPciId or "0000:c5:00.0";
       primary = if (platform.displayGpu or "dgpu") == "dgpu" then dgpu else igpu;
     in
-    lib.optionals ((platform.gpu or "amd") == "amd") [
+    # Skip DRI_PRIME entirely on iGPU-only hosts (e.g. Framework 13) — there's
+    # no second GPU to route to, and pointing it at a nonexistent PCI device
+    # is worse than doing nothing.
+    lib.optionals ((platform.gpu or "amd") == "amd" && (platform.hasDgpu or true)) [
       "DRI_PRIME,${pciUnderscore primary}"
     ];
 

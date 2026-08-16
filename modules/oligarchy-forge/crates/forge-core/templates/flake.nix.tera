@@ -13,7 +13,18 @@
       packages.${system}.default = pkgs.dockerTools.streamLayeredImage {
         name = "{{ image_name }}";
         tag = "latest";
-        contents = with pkgs; [ {{ packages }} ];
+        # usr-bin-env: nixpkgs binaries have no /usr/bin/env by default, but
+        # virtually every npm/pip-installed CLI (agent wrappers included)
+        # ships a `#!/usr/bin/env node`-style shebang and fails to exec
+        # without it. Unconditional, not gated on any extension/agent — any
+        # of them could hit this once something installs a global package
+        # at runtime.
+        contents = with pkgs; [ {{ packages }} ] ++ [ {{ agent_wrappers }} ] ++ [
+          (pkgs.runCommand "usr-bin-env" { } ''
+            mkdir -p $out/usr/bin
+            ln -s ${pkgs.coreutils}/bin/env $out/usr/bin/env
+          '')
+        ];
         config = {
           Cmd = [ "/bin/bash" ];
           WorkingDir = "/workspace";

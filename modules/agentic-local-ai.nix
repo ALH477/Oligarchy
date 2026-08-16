@@ -4,7 +4,7 @@ with lib;
 
 let
   cfg = config.services.ollamaAgentic;
-  userName = "asher";
+  userName = config.custom.user.name;
   userHome = config.users.users.${userName}.home or "/home/${userName}";
 
   # Directory structure

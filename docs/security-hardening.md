@@ -95,10 +95,16 @@ ai-stack stop; docker compose ... # ai-stack handles this; first start re-pulls
 
 ## Phase 4 — Strict egress: dry-run → enforce
 
-Ships enabled in **dry-run** (`recovery.dryRun = true`): it logs what it *would*
-block without dropping anything. It runs as a standalone `table inet
-strict-egress` (an `output` hook) that coexists with the iptables firewall and
-`demod-ip-blocker`.
+**Status on `nixos`: done.** After soaking dry-run and adding the domains the
+resolver flagged as missing (`ollama.com`, `registry.ollama.ai`,
+`huggingface.co`, `api.demod.ltd`), `recovery.dryRun = false` is live. The
+steps below are kept for reference (re-soaking after a new service's domains
+show up, or bringing up a fresh host).
+
+Ships enabled in **dry-run** (`recovery.dryRun = true`) on a fresh host: it
+logs what it *would* block without dropping anything. It runs as a standalone
+`table inet strict-egress` (an `output` hook) that coexists with the iptables
+firewall and `demod-ip-blocker`.
 
 ```bash
 oligarchy-security egress status
@@ -183,6 +189,57 @@ USBGuard stays opt-in (paranoid preset). To enroll present devices:
 ```bash
 oligarchy-security usb generate-policy   # then set custom.security.hardening.usbguard = true
 ```
+
+---
+
+## Phase 7 — Steam/game sandbox (swap isolation + blast-radius containment)
+
+Ships enabled. Games were dipping into the disk swapfile/zram under memory
+pressure and stalling hard enough to effectively die; separately, a game
+process is an attacker-influenced blob (mods, crafted assets, malicious
+multiplayer servers) worth containing. Both are handled by launching Steam
+through `systemd-run --user` into a dedicated slice, from both launch paths
+(IceWM menu in `configuration.nix`, and the `steam.desktop` override in
+`home/apps/desktop-entries.nix` that XDG-shadows the system one for
+wofi/`oligarchy-menu`):
+
+- `steam-noswap.slice`: `MemorySwapMax=0` — an allocation that would have
+  spilled to swap instead OOM-kills just the game.
+- Hardening properties on the launch itself: `NoNewPrivileges`,
+  `RestrictSUIDSGID`, `ProtectHostname`, `ProtectClock`,
+  `ProtectKernelTunables`, `ProtectKernelLogs`, `ProtectKernelModules`,
+  `ProtectControlGroups`, `ProtectHome`, `LockPersonality`.
+
+Deliberately **not** included, because each would break real games rather
+than just reduce security theater:
+
+- `RestrictNamespaces` / `SystemCallFilter` — Steam's own Proton sandbox
+  (`pressure-vessel`) needs `unshare`/`mount`/`pivot_root` to build its
+  per-game container. Blocking those breaks every Proton game.
+- `MemoryDenyWriteExecute` — blocks W+X memory; breaks Wine's JIT and
+  Unity/Mono games.
+- `RestrictRealtime` — GameMode may grant realtime scheduling for frame-time
+  consistency.
+- `ProtectSystem=strict`, `PrivateTmp`, `PrivateDevices`, `PrivateNetwork` —
+  would need a hand-guessed write-path allowlist (shader caches, compat
+  prefixes, screenshots) or would cut off GPU/controller devices or
+  multiplayer networking outright.
+
+These are all namespace/seccomp-backed (systemd sets them up once at process
+start), so there's no per-frame or per-syscall runtime cost.
+
+Verify after switch:
+
+```bash
+# launch Steam from the icewm menu or app launcher, then:
+systemctl --user status steam-hardened   # or: systemctl --user list-units 'run-*'
+systemctl --user show <unit> -p Slice,MemorySwapMax,NoNewPrivileges
+```
+
+If a game refuses to launch or crashes immediately after this, that's a
+compatibility hit, not a security tradeoff working as intended — check
+`journalctl --user -u <unit>` for which property it's tripping over before
+assuming it's unrelated.
 
 ---
 

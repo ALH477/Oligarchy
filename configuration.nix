@@ -125,10 +125,14 @@
 
         # Branding
         titleText = "Initiating Oligarchy";
-        # Framework hardware check: only the genuine Framework 16 board
-        # (custom.platform.framework, set per-host in flake.nix) gets told
-        # it's based; the Intel/Optimus hosts get the plain branding line.
-        bottomText = if config.custom.platform.framework then "Framework 16 · NixOS · Hyprland" else "NixOS · The War Machine";
+        # Framework hardware check: genuine Framework boards (custom.platform.
+        # framework, set per-host in flake.nix) get told which chassis they
+        # are via custom.platform.frameworkModel; the Intel/Optimus hosts get
+        # the plain branding line.
+        bottomText =
+          if config.custom.platform.framework
+          then "Framework ${config.custom.platform.frameworkModel or "16"} · NixOS · Hyprland"
+          else "NixOS · The War Machine";
 
         # Logo overlay (DeMoD logo from assets)
         logoImage = ./assets/demod-logo.png;
@@ -297,7 +301,10 @@
           priority = 10;
         }
         {
-          device = "/run/media/asher/a82fcfcf-e913-413e-ab4f-4a3b104b2de0/.swapfile";
+          # Machine-specific: an ad hoc udisks2-automounted external drive on
+          # the maintainer's own host. Drop this entry entirely on a fresh
+          # install unless you have the same physical drive.
+          device = "/run/media/${config.custom.user.name}/a82fcfcf-e913-413e-ab4f-4a3b104b2de0/.swapfile";
           priority = 10;
           options = [ "nofail" ];
         }
@@ -311,8 +318,8 @@
       # swapDevices entry above then just doesn't activate that leg, same as
       # any other missing backup device.
       system.activationScripts.btrfsSwapfile = ''
-        swapfile=/run/media/asher/a82fcfcf-e913-413e-ab4f-4a3b104b2de0/.swapfile
-        mountpoint=/run/media/asher/a82fcfcf-e913-413e-ab4f-4a3b104b2de0
+        swapfile=/run/media/${config.custom.user.name}/a82fcfcf-e913-413e-ab4f-4a3b104b2de0/.swapfile
+        mountpoint=/run/media/${config.custom.user.name}/a82fcfcf-e913-413e-ab4f-4a3b104b2de0
         if [ -d "$mountpoint" ] && ${pkgs.util-linux}/bin/mountpoint -q "$mountpoint" && [ ! -e "$swapfile" ]; then
           ${pkgs.coreutils}/bin/truncate -s 0 "$swapfile"
           ${pkgs.e2fsprogs}/bin/chattr +C "$swapfile" 2>/dev/null || true
@@ -429,8 +436,9 @@
         enable = true;
         extraCompatPackages = [ pkgs.proton-ge-bin ];
         # Only force dGPU routing when custom.platform.displayGpu = "dgpu"
-        # (the default) — see modules/platform.nix and docs/dgpu-steam-forcing.md.
-        package = lib.mkIf (config.custom.platform.displayGpu == "dgpu") (pkgs.steam.override {
+        # (the default) and this host actually has a dGPU to route to — see
+        # modules/platform.nix and docs/dgpu-steam-forcing.md.
+        package = lib.mkIf (config.custom.platform.hasDgpu && config.custom.platform.displayGpu == "dgpu") (pkgs.steam.override {
           extraEnv = {
             DRI_PRIME = "pci-" + lib.replaceStrings [ ":" "." ] [ "_" "_" ] config.custom.platform.dgpuPciId;
           };
@@ -861,14 +869,6 @@
       # owned by modules/security/hardening.nix (custom.security.hardening).
       services.openssh.enable = true;
 
-      # Keys that may SSH in as asher (merged with ~/.ssh/authorized_keys).
-      # Declared here so the hardening module's lockout-guard assertion can
-      # verify a key exists before it disables password authentication.
-      users.users.asher.openssh.authorizedKeys.keys = [
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKUnqq4zcVhHe5NyupFpnlU8+b1/Gvw3O2VRbgZm/eNi root@deepcomputing"
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM6HhsWIY7VCGLpu/ucXvzkuuf4GOtUMraf7sVflf775 ubuntu@deepcomputing"
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL+eqhrKR37FkxmiCuyZav4XVF7JK/1/yFA0rKaBBlbE hermes@framework16"
-      ];
 
       # Malware Shield (modules/security/malware-shield.nix) — monitor mode:
       # log + notify only. Review /var/lib/malware-shield/events.log for false
@@ -1187,27 +1187,36 @@
       programs.wireshark.enable = true;
 
       # ──────────────────────────────────────────────────────────────────────────
-      # Users (unchanged)
+      # Users (primary account name comes from custom.user.name, modules/user.nix)
       # ──────────────────────────────────────────────────────────────────────────
-      users.users.asher = {
+      users.users.${config.custom.user.name} = {
         isNormalUser = true;
-        description = "Asher";
+        description = config.custom.user.name;
         # No "input" — compositor routes HID for normal desktop use.
         # Raw-evdev daemons (blipply service user) keep their own group membership.
         # "docker" removed (root-equivalent; docker is rootless now).
         # "render" added: rootless ollama container needs /dev/kfd for ROCm.
         extraGroups = [ "networkmanager" "wheel" "wireshark" "disk" "video" "audio" "render" ];
         shell = pkgs.bash;
+
+        # Keys that may SSH in (merged with ~/.ssh/authorized_keys). Declared
+        # here (not just via a separate assignment) because Nix disallows two
+        # dynamic-attrpath (`${...}`) definitions against the same computed
+        # key in one config block, unlike static nested attrpaths. Edit the
+        # list in modules/user.nix, not here. The hardening module's
+        # lockout-guard assertion verifies a key exists before it disables
+        # SSH password authentication.
+        openssh.authorizedKeys.keys = config.custom.user.sshAuthorizedKeys;
       };
 
-      # XHCI recover CLI — ssh asher@<tailscale-ip> 'sudo xhci-recover'
+      # XHCI recover CLI — ssh <custom.user.name>@<tailscale-ip> 'sudo xhci-recover'
       # after "HC died" on AMD 0000:c5:00.3 (WiFi path survives; USB NIC does not).
       # Binary is on PATH via environment.systemPackages below (shared derivation).
       # List both the nix-store path and the /run/current-system symlink so
       # `sudo xhci-recover` (PATH) and an explicit store path both match NOPASSWD.
       security.sudo.extraRules = [
         {
-          users = [ "asher" ];
+          users = [ config.custom.user.name ];
           commands = [
             {
               command = "${xhci-recover}/bin/xhci-recover";

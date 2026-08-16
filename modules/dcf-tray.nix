@@ -488,9 +488,9 @@ in {
     # Passwordless sudo for DCF service control
     security.sudo.extraRules = [
       {
-        # Scoped to asher, not all of wheel: NOPASSWD service control should
-        # not extend to every future admin account.
-        users = [ "asher" ];
+        # Scoped to custom.user.name, not all of wheel: NOPASSWD service
+        # control should not extend to every future admin account.
+        users = [ config.custom.user.name ];
         commands = [
           { command = "/run/current-system/sw/bin/systemctl start docker-dcf-id.service"; options = [ "NOPASSWD" ]; }
           { command = "/run/current-system/sw/bin/systemctl stop docker-dcf-id.service"; options = [ "NOPASSWD" ]; }

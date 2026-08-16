@@ -840,7 +840,7 @@ in
 
     user = mkOption {
       type = types.str;
-      default = "asher";
+      default = config.custom.user.name;
       description = ''
         User the server runs as. Defaults to the primary user rather than a
         dedicated system account because `llamactl ollama-import` links models

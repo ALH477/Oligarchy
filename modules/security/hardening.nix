@@ -45,7 +45,7 @@ in
 
     sshUser = mkOption {
       type = types.str;
-      default = "asher";
+      default = config.custom.user.name;
       description = "The (only) user allowed to SSH in; also the user whose declared keys satisfy the lockout guard.";
     };
 

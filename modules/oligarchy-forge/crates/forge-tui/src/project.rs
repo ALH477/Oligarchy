@@ -20,6 +20,19 @@ impl KnownProject {
             .collect::<Vec<_>>()
             .join(", ")
     }
+
+    pub fn agents_summary(&self) -> String {
+        if self.cfg.project.agents.is_empty() {
+            return "(none)".to_string();
+        }
+        self.cfg
+            .project
+            .agents
+            .iter()
+            .map(|a| format!("{a:?}").to_lowercase())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 /// Best-effort: a project directory that's missing or has an unparseable

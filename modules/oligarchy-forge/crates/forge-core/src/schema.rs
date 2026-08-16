@@ -20,6 +20,14 @@ pub struct Project {
     /// here makes the one valid placement also the natural one.
     #[serde(default)]
     pub extensions: Vec<Extension>,
+    /// Coding-agent CLIs to install in the sandbox (see `Agent`). Separate
+    /// from `extensions`: an agent isn't a toolchain, and `run -- <cmd>`
+    /// stays free-form for anything not in this catalog (see
+    /// docs/oligarchy-forge-roadmap.md §8 — the catalog is opt-in, not a
+    /// replacement for that escape hatch). `#[serde(default)]` keeps old
+    /// TOMLs without this key parsing unchanged.
+    #[serde(default)]
+    pub agents: Vec<Agent>,
 }
 
 /// The built-in toolchain extensions. `Base` is implicit — always present
@@ -98,6 +106,107 @@ impl Extension {
     }
 }
 
+/// Coding-agent CLIs the sandbox can install and expose on `PATH`. Unlike
+/// `Extension` (nixpkgs toolchains, baked into the image at build time), an
+/// agent may not be packaged in nixpkgs at all — `packages()` pulls in just
+/// the runtime it needs, and `wrapper_script()` bakes in a lazy,
+/// version-pinned installer that resolves the agent's own dependency tree on
+/// first use inside the running container, rather than at Nix build time.
+///
+/// This deliberately does not replace `run -- <cmd>`'s free-form behavior —
+/// it's an opt-in catalog for agents worth surfacing in the TUI, not a
+/// requirement (docs/oligarchy-forge-roadmap.md §8 explicitly kept `run`/
+/// `shell` package-agnostic; this catalog sits alongside that, not over it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Agent {
+    OhMyPi,
+}
+
+impl Agent {
+    pub const ALL: [Agent; 1] = [Agent::OhMyPi];
+
+    /// nixpkgs attribute names this agent's wrapper needs at runtime, beyond
+    /// what `wrapper_script()` already brings in via its own `let` block
+    /// (e.g. a pinned Bun build — see that doc comment for why the
+    /// nixpkgs-packaged `bun` isn't used).
+    pub fn packages(self) -> &'static [&'static str] {
+        match self {
+            Agent::OhMyPi => &[],
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Agent::OhMyPi => "oh-my-pi",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Agent::OhMyPi => {
+                "Terminal coding agent (`omp`) — hash-anchored edits, LSP, subagents. \
+                 Bun-only runtime (calls Bun.* natives directly, won't run under Node), \
+                 and requires Bun >=1.3.14 — newer than the nixpkgs-packaged `bun` \
+                 (1.3.3), which fails to parse its bundle. Installed lazily and \
+                 version-pinned on first use instead of baked in at image-build time \
+                 (nixpkgs has no reproducible-build helper for Bun package installs)."
+            }
+        }
+    }
+
+    /// A Nix expression (evaluated inside the generated flake's
+    /// `with pkgs; [ ... ]` scope) exposing this agent's CLI on `PATH`.
+    ///
+    /// Fetches a specific pinned Bun release directly from GitHub rather
+    /// than using nixpkgs' `bun` package: the pinned nixos-25.11 revision
+    /// ships Bun 1.3.3, below Oh My Pi's declared `engines.bun >=1.3.14` —
+    /// confirmed empirically, not just from the package.json declaration:
+    /// under 1.3.3 the installed CLI's bundle fails with a parser
+    /// `SyntaxError` before it even gets to `--version`. The fetched zip is
+    /// hash-pinned (reproducible at Nix build time); autoPatchelfHook +
+    /// openssl mirror nixpkgs' own `bun` derivation, which needs the same
+    /// interpreter/rpath patching for the prebuilt binary to run on NixOS.
+    ///
+    /// The agent CLI itself (`omp`) is still installed lazily into
+    /// `$HOME/.bun` on first invocation, not baked in — see `description()`.
+    /// Correct for both volume modes: persistent (`named`) volumes install
+    /// once and reuse it; `ephemeral` sessions reinstall fresh every time,
+    /// which is expected since nothing persists for them anyway.
+    pub fn wrapper_script(self) -> &'static str {
+        match self {
+            Agent::OhMyPi => {
+                r#"(let
+  bunPinned = pkgs.stdenvNoCC.mkDerivation {
+    pname = "bun-pinned";
+    version = "1.3.14";
+    src = pkgs.fetchurl {
+      url = "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip";
+      sha256 = "13w4gvgwrjq9bi3ddp53hgm3z399d8i2aqpcmsaqbw2mx2pf47lm";
+    };
+    sourceRoot = "bun-linux-x64";
+    nativeBuildInputs = [ pkgs.unzip pkgs.autoPatchelfHook ];
+    buildInputs = [ pkgs.openssl ];
+    dontConfigure = true;
+    dontBuild = true;
+    installPhase = ''
+      install -Dm755 ./bun $out/bin/bun
+    '';
+  };
+in pkgs.writeShellScriptBin "omp" ''
+  set -euo pipefail
+  export BUN_INSTALL="$HOME/.bun"
+  bin="$BUN_INSTALL/bin/omp"
+  if [ ! -x "$bin" ]; then
+    ${bunPinned}/bin/bun install -g @oh-my-pi/pi-coding-agent@17.2.12
+  fi
+  exec "$bin" "$@"
+'')"#
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Backend {
@@ -149,8 +258,9 @@ impl ForgeConfig {
         format!("oligarchy-forge-{}-home", self.project.name)
     }
 
-    /// Deduplicated nixpkgs attribute names across all selected extensions,
-    /// in `Extension::ALL` order.
+    /// Deduplicated nixpkgs attribute names across all selected extensions
+    /// and agents (an agent's runtime, e.g. `bun` — not the agent CLI
+    /// itself, see `Agent::wrapper_script()`), in declaration order.
     pub fn nix_packages(&self) -> Vec<&'static str> {
         let mut pkgs: Vec<&'static str> = Vec::new();
         for ext in &self.project.extensions {
@@ -160,7 +270,21 @@ impl ForgeConfig {
                 }
             }
         }
+        for agent in &self.project.agents {
+            for p in agent.packages() {
+                if !pkgs.contains(p) {
+                    pkgs.push(p);
+                }
+            }
+        }
         pkgs
+    }
+
+    /// Nix source for every selected agent's `writeShellScriptBin` wrapper,
+    /// space-joined for direct interpolation into the generated flake's
+    /// `contents` list (see `Agent::wrapper_script()`).
+    pub fn agent_wrappers_nix(&self) -> String {
+        self.project.agents.iter().map(|a| a.wrapper_script()).collect::<Vec<_>>().join(" ")
     }
 
     /// Every pair of currently-selected extensions that provide the same
@@ -267,6 +391,34 @@ mod tests {
         )
         .unwrap();
         assert!(cfg.conflicts().is_empty());
+    }
+
+    #[test]
+    fn agent_wrapper_is_included_when_selected() {
+        let cfg = ForgeConfig::parse(
+            r#"
+            [project]
+            name = "demo"
+            agents = ["oh-my-pi"]
+            "#,
+        )
+        .unwrap();
+        assert!(cfg.project.agents.contains(&Agent::OhMyPi));
+        assert!(cfg.agent_wrappers_nix().contains("oh-my-pi"));
+        assert!(cfg.agent_wrappers_nix().contains("bun-pinned"));
+    }
+
+    #[test]
+    fn no_agents_selected_by_default() {
+        let cfg = ForgeConfig::parse(
+            r#"
+            [project]
+            name = "demo"
+            "#,
+        )
+        .unwrap();
+        assert!(cfg.project.agents.is_empty());
+        assert_eq!(cfg.agent_wrappers_nix(), "");
     }
 
     #[test]

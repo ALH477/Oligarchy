@@ -109,15 +109,18 @@ You now wield **Abbey Road monitoring latency**, local agentic AI supremacy, and
 
 ## Pick Your War Machine
 
-One flake, three configurations — each forged to dominate its own silicon. No throne, no favourites; conscript whichever transistors you happen to own:
+One flake, four configurations — each forged to dominate its own silicon. No throne, no favourites; conscript whichever transistors you happen to own:
 
 | Target          | Build                                           | Silicon                                  | War-AI            |
 |-----------------|-------------------------------------------------|------------------------------------------|-------------------|
 | `nixos`         | `nixos-rebuild switch --flake .#nixos`          | AMD 7040 + Radeon (Framework 16)         | Ollama + ROCm     |
+| `nixos-fw13`    | `nixos-rebuild switch --flake .#nixos-fw13`     | AMD 7040 (Framework 13, iGPU only)       | Ollama + ROCm     |
 | `nixos-intel`   | `nixos-rebuild switch --flake .#nixos-intel`    | Pure Intel iGPU                          | Ollama on CPU     |
 | `nixos-optimus` | `nixos-rebuild switch --flake .#nixos-optimus`  | Intel iGPU + Nvidia dGPU (PRIME offload) | Ollama + CUDA     |
 
-Flip one knob — `custom.platform.{gpu,cpu,framework}` — and the flake re-forges the GPU stack, kernel modules, power policy, and AI acceleration to match. The Nvidia dGPU stays asleep until you summon it for war (`nvidia-offload <cmd>`); CUDA wakes it for the local AI stack. Fill in your disks (and, for Optimus, your PCI bus ids) in `hosts/<target>/hardware-configuration.nix`.
+Flip one knob — `custom.platform.{gpu,cpu,framework,hasDgpu}` — and the flake re-forges the GPU stack, kernel modules, power policy, and AI acceleration to match. The Nvidia dGPU stays asleep until you summon it for war (`nvidia-offload <cmd>`); CUDA wakes it for the local AI stack. Fill in your disks (and, for Optimus, your PCI bus ids) in `hosts/<target>/hardware-configuration.nix`.
+
+Forking this for your own machine? Set your account name and SSH keys in one place — `custom.user.name` / `custom.user.sshAuthorizedKeys` (`modules/user.nix`) — instead of hunting down every hardcoded username. Booting the installer ISO, run `oligarchy-hw-detect` from a TTY first: it identifies Framework 13 vs 16 (or neither) via DMI, tells you which target above to build, walks `nixos-generate-config` for your real disk UUIDs, and offers to pull pending Framework BIOS/EC firmware from LVFS via `fwupdmgr` before you install. `nixos-fw13` is wired up against upstream `nixos-hardware`'s `framework-13-7040-amd` profile but unverified on real Framework 13 hardware — the maintainer's units are a Framework 16 and a RISC-V cluster.
 
 ## Personas — One Switch, Four War Footings
 
@@ -248,12 +251,13 @@ Every control is a declarative NixOS option, default-off unless noted. See [`doc
 | SSH keys-only + fail2ban | `custom.security.hardening` (preset `hardened`) | **on** | `PasswordAuthentication no`, `AllowUsers`, `MaxAuthTries 3`; brute-force banning with private ranges exempt. Lockout-guard assertion requires a declared key |
 | AppArmor + auditd | `custom.security.hardening.{apparmor,auditd}` | off (soak first) | Flip on after a clean soak; complain-first profiles |
 | USBGuard | `custom.security.hardening.usbguard` (preset `paranoid`) | off | Blocks newly-plugged USB; disruptive with Framework expansion cards |
-| Strict egress firewall | `networking.firewall.strictEgress` | **on, dry-run** | Default-deny outbound allowlist as a standalone nft `output` table (coexists with the ingress firewall + IP blocker). Soak on `WOULDBLOCK` logs, then set `recovery.dryRun = false` |
+| Strict egress firewall | `networking.firewall.strictEgress` | **on, enforcing** | Default-deny outbound allowlist as a standalone nft `output` table (coexists with the ingress firewall + IP blocker). Soaked, then `recovery.dryRun = false`; `recovery.failOpen = true` still flushes the chain if `cache.nixos.org` becomes unreachable |
 | Malware Shield | `custom.malwareShield` (level `monitor`) | **on** | ClamAV + lynis/unhide + AIDE + YARA; log-only until you raise to `quarantine`. Closure scanned at build via `nix build .#malwareScan` |
 | Ingress IP blocklist | `services.demod-ip-blocker` | **on** | Refreshes every 24h |
 | Rootless Docker | `virtualisation.docker.rootless` | **on** | Daemon runs as the user; no root-equivalent `docker` group |
 | Secure Boot | `custom.secureBoot.enable` | off | lanzaboote signed chain + optional TPM2 LUKS |
 | Secrets | `custom.secrets` (sops-nix) | **on** | Age key lives at `/var/lib/sops-nix/key.txt` (never in-store); encrypted `*.enc.env` only |
+| Steam/game sandbox | `steam-noswap.slice` + `systemd-run` launch wrapper | **on** | `MemorySwapMax=0` isolates games from swap/zram; `NoNewPrivileges`, `ProtectHome`/`Hostname`/`Clock`/`Kernel*`/`ControlGroups`, `RestrictSUIDSGID`, `LockPersonality` shrink blast radius. Excludes anything that breaks Proton/Wine (namespaces, W+X memory) or GameMode's realtime scheduling — see `docs/security-hardening.md` Phase 7 |
 
 `oligarchy-security status` (also `oligarchy-ctl status`, the DCF tray, and the MCP `security_status` tool) reports live posture.
 

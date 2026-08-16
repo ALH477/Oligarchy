@@ -25,40 +25,54 @@ physically possible.
 
 ## Fix
 
-Override `programs.steam.package` to inject `DRI_PRIME` into Steam's FHS
-environment via the `extraEnv` parameter. Every Steam-launched game (Proton or
-native) inherits this env var and renders on the dGPU. The dGPU still powers
-down when no game is using it.
-
-### Change to apply (both repositories)
-
-**`/etc/nixos/configuration.nix`** — lines ~175–178:
+**Superseded by a real option** — this used to be a hardcoded, copy-pasted
+`extraEnv` block. It's now driven by `custom.platform.displayGpu` /
+`dgpuPciId` (`modules/platform.nix`), a general dual-AMD-GPU option, not a
+Steam-specific patch. Override `programs.steam.package` to inject
+`DRI_PRIME` into Steam's FHS environment via the `extraEnv` parameter, only
+when `displayGpu == "dgpu"` (the default) — so flipping that one option to
+`"igpu"` (e.g. on battery) also stops force-routing Steam to the dGPU:
 
 ```nix
+# configuration.nix — "Gaming" section
 programs.steam = lib.mkIf config.custom.steam.enable {
   enable = true;
   extraCompatPackages = [ pkgs.proton-ge-bin ];
-  package = pkgs.steam.override {
+  package = lib.mkIf (config.custom.platform.displayGpu == "dgpu") (pkgs.steam.override {
     extraEnv = {
-      DRI_PRIME = "pci-0000_03_00_0";  # Navi 33 dGPU (renderD128)
+      DRI_PRIME = "pci-" + lib.replaceStrings [ ":" "." ] [ "_" "_" ] config.custom.platform.dgpuPciId;
     };
-  };
+  });
 };
 ```
 
-**`~/Documents/oligarchy2/Oligarchy/configuration.nix`** — lines ~356–359:
+`config.custom.platform.dgpuPciId` defaults to `"0000:03:00.0"` (this
+machine's Navi 33) — see `modules/platform.nix`.
 
-```nix
-programs.steam = lib.mkIf config.custom.steam.enable {
-  enable = true;
-  extraCompatPackages = [ pkgs.proton-ge-bin ];
-  package = pkgs.steam.override {
-    extraEnv = {
-      DRI_PRIME = "pci-0000_03_00_0";  # Navi 33 dGPU (renderD128)
-    };
-  };
-};
-```
+Every Steam-launched game (Proton or native) inherits this env var and
+renders on the dGPU. The dGPU still powers down when no game is using it.
+
+Since then, Steam is also launched through a hardened, swap-isolated
+`systemd-run` wrapper rather than the raw binary (both from the IceWM menu in
+`configuration.nix` and the `steam.desktop` override in
+`home/apps/desktop-entries.nix`) — see `docs/security-hardening.md` Phase 7.
+That wrapper is orthogonal to `DRI_PRIME`: it controls the cgroup/sandbox the
+process runs in, not which GPU it renders on.
+
+### Do NOT try to also force Hyprland's own backend device onto the dGPU
+
+A follow-up attempt added `AQ_DRM_DEVICES` to `home/hyprland/default.nix` to
+make Hyprland/Aquamarine itself prefer the dGPU, with the dGPU listed first
+and the iGPU as a "fallback." **This crashed Hyprland outright** — confirmed
+via coredump (`CCompositor::initServer` → `throwError` → `SIGABRT`) — and
+took greetd down with it in a crash loop, locking out both Hyprland and
+IceWM until a hard reboot. `AQ_DRM_DEVICES` does not gracefully fall back
+here: per the hardware topology above, the dGPU has no display engine path
+at all, so telling Aquamarine to open it as the primary backend/KMS device
+is fatal, not just suboptimal, and there's nothing a "fallback" entry could
+succeed at. The compositor's own backend has to stay on the iGPU regardless
+of `displayGpu`; only client-app rendering (`DRI_PRIME`, above) can be
+routed to the dGPU. Don't re-attempt this.
 
 ### Why `pci-0000_03_00_0`
 

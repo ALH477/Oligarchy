@@ -10,10 +10,10 @@ let
   cfg = config.custom.terminus-dev;
 
   # Path to the local unified-UI working tree (developer machine only)
-  unifiedUiDir = "/home/asher/Downloads/unified-UI";
+  unifiedUiDir = "/home/${config.custom.user.name}/Downloads/unified-UI";
 
   # Pre-built binary (built once with `nix build .#demod-desktop-developer`)
-  stackBin = "/home/asher/.local/bin/terminus-stack/bin/demod-desktop-developer";
+  stackBin = "/home/${config.custom.user.name}/.local/bin/terminus-stack/bin/demod-desktop-developer";
 
   terminus-launcher = pkgs.writeShellScriptBin "terminus" ''
     export DEMOD_APP_DIR="${unifiedUiDir}"
@@ -22,7 +22,7 @@ let
 
   terminus-dsp = pkgs.writeShellScriptBin "terminus-dsp" ''
     # DSP Studio standalone (no RT engine needed for GUI-only work)
-    exec /home/asher/demod-ui/demod-ui "${unifiedUiDir}/dsp/dsp_studio.lua" "$@"
+    exec /home/${config.custom.user.name}/demod-ui/demod-ui "${unifiedUiDir}/dsp/dsp_studio.lua" "$@"
   '';
 
   terminus-desktop = pkgs.makeDesktopItem {
@@ -44,6 +44,49 @@ let
     categories = [ "Development" "AudioVideo" ];
     startupNotify = false;
   };
+  # ── demod-rt auto-link ─────────────────────────────────────────────────────
+  # PipeWire does not connect demod-rt's outputs to anything, so a freshly
+  # launched Terminus is silent until someone runs pw-link by hand, and the links
+  # die with the process.
+  #
+  # This is deliberately NOT a WirePlumber policy rule. WP only builds an audio
+  # linkable out of nodes that expose SPA_PARAM_PortConfig (si-audio-adapter), and
+  # demod-rt is a pipewire-jack client node, which does not. Stamping
+  # `media.class = "Stream/Output/Audio"` + `node.autoconnect = true` onto it via
+  # jack.rules was verified to apply cleanly and still produce zero links — the
+  # node never becomes a linkable, so the policy never sees it. Hence an explicit
+  # linker.
+  #
+  # It only acts when demod-rt:out_L has NO outgoing link, so manual routing —
+  # notably terminus-dsp-connect sending demod-rt through the ArchibaldOS DSP VM
+  # — is never overridden.
+  demod-rt-autolink = pkgs.writeShellScript "demod-rt-autolink" ''
+    default_sink() {
+      wpctl inspect @DEFAULT_AUDIO_SINK@ 2>/dev/null |
+        sed -n 's/.*node\.name = "\([^"]*\)".*/\1/p' | head -1
+    }
+
+    already_linked() {
+      pw-link -l 2>/dev/null | grep -A1 '^demod-rt:out_L$' | grep -q '|->'
+    }
+
+    sync_links() {
+      pw-link -o 2>/dev/null | grep -qx 'demod-rt:out_L' || return 0
+      already_linked && return 0
+
+      sink=$(default_sink)
+      [ -n "$sink" ] || return 0
+
+      pw-link "demod-rt:out_L" "$sink:playback_FL" 2>/dev/null || return 0
+      pw-link "demod-rt:out_R" "$sink:playback_FR" 2>/dev/null || true
+      echo "autolink: demod-rt -> $sink"
+    }
+
+    # Reconcile once (covers demod-rt already running), then on every graph change.
+    sync_links
+    pw-link -m -o 2>/dev/null | while IFS= read -r _; do sync_links; done
+  '';
+
   terminus-dsp-connect = pkgs.writeShellScriptBin "terminus-dsp-connect" ''
     # Route Terminus Dev audio through ArchibaldOS DSP VM
     # Usage: terminus-dsp-connect [start|stop|status]
@@ -105,5 +148,18 @@ in
       terminus-desktop
       terminus-dsp-desktop
     ];
+
+    systemd.user.services.demod-rt-autolink = {
+      description = "Link demod-rt outputs to the default PipeWire sink";
+      wantedBy = [ "pipewire.service" ];
+      after = [ "pipewire.service" "wireplumber.service" ];
+      partOf = [ "pipewire.service" ];
+      path = with pkgs; [ pipewire wireplumber gnugrep gnused coreutils ];
+      serviceConfig = {
+        ExecStart = demod-rt-autolink;
+        Restart = "always";
+        RestartSec = 2;
+      };
+    };
   };
 }

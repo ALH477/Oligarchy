@@ -7,7 +7,7 @@
 //! background `nix eval` sanity check (`forge_core::stream::eval_check_streaming`).
 
 use anyhow::Result;
-use forge_core::schema::{Extension, ForgeConfig};
+use forge_core::schema::{Agent, Extension, ForgeConfig};
 use forge_core::stream::{eval_check_streaming, EvalEvent};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -22,6 +22,18 @@ pub const SELECTABLE: [Extension; 6] = [
     Extension::Go,
     Extension::FaustJack,
 ];
+
+/// Either a toolchain extension or an agent leaf in the picker tree —
+/// `highlighted()` needs a single return type since the tree cursor can
+/// land on either category, and `toggle()` dispatches on it. Agents have no
+/// conflict-checking today (only one exists); `PendingConflict` stays
+/// `Extension`-only rather than being generalized for a case that can't
+/// happen yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Selectable {
+    Ext(Extension),
+    Agent(Agent),
+}
 
 pub enum EvalStatus {
     Idle,
@@ -53,6 +65,7 @@ impl EditState {
         let cfg = forge_core::process::load_or_default_project_toml(&path, project_name)?;
         let mut tree_state = TreeState::default();
         tree_state.open(vec!["extensions"]);
+        tree_state.open(vec!["agents"]);
         Ok(EditState {
             cfg,
             path,
@@ -68,18 +81,32 @@ impl EditState {
         self.cfg.project.extensions.contains(&ext)
     }
 
-    /// Currently-highlighted extension, if the tree cursor is on a leaf
-    /// (not the "extensions" category node itself).
-    pub fn highlighted(&self) -> Option<Extension> {
+    pub fn is_agent_selected(&self, agent: Agent) -> bool {
+        self.cfg.project.agents.contains(&agent)
+    }
+
+    /// Currently-highlighted leaf (extension or agent), if the tree cursor
+    /// is on one — not on a category node itself.
+    pub fn highlighted(&self) -> Option<Selectable> {
         let selected = self.tree_state.selected();
         let leaf_id = selected.last()?;
         if selected.len() < 2 {
-            return None; // cursor is on the category node, not a leaf
+            return None; // cursor is on a category node, not a leaf
         }
-        SELECTABLE.iter().copied().find(|ext| ext.label() == *leaf_id)
+        if let Some(ext) = SELECTABLE.iter().copied().find(|ext| ext.label() == *leaf_id) {
+            return Some(Selectable::Ext(ext));
+        }
+        Agent::ALL.iter().copied().find(|agent| agent.label() == *leaf_id).map(Selectable::Agent)
     }
 
-    pub fn toggle(&mut self, ext: Extension) {
+    pub fn toggle(&mut self, item: Selectable) {
+        match item {
+            Selectable::Ext(ext) => self.toggle_extension(ext),
+            Selectable::Agent(agent) => self.toggle_agent(agent),
+        }
+    }
+
+    fn toggle_extension(&mut self, ext: Extension) {
         if self.pending_conflict.is_some() {
             return; // resolve the pending conflict first
         }
@@ -103,6 +130,20 @@ impl EditState {
                 self.after_change();
             }
         }
+    }
+
+    /// No conflict-checking: only one agent exists today, so there's
+    /// nothing to collide with yet (see `Selectable`'s doc comment).
+    fn toggle_agent(&mut self, agent: Agent) {
+        if self.pending_conflict.is_some() {
+            return;
+        }
+        if self.is_agent_selected(agent) {
+            self.cfg.project.agents.retain(|a| *a != agent);
+        } else {
+            self.cfg.project.agents.push(agent);
+        }
+        self.after_change();
     }
 
     pub fn resolve_conflict_keep_new(&mut self) {

@@ -171,6 +171,10 @@
         # Per-host modules set the gpu/cpu; default is the Framework 16 AMD config.
         ./modules/platform.nix
 
+        # Primary-account identity (custom.user.name / .sshAuthorizedKeys).
+        # Declared before configuration.nix and the modules that consume it.
+        ./modules/user.nix
+
         # Local modules - order matters! Options must be defined before config uses them
         # Boot intro options (single module; TUI/API/StreamDB stubs were removed)
         boot-intro.nixosModules.boot-intro
@@ -231,14 +235,14 @@
 
       # Home Manager integration (system only — the ISO's live user is created by
       # the installer profile, not by HM). Shared by every host.
-      hmModule = {
+      hmModule = { config, ... }: {
         imports = [ home-manager.nixosModules.home-manager ];
         home-manager = {
           useGlobalPkgs = true;
           useUserPackages = true;
           backupFileExtension = "hm-backup";
-          users.asher = import ./home/home.nix;
-          extraSpecialArgs = specialArgs;
+          users.${config.custom.user.name} = import ./home/home.nix;
+          extraSpecialArgs = specialArgs // { primaryUsername = config.custom.user.name; };
         };
       };
 
@@ -247,6 +251,57 @@
         modules = commonModules ++ [ hmModule ] ++ hostModules;
       };
 
+      # Installer-only helper: detects Framework 13 vs 16 (or neither) via DMI,
+      # suggests the matching `nixosConfigurations.*` target, walks through
+      # `nixos-generate-config` for the real disk UUIDs, and offers to check/
+      # apply pending Framework BIOS/EC firmware updates via fwupd/LVFS before
+      # install. Read-only aside from the opt-in `fwupdmgr update` step; never
+      # runs automatically. See README.md's "Pick Your War Machine" section.
+      oligarchyHwDetect = pkgs.writeShellScriptBin "oligarchy-hw-detect" ''
+        set -euo pipefail
+
+        echo "== Oligarchy hardware + firmware check =="
+        echo
+
+        product=$(cat /sys/class/dmi/id/product_name 2>/dev/null || echo unknown)
+        vendor=$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || echo unknown)
+        echo "DMI vendor/product: $vendor / $product"
+
+        case "$product" in
+          *"Laptop 13"*) target="nixos-fw13 (Framework 13 AMD)" ;;
+          *"Laptop 16"*) target="nixos (Framework 16 AMD)" ;;
+          *) target="nixos-intel or nixos-optimus (non-Framework — nixos-optimus if you have Intel+Nvidia, nixos-intel otherwise)" ;;
+        esac
+        echo "Suggested flake target: $target"
+        echo
+        echo "Next steps:"
+        echo "  1. Partition + mount your disks under /mnt as usual."
+        echo "  2. nixos-generate-config --root /mnt --show-hardware-config > /tmp/hw.nix"
+        echo "  3. Copy the filesystems section of /tmp/hw.nix into the matching"
+        echo "     hosts/<target>/hardware-configuration.nix, replacing the"
+        echo "     FILL-IN-*-UUID markers (or modules/hardware-configuration.nix"
+        echo "     for the nixos/Framework-16 target)."
+        echo "  4. sudo nixos-install --flake <path-to-flake>#<target>"
+        echo
+
+        if command -v fwupdmgr >/dev/null 2>&1; then
+          echo "== Firmware (BIOS/EC) check via fwupd/LVFS =="
+          fwupdmgr get-devices || true
+          echo
+          if fwupdmgr get-updates 2>/dev/null; then
+            echo
+            read -r -p "Apply pending firmware updates now, before installing? [y/N] " ans
+            case "$ans" in
+              y|Y) fwupdmgr update ;;
+              *) echo "Skipping — run 'fwupdmgr update' later from the installed system." ;;
+            esac
+          else
+            echo "No pending updates, or fwupd couldn't reach LVFS (offline install?)."
+          fi
+        else
+          echo "fwupdmgr not present on this image."
+        fi
+      '';
     in
     {
       # ════════════════════════════════════════════════════════════════════════
@@ -258,6 +313,22 @@
         nixos-hardware.nixosModules.framework-16-7040-amd
         ./modules/hardware-configuration.nix
         { custom.platform = { gpu = "amd"; cpu = "amd"; framework = true; }; }
+      ];
+
+      # Framework 13 AMD 7040 — iGPU only, no expansion-bay dGPU. Unverified
+      # against real hardware (see hosts/framework13/hardware-configuration.nix).
+      nixosConfigurations.nixos-fw13 = mkHost [
+        nixos-hardware.nixosModules.framework-13-7040-amd
+        ./hosts/framework13/hardware-configuration.nix
+        {
+          custom.platform = {
+            gpu = "amd";
+            cpu = "amd";
+            framework = true;
+            frameworkModel = "13";
+            hasDgpu = false;
+          };
+        }
       ];
 
       # Pure Intel laptop (iGPU only, CPU inference).
@@ -369,11 +440,21 @@
 
               documentation.enable = false;
               documentation.nixos.enable = false;
+
+              # Framework hardware-detect + fwupd firmware-check helper —
+              # run `oligarchy-hw-detect` from a TTY before nixos-install.
+              environment.systemPackages = [ oligarchyHwDetect ];
+              services.fwupd.enable = lib.mkForce true;
             })
           ];
         };
 
         default = self.packages.${system}.iso;
+
+        # Standalone package too, so it can be pulled into a dev shell or run
+        # directly on an already-installed system for a firmware check:
+        #   nix run .#oligarchy-hw-detect
+        oligarchy-hw-detect = oligarchyHwDetect;
 
         # ════════════════════════════════════════════════════════════════════
         # MCP self-audit build gate — runs the ports-sec `mcp_self_audit`
@@ -467,9 +548,99 @@
       formatter.${system} = pkgs.nixfmt-rfc-style;
 
       # ════════════════════════════════════════════════════════════════════════
+      # BIOS UMA/iGPU-carve-out unlock tooling — deliberately isolated from
+      # devShells.default and from every nixosConfiguration. Entered by hand
+      # only: `nix develop .#bios-tools`. See docs/bios-uma-unlock.md — this
+      # is real firmware modification with real bricking risk; nothing here
+      # runs automatically or is part of any build/boot path.
+      # ════════════════════════════════════════════════════════════════════════
+      devShells.${system} = {
+      bios-tools = pkgs.mkShell {
+        buildInputs = [
+          pkgs.flashrom
+          pkgs.uefitool
+          pkgs.chipsec
+          pkgs.ifrextractor-rs
+
+          (pkgs.writeShellScriptBin "oligarchy-bios-uma-unlock" ''
+            set -euo pipefail
+
+            usage() {
+              echo "Usage:"
+              echo "  oligarchy-bios-uma-unlock read  <VarName> <VarGuid>"
+              echo "  oligarchy-bios-uma-unlock write <VarName> <VarGuid> <offset> <hex-byte> --backup <path>"
+              echo
+              echo "Read docs/bios-uma-unlock.md in full before using 'write'."
+              exit 1
+            }
+
+            [ $# -ge 1 ] || usage
+            cmd="$1"; shift
+
+            case "$cmd" in
+              read)
+                [ $# -eq 2 ] || usage
+                name="$1"; guid="$2"
+                tmp=$(mktemp)
+                echo "+ chipsec_util uefi var-read '$name' '$guid' '$tmp'"
+                sudo chipsec_util uefi var-read "$name" "$guid" "$tmp"
+                echo "== hex dump =="
+                xxd "$tmp"
+                rm -f "$tmp"
+                ;;
+              write)
+                [ $# -eq 6 ] && [ "$5" = "--backup" ] || usage
+                name="$1" guid="$2" offset="$3" newbyte="$4" backup="$6"
+
+                [ -s "$backup" ] || { echo "Backup file '$backup' missing or empty — refusing to continue." >&2; exit 1; }
+
+                echo "This will modify a live UEFI Setup NVRAM variable on this machine."
+                echo "Variable: $name  GUID: $guid  offset: $offset  new byte: $newbyte"
+                echo "Confirmed backup present at: $backup"
+                echo
+                echo "Have you (a) read docs/bios-uma-unlock.md in full, (b) independently"
+                echo "identified this exact offset from YOUR OWN BIOS dump via IFRExtractor"
+                echo "(not a guess), and (c) got the machine on AC power with no other"
+                echo "critical work in progress?"
+                echo
+                read -r -p "Type exactly: I ACCEPT THE BRICK RISK   " confirm
+                [ "$confirm" = "I ACCEPT THE BRICK RISK" ] || { echo "Aborted."; exit 1; }
+
+                cur=$(mktemp); new=$(mktemp)
+                sudo chipsec_util uefi var-read "$name" "$guid" "$cur"
+                echo "== current value =="; xxd "$cur"
+
+                cp "$cur" "$new"
+                printf "$(printf '\\x%s' "$newbyte")" | dd of="$new" bs=1 seek="$offset" count=1 conv=notrunc status=none
+
+                echo "== proposed new value =="; xxd "$new"
+                read -r -p "Write this? [y/N] " go
+                [ "$go" = "y" ] || [ "$go" = "Y" ] || { echo "Aborted, nothing written."; rm -f "$cur" "$new"; exit 1; }
+
+                sudo chipsec_util uefi var-write "$name" "$guid" "$new"
+
+                verify=$(mktemp)
+                sudo chipsec_util uefi var-read "$name" "$guid" "$verify"
+                echo "== read-back after write =="; xxd "$verify"
+                cmp -s "$new" "$verify" && echo "Verified: variable now matches what was written." \
+                  || echo "WARNING: read-back does not match what was written — investigate before rebooting."
+                rm -f "$cur" "$new" "$verify"
+                ;;
+              *) usage ;;
+            esac
+          '')
+        ];
+
+        shellHook = ''
+          echo "bios-tools shell — read docs/bios-uma-unlock.md before doing anything."
+          echo "This shell can modify live firmware NVRAM. Nothing here runs unless you run it."
+        '';
+      };
+
+      # ════════════════════════════════════════════════════════════════════════
       # Development Shell with Testing Tools
       # ════════════════════════════════════════════════════════════════════════
-      devShells.${system}.default = pkgs.mkShell {
+      default = pkgs.mkShell {
         buildInputs = with pkgs; [
           # Core Nix development
           nil # Nix LSP
@@ -522,6 +693,7 @@
           echo "║ Tools: nix-tree, nix-diff, htop, iftop, tshark, qemu           ║"
           echo "╚════════════════════════════════════════════════════════════════╝"
         '';
+      };
       };
     };
 }

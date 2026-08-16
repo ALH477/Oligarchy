@@ -15,8 +15,8 @@ nothing to "run" beyond `nixos-rebuild switch`.
 |---|---|
 | Base | NixOS, nixpkgs `nixos-25.11` stable (`nixpkgs-unstable` available via the `unstable` overlay) |
 | State version | `25.11` |
-| Primary target | Framework 16 AMD 7040 (Ryzen 7 7840HS, Radeon 780M iGPU) |
-| Alternate targets | pure Intel iGPU, Intel + NVIDIA Optimus dGPU |
+| Primary target | Framework 16 AMD 7040 (Ryzen 7 7840HS, Radeon 780M iGPU + optional Navi 33/RX 7700S dGPU expansion module) |
+| Alternate targets | Framework 13 AMD 7040 (iGPU only, unverified on real hardware), pure Intel iGPU, Intel + NVIDIA Optimus dGPU |
 | Primary desktop | Hyprland (Wayland); Plasma 6, X11 fallbacks |
 | Kernel variants | `zen`, `xanmod`, `latest`, `lts` (6.12), `cachyos-bore` (opt-in) |
 | DSP | Real-time coprocessor guest via KVM/QEMU + NETJACK, isolated CPU core `isolcpus=0` |
@@ -73,7 +73,7 @@ Option namespaces in play:
 
 | Namespace | Handles |
 |---|---|
-| `custom.*` | `custom.steam`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.secrets`, `custom.secureBoot`, `custom.kernel.variant`, `custom.platform.gpu`, `custom.security.hardening`, `custom.dsp.enable` |
+| `custom.*` | `custom.steam`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.secrets`, `custom.secureBoot`, `custom.kernel.variant`, `custom.platform.gpu`, `custom.platform.displayGpu`, `custom.security.hardening`, `custom.dsp.enable` |
 | `services.*` | project-defined services like `services.ollamaAgentic`, `services.dcf-tray`, `services.boot-intro`, `services.oligarchyGreeting`, `services.dsp-vm` |
 | `networking.firewall.strictEgress` | the nftables egress firewall (`modules/security/strict-egress.nix`) |
 | `hardware.cpuSecurity` | CPU/kernel mitigations (forced spectre/MDS/SRSO + MSR-write block) |
@@ -93,6 +93,24 @@ strictEgress, cpuSecurity, hardening, malwareShield, secrets, mcpServers
 **Convention:** when adding a new always-on service to
 `configuration.nix`, check whether the ISO `mkForce` block in `flake.nix`
 also needs a matching disable line.
+
+## 4b. Installer helper + firmware updates
+
+`nix run .#oligarchy-hw-detect` (also on the ISO's `$PATH` as
+`oligarchy-hw-detect`) identifies Framework 13 vs 16 (or neither) via DMI,
+prints the matching `nixosConfigurations.*` target, and walks
+`nixos-generate-config` for the real disk UUIDs the per-host
+`hardware-configuration.nix` stubs need. It also offers to check/apply
+pending Framework BIOS/EC firmware via `fwupdmgr` (LVFS) before install —
+`services.fwupd.enable = true` is already on in `configuration.nix`
+(`UpdateOnBoot=false`; updates are manual, via the `fwupd-refresh` timer or
+`fwupdmgr update`), forced on in the ISO too.
+
+For the separate, much riskier question of changing the iGPU's UMA/framebuffer
+RAM carve-out (a BIOS Setup NVRAM field, not anything Nix or the kernel
+controls) see `docs/bios-uma-unlock.md` and the isolated
+`devShells.bios-tools` — deliberately not part of any `nixosConfiguration` or
+the ISO.
 
 ## 5. `modules/` — subsystems
 
@@ -114,7 +132,7 @@ input.
 | `modules/agentic-local-ai.nix` | Ollama + ROCm/CUDA/CPU (`services.ollamaAgentic`) |
 | `modules/secrets.nix` | sops-nix wiring for `custom.secrets` |
 | `modules/secure-boot.nix` | lanzaboote signed boot chain + optional TPM2-sealed LUKS |
-| `modules/platform.nix` | GPU/CPU/framework probes, `custom.platform.gpu`, kernel-module fixes (e.g. AMD `usb-storage.quirks=:u`), Framework "You are based" banner |
+| `modules/platform.nix` | GPU/CPU/framework probes, `custom.platform.gpu`, kernel-module fixes (e.g. AMD `usb-storage.quirks=:u`), Framework "You are based" banner. On dual-AMD-GPU hosts, `custom.platform.displayGpu` (default `"dgpu"`) plus `dgpuPciId`/`igpuPciId` select which GPU client apps (games, anything launched from Hyprland) render on via Mesa `DRI_PRIME`. This never touches Hyprland/Aquamarine's own backend device — the compositor always uses the iGPU, since the dGPU module has no display engine path of its own and telling Aquamarine to open it as primary is a fatal, unrecoverable crash (see `docs/dgpu-steam-forcing.md`) |
 | `modules/personas.nix` | `studio / gaming / dev / battery` — one-switch re-arming of kernel + DSP + AI + audio quantum + power (`dev` is the default) |
 | `modules/blipply-integration.nix` | Voice assistant wiring; reads the MCP over stdio |
 
@@ -177,12 +195,13 @@ rollout runbook.
 | SSH keys-only + fail2ban | `custom.security.hardening` (preset `hardened`) | **on** | `PasswordAuthentication no`, `AllowUsers`, `MaxAuthTries 3`; brute-force banning with private ranges exempt. Lockout-guard assertion requires a declared key |
 | AppArmor + auditd | `custom.security.hardening.{apparmor,auditd}` | off (soak first) | Flip on after a clean soak; complain-first profiles |
 | USBGuard | `custom.security.hardening.usbguard` (preset `paranoid`) | off | Blocks newly-plugged USB; disruptive with Framework expansion cards |
-| Strict egress firewall | `networking.firewall.strictEgress` | **on, dry-run** | Default-deny outbound allowlist as a standalone nft `output` table (coexists with the ingress firewall + IP blocker). Soak on `WOULDBLOCK` logs, then set `recovery.dryRun = false` |
+| Strict egress firewall | `networking.firewall.strictEgress` | **on, enforcing** | Default-deny outbound allowlist as a standalone nft `output` table (coexists with the ingress firewall + IP blocker). Flipped from dry-run to `recovery.dryRun = false` on the soaked `nixos` host allowlist (`preset = "developer"` + ollama/blipply-assistant/dcf-node-binary domains); `recovery.failOpen = true` still flushes the chain if `cache.nixos.org` becomes unreachable, so a bad allowlist can't brick a rebuild |
 | Malware Shield | `custom.malwareShield` (level `monitor`) | **on** | ClamAV + lynis/unhide + AIDE + YARA; log-only until you raise to `quarantine`. YARA walks via `find(1)` (no `-L`) to dodge symlink cycles. `custom.malwareShield.yara.excludePaths` skips e.g. Claude Code transcripts. Closure scanned at build via `nix build .#malwareScan` |
 | Ingress IP blocklist | `services.demod-ip-blocker` | **on** | Refreshes every 24h |
 | Rootless Docker | `virtualisation.docker.rootless` | **on** | Daemon runs as the user; no root-equivalent `docker` group |
 | Secure Boot | `custom.secureBoot.enable` | off | lanzaboote signed chain + optional TPM2 LUKS |
 | Secrets | `custom.secrets` (sops-nix) | **on** | Age key lives at `/var/lib/sops-nix/key.txt` (never in-store); encrypted `*.enc.env` only |
+| Steam/game sandbox | `steam-noswap.slice` + `systemd-run` launch wrapper (icewm menu + `home/apps/desktop-entries.nix`) | **on** | `MemorySwapMax=0` (isolates games from swap/zram — a memory ceiling OOM-kills the game instead of thrashing) plus `NoNewPrivileges`, `ProtectHome`/`Hostname`/`Clock`/`Kernel{Tunables,Logs,Modules}`/`ControlGroups`, `RestrictSUIDSGID`, `LockPersonality`. Deliberately excludes `RestrictNamespaces`/`SystemCallFilter` (breaks Proton's pressure-vessel sandbox), `MemoryDenyWriteExecute` (breaks Wine/Mono JIT), `RestrictRealtime` (GameMode may want RT scheduling) |
 
 `oligarchy-security status` (also `oligarchy-ctl status`, the DCF tray,
 and the MCP `security_status` tool) reports live posture.
@@ -199,10 +218,12 @@ except for an allowlist of:
 - **uids** — `cfg.allow.uids` (allow specific daemons to egress
   regardless of destination)
 
-`recovery.dryRun = true` (the default) switches the policy to `accept`
-and logs `WOULDBLOCK` lines for every would-have-been-denied flow, so you
-can soak-shape the allowlist before flipping to enforcement. A curl probe
-guards activation to avoid locking the host out.
+`recovery.dryRun = true` switches the policy to `accept` and logs
+`WOULDBLOCK` lines for every would-have-been-denied flow, letting you
+soak-shape the allowlist before flipping to enforcement. The `nixos` host
+has completed that soak and now runs with `recovery.dryRun = false`
+(enforcing). A curl probe (`recovery.failOpen`) guards activation to avoid
+locking the host out if the allowlist turns out to be wrong.
 
 The table coexists with the upstream NixOS ingress firewall — it adds a
 new `output` hook rather than replacing the firewall chain.
@@ -387,18 +408,29 @@ cd modules/mcp-servers && cargo test --workspace
 
 ## 16. Hardware-specific notes
 
-- `nixos-hardware`'s `framework-16-7040-amd` profile handles most AMD
-  tuning; `fw-fanctrl` adds Framework-specific fan control.
+- `nixos-hardware`'s `framework-16-7040-amd` / `framework-13-7040-amd`
+  profiles handle most AMD tuning; `fw-fanctrl` adds Framework-specific fan
+  control, shared by both chassis (`custom.platform.framework = true`).
+- `custom.platform.frameworkModel` ("13"/"16") only drives banner/display
+  text; `custom.platform.hasDgpu` (default `true` when `gpu = "amd"`, `false`
+  on the `nixos-fw13` host) gates the dGPU DRI_PRIME routing (Steam,
+  Hyprland client apps) so an iGPU-only Framework 13 never gets pointed at a
+  PCI device it doesn't have.
 - The `usb-storage.quirks=:u` kernel param stops a USB audio patchbay
   thrash on `1022:15b9`.
 - The platform module prints a green "You are based." banner to
-  `/dev/console` at `sysinit.target` before the display manager — only on
-  genuine Framework 16 hardware.
+  `/dev/console` at `sysinit.target` before the display manager — on any
+  genuine Framework board (13 or 16).
 - For Optimus hosts: fill in PCI bus IDs and the Intel/NVIDIA driver
-  config in `hosts/nixos-optimus/hardware-configuration.nix`; the dGPU
-  stays asleep until `nvidia-offload <cmd>` summons it.
+  config in `hosts/optimus/hardware-configuration.nix`; the dGPU
+  stays asleep until `nvidia-offload <cmd>` summons it. `hosts/framework13/`
+  and `hosts/intel/` follow the same FILL-IN-UUID stub pattern.
 - Idle power is 5–7 W via `power-profiles-daemon`, `amdgpu` tuning,
   `fw-fanctrl`, and clamshell scripts.
+- The primary account is `custom.user.name` (default `"asher"`,
+  `modules/user.nix`), not a literal scattered across the tree — forking
+  this repo for another machine/user means changing that option (and
+  `custom.user.sshAuthorizedKeys`), not grepping for a username.
 
 ## 17. Branding / palette
 

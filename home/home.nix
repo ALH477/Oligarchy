@@ -1,7 +1,7 @@
-{ config, pkgs, lib, ... }:
+{ config, pkgs, lib, primaryUsername ? "asher", ... }:
 
 let
-  user = "asher";
+  user = primaryUsername;
   homeDirectory = "/home/${user}";
 
   # ── Theme ──────────────────────────────────────────────────────────────────
@@ -45,7 +45,9 @@ in {
   # Inject theme/features/username into every imported module. Modules take
   # `theme ? {}`, `features ? {}`, `username ? "asher"` — these args override
   # those defaults. (imports can't depend on _module.args; static paths above
-  # are fine.)
+  # are fine.) `user` itself comes from `primaryUsername`, passed in via
+  # flake.nix's hmModule from `custom.user.name` (modules/user.nix) — change
+  # that option, not this file, when forking for another account.
   _module.args = {
     theme = activeTheme;
     inherit features;

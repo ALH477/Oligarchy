@@ -66,7 +66,32 @@ in
     framework = mkOption {
       type = types.bool;
       default = true;
-      description = "Apply Framework-16-specific tweaks (USB quirks, fan control).";
+      description = "Apply Framework-specific tweaks (USB quirks, fan control) common to both the 13 and 16.";
+    };
+
+    frameworkModel = mkOption {
+      type = types.nullOr (types.enum [ "13" "16" ]);
+      default = if cfg.framework then "16" else null;
+      description = ''
+        Which Framework chassis this is, for banner/display text only (the
+        16-specific "You are based" boot banner, the boot-intro bottom
+        text). Has no effect on kernel params, fan control, or USB quirks —
+        those are shared by `framework = true` regardless of model. Leave
+        null on non-Framework hardware.
+      '';
+    };
+
+    hasDgpu = mkOption {
+      type = types.bool;
+      default = cfg.gpu == "amd";
+      description = ''
+        Whether this host actually has a second, discrete AMD GPU to route
+        client-app rendering to (e.g. the Framework 16 expansion-bay dGPU).
+        The Framework 13 (and a bare Framework 16 without the dGPU module)
+        have only the iGPU — set this to false there so displayGpu/dgpuPciId
+        DRI_PRIME routing is skipped instead of pointing at a PCI device
+        that doesn't exist.
+      '';
     };
 
     nvidia = {
@@ -197,11 +222,11 @@ in
         };
       };
 
-      # Framework hardware check: only the genuine Framework 16 board gets
+      # Framework hardware check: any genuine Framework board (13 or 16) gets
       # told it's based, printed straight to the boot console before the
       # splash/display-manager claim the tty.
       systemd.services.framework-based-banner = {
-        description = "Tell the user they are based (Framework 16 detected)";
+        description = "Tell the user they are based (Framework ${cfg.frameworkModel or "?"} detected)";
         wantedBy = [ "sysinit.target" ];
         after = [ "systemd-udevd.service" ];
         before = [ "boot-intro-player.service" "display-manager.service" ];

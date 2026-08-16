@@ -72,7 +72,7 @@ The **ISO** (`packages.x86_64-linux.iso`) is built separately via `nixos-generat
 
 The central system module and the main place toggles are flipped. Most features are gated behind custom options and **default to off** in this file — enabling a feature usually means setting its `custom.*`/`services.*` option to `true` here, not editing the module. Option namespaces in play:
 
-- `custom.*` — e.g. `custom.steam`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.secrets`, `custom.secureBoot`, `custom.kernel.variant`, `custom.platform.gpu`.
+- `custom.*` — e.g. `custom.steam`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.secrets`, `custom.secureBoot`, `custom.kernel.variant`, `custom.platform.gpu`, `custom.platform.displayGpu` (dGPU-vs-iGPU client-app rendering on dual-AMD hosts — never routes Hyprland's own backend device to the dGPU, which has no display path and crashes the compositor if you try; see `docs/dgpu-steam-forcing.md`).
 - `services.*` — project-defined services like `services.ollamaAgentic`, `services.dcf-tray`, `services.boot-intro`, `services.oligarchyGreeting`, `services.dsp-vm`.
 - `networking.firewall.strictEgress` — the nftables egress firewall (`modules/security/strict-egress.nix`).
 

@@ -1,4 +1,5 @@
-use crate::edit::{EditState, EvalStatus, SELECTABLE};
+use crate::edit::{EditState, EvalStatus, Selectable, SELECTABLE};
+use forge_core::schema::Agent;
 use crate::project::{discover, KnownProject};
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -255,8 +256,8 @@ fn handle_edit_key(app: &mut App, code: KeyCode) -> bool {
             state.tree_state.key_up();
         }
         KeyCode::Char(' ') | KeyCode::Enter => {
-            if let Some(ext) = state.highlighted() {
-                state.toggle(ext);
+            if let Some(item) = state.highlighted() {
+                state.toggle(item);
             }
         }
         _ => {}
@@ -336,11 +337,12 @@ fn draw_detail(frame: &mut Frame, area: Rect, app: &App) {
     // keeps the info intact instead of silently cutting it off.
     let text = match app.selected_project() {
         Some(p) => format!(
-            "{}  ({:?}/{:?})\nextensions: {}",
+            "{}  ({:?}/{:?})\nextensions: {}\nagents: {}",
             p.cfg.project.name,
             p.cfg.runtime.backend,
             p.cfg.runtime.volume_mode,
-            p.extensions_summary()
+            p.extensions_summary(),
+            p.agents_summary(),
         ),
         None => String::new(),
     };
@@ -379,7 +381,7 @@ fn draw_edit(frame: &mut Frame, state: &mut EditState) {
         .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
         .split(root[0]);
 
-    draw_extension_tree(frame, panes[0], state);
+    draw_selection_tree(frame, panes[0], state);
     if let Some(conflict) = &state.pending_conflict {
         draw_conflict_chooser(frame, panes[1], conflict);
     } else {
@@ -388,20 +390,31 @@ fn draw_edit(frame: &mut Frame, state: &mut EditState) {
     draw_status(frame, root[1], state.status.as_str());
 }
 
-fn draw_extension_tree(frame: &mut Frame, area: Rect, state: &mut EditState) {
-    let leaves: Vec<TreeItem<&'static str>> = SELECTABLE
+fn draw_selection_tree(frame: &mut Frame, area: Rect, state: &mut EditState) {
+    let ext_leaves: Vec<TreeItem<&'static str>> = SELECTABLE
         .iter()
         .map(|ext| {
             let checked = if state.is_selected(*ext) { "[x]" } else { "[ ]" };
             TreeItem::new_leaf(ext.label(), format!("{checked} {}", ext.label()))
         })
         .collect();
-    let items = vec![TreeItem::new("extensions", "Extensions (base always included)", leaves)
-        .expect("leaf identifiers are all distinct extension labels")];
+    let agent_leaves: Vec<TreeItem<&'static str>> = Agent::ALL
+        .iter()
+        .map(|agent| {
+            let checked = if state.is_agent_selected(*agent) { "[x]" } else { "[ ]" };
+            TreeItem::new_leaf(agent.label(), format!("{checked} {}", agent.label()))
+        })
+        .collect();
+    let items = vec![
+        TreeItem::new("extensions", "Extensions (base always included)", ext_leaves)
+            .expect("leaf identifiers are all distinct extension labels"),
+        TreeItem::new("agents", "Agents (coding-agent CLIs)", agent_leaves)
+            .expect("leaf identifiers are all distinct agent labels"),
+    ];
 
     let tree = Tree::new(&items)
         .expect("tree item identifiers are unique")
-        .block(Block::default().borders(Borders::ALL).title(" extensions "))
+        .block(Block::default().borders(Borders::ALL).title(" extensions / agents "))
         .highlight_style(Style::default().add_modifier(Modifier::BOLD).bg(Color::DarkGray));
 
     frame.render_stateful_widget(tree, area, &mut state.tree_state);
@@ -429,8 +442,13 @@ fn draw_edit_side_panel(frame: &mut Frame, area: Rect, state: &EditState) {
         rows[0],
     );
 
+    let agents_label = if state.cfg.project.agents.is_empty() {
+        "(none)".to_string()
+    } else {
+        state.cfg.project.agents.iter().map(|a| a.label()).collect::<Vec<_>>().join(", ")
+    };
     let summary = format!(
-        "project: {}\nbackend: {:?}\nvolume: {:?}\nextensions: {}",
+        "project: {}\nbackend: {:?}\nvolume: {:?}\nextensions: {}\nagents: {}",
         state.cfg.project.name,
         state.cfg.runtime.backend,
         state.cfg.runtime.volume_mode,
@@ -441,10 +459,18 @@ fn draw_edit_side_panel(frame: &mut Frame, area: Rect, state: &EditState) {
             .iter()
             .map(|e| e.label())
             .collect::<Vec<_>>()
-            .join(", ")
+            .join(", "),
+        agents_label,
     );
+    let mut lines: Vec<Line> = summary.lines().map(Line::from).collect();
+    // Description preview for the highlighted agent — same shape as Phase
+    // 3's planned skill-checklist preview pane, one step early.
+    if let Some(Selectable::Agent(agent)) = state.highlighted() {
+        lines.push(Line::from(""));
+        lines.push(Line::styled(agent.description(), Style::default().fg(Color::DarkGray)));
+    }
     frame.render_widget(
-        Paragraph::new(summary)
+        Paragraph::new(lines)
             .block(Block::default().borders(Borders::ALL).title(" oligarchy-forge.toml "))
             .wrap(Wrap { trim: false }),
         rows[1],
@@ -569,7 +595,7 @@ mod tests {
 
         assert!(state.tree_state.key_down()); // -> "extensions" category node
         assert!(state.tree_state.key_down()); // -> first leaf
-        assert_eq!(state.highlighted(), Some(forge_core::schema::Extension::Rust));
+        assert_eq!(state.highlighted(), Some(Selectable::Ext(forge_core::schema::Extension::Rust)));
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -588,12 +614,30 @@ mod tests {
     }
 
     #[test]
+    fn agent_tree_shows_unchecked_by_default_and_toggles_on() {
+        let dir = std::env::temp_dir().join(format!("forge-tui-edit-test-{}-agent", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut state = edit_state_for(&dir, &[]);
+
+        let text = rendered_text_from(|frame| draw_edit(frame, &mut state));
+        assert!(text.contains("[ ] oh-my-pi"), "rendered output:\n{text}");
+
+        state.toggle(Selectable::Agent(forge_core::schema::Agent::OhMyPi));
+        assert!(state.is_agent_selected(forge_core::schema::Agent::OhMyPi));
+
+        let raw = std::fs::read_to_string(dir.join("oligarchy-forge.toml")).unwrap();
+        assert!(raw.contains("oh-my-pi"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn toggling_node_then_node_lts_shows_conflict_chooser() {
         let dir = std::env::temp_dir().join(format!("forge-tui-edit-test-{}-conflict", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut state = edit_state_for(&dir, &["node"]);
 
-        state.toggle(forge_core::schema::Extension::NodeLts);
+        state.toggle(Selectable::Ext(forge_core::schema::Extension::NodeLts));
         assert!(state.pending_conflict.is_some());
 
         let text = rendered_text_from(|frame| draw_edit(frame, &mut state));
@@ -609,7 +653,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let mut state = edit_state_for(&dir, &["node"]);
 
-        state.toggle(forge_core::schema::Extension::NodeLts);
+        state.toggle(Selectable::Ext(forge_core::schema::Extension::NodeLts));
         state.resolve_conflict_keep_new();
 
         assert!(state.pending_conflict.is_none());
