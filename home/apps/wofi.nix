@@ -1,39 +1,12 @@
-{ config, pkgs, lib, theme ? {}, ... }:
+{ config, pkgs, lib, theme ? {}, themes ? {}, ... }:
 
 let
   p = theme;
-in {
-  # ══════════════════════════════════════════════════════════════════════════
-  # Wofi Launcher Configuration
-  # ══════════════════════════════════════════════════════════════════════════
-  home.file.".config/wofi/config".text = ''
-    width=700
-    height=500
-    location=center
-    show=drun
-    prompt=  Search applications...
-    filter_rate=100
-    allow_markup=true
-    no_actions=true
-    insensitive=true
-    allow_images=true
-    image_size=42
-    gtk_dark=true
-    layer=overlay
-    columns=1
-    orientation=vertical
-    halign=fill
-    line_wrap=off
-    dynamic_lines=false
-    content_halign=fill
-    matching=contains
-    sort_order=alphabetical
-    hide_scroll=false
-    key_expand=Tab
-    key_exit=Escape
-  '';
 
-  home.file.".config/wofi/style.css".text = ''
+  # Factored out of the module body so theme-switch.sh has a pre-rendered
+  # variant for every palette to symlink into place live, without a rebuild —
+  # see home/apps/theme-variants.nix for the palette data these read from.
+  renderStyle = p: ''
     @define-color bg ${p.bg};
     @define-color surface ${p.surface};
     @define-color accent ${p.accent};
@@ -128,4 +101,42 @@ in {
       padding: 4px;
     }
   '';
+in {
+  # ══════════════════════════════════════════════════════════════════════════
+  # Wofi Launcher Configuration
+  # ══════════════════════════════════════════════════════════════════════════
+  home.file = {
+    ".config/wofi/config".text = ''
+      width=700
+      height=500
+      location=center
+      show=drun
+      prompt=  Search applications...
+      filter_rate=100
+      allow_markup=true
+      no_actions=true
+      insensitive=true
+      allow_images=true
+      image_size=42
+      gtk_dark=true
+      layer=overlay
+      columns=1
+      orientation=vertical
+      halign=fill
+      line_wrap=off
+      dynamic_lines=false
+      content_halign=fill
+      matching=contains
+      sort_order=alphabetical
+      hide_scroll=false
+      key_expand=Tab
+      key_exit=Escape
+    '';
+
+    ".config/wofi/style.css".text = renderStyle p;
+  } // (lib.mapAttrs'
+    (id: pal: lib.nameValuePair ".config/oligarchy/themes/${id}/wofi.css" {
+      text = renderStyle pal;
+    })
+    themes);
 }
