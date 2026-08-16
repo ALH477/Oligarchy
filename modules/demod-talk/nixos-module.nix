@@ -40,11 +40,20 @@ let
   isWg = wgIfaces ? ${cfg.interface};
   isWgQuick = wgQuickIfaces ? ${cfg.interface};
 
+  # Tailscale IS WireGuard, but it is not declared under
+  # networking.wireguard.interfaces -- it brings up its own tailscale0 via
+  # tailscaled. A tunnel check that only looked at those two option trees would
+  # reject a perfectly good tailnet, so recognise it explicitly.
+  tsIface = config.services.tailscale.interfaceName or "tailscale0";
+  isTailscale = (config.services.tailscale.enable or false) && cfg.interface == tsIface;
+
   # networking.wireguard.interfaces.wg0 -> wireguard-wg0.service
   # networking.wg-quick.interfaces.wg0  -> wg-quick-wg0.service
+  # services.tailscale                  -> tailscaled.service
   tunnelUnit =
     if isWg then "wireguard-${cfg.interface}.service"
     else if isWgQuick then "wg-quick-${cfg.interface}.service"
+    else if isTailscale then "tailscaled.service"
     else null;
 in
 {
@@ -151,6 +160,87 @@ in
       '';
     };
 
+    tailscale = {
+      tag = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "tag:demod-talk";
+        description = ''
+          Informational: the Tailscale ACL tag that gates this room. Tailscale
+          ACLs are tailnet-wide policy and are not managed from NixOS, so this
+          option documents the intended tag and is surfaced in the unit
+          description -- it does not enforce anything by itself. The matching
+          ACL grants only this tag `udp:${toString cfg.port}` on tagged hosts.
+
+          Tailscale also happens to supply three things this stack otherwise
+          lacks: NAT traversal, peer discovery, and cryptographic peer identity.
+          It is the shortest path from the in-process demo to peers talking
+          across the internet.
+        '';
+      };
+
+      acknowledgeTailnetReach = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Silence the warning about every tailnet peer being able to reach the
+          room port. Set this only once an ACL actually restricts it.
+        '';
+      };
+    };
+
+    agent = {
+      enable = mkEnableOption "an LLM agent participating in this room";
+
+      name = mkOption {
+        type = types.str;
+        default = "claude";
+        description = "What the room calls the agent. Mentions gate inference.";
+      };
+
+      llmCommand = mkOption {
+        type = types.listOf types.str;
+        example = [ "ollama" "run" "llama3.2" ];
+        default = [ ];
+        description = ''
+          Command producing a completion on stdout from a prompt on stdin. Local
+          by default and by preference: a room reply is a first-token-latency
+          problem, and a network round trip to a hosted model dominates it.
+        '';
+      };
+
+      sttCommand = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "whisper-cpp" "--no-timestamps" "-f" "-" ];
+        description = ''
+          Speech-to-text, invoked ONLY on a completed talkspurt. DCF marks the
+          trailing edge with FLAG_END_TALKSPURT via DTX, so segmentation is free
+          and an idle room transcribes nothing at all.
+        '';
+      };
+
+      ttsCommand = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "piper" "--model" "en_US-amy-medium" ];
+        description = ''
+          Optional. The agent replies in TEXT and each listener speaks it with
+          its own local TTS -- a spoken reply as Opus costs ~86 kbps, the same
+          reply as DCF-Text costs a few hundred bytes total. Set this only for
+          clients that cannot synthesise locally.
+
+          services.demod-voice already packages piper and Coqui on this distro.
+        '';
+      };
+
+      maxTokens = mkOption {
+        type = types.int;
+        default = 1400;
+        description = "Prompt budget. Older turns compact into a rolling summary.";
+      };
+    };
+
     extraArgs = mkOption {
       type = types.listOf types.str;
       default = [ ];
@@ -162,6 +252,26 @@ in
   config = mkIf cfg.enable {
     assertions = [
       {
+        assertion = !cfg.agent.enable || cfg.agent.llmCommand != [ ];
+        message = "services.demod-talk.agent.enable requires agent.llmCommand.";
+      }
+      {
+        # The MCP surface on this distro is read-only and dry-run by
+        # construction, and mcp_self_audit fails the build if a read-write
+        # server reaches .mcp.json. An agent that SPEAKS into a room is
+        # read-write by definition, so it lives here as an ordinary service --
+        # the same category as dcf-mesh-agent and dcf-hypr-agent -- and must
+        # never be registered as an MCP aspect. This assertion is a tripwire for
+        # anyone who later wires the two together.
+        assertion = !(cfg.agent.enable && (config.custom.mcpServers.extraServers or { }) ? demod-talk);
+        message = ''
+          services.demod-talk.agent is read-write (it speaks into rooms) and must
+          stay out of the MCP surface, which is read-only by construction. Remove
+          the demod-talk entry from custom.mcpServers.extraServers; expose a
+          separate read-only aspect if agents need to READ room history.
+        '';
+      }
+      {
         assertion = cfg.interface != "";
         message = "services.demod-talk.interface must name a real interface — "
           + "DCF is plaintext and must not be bound to a wildcard address.";
@@ -169,22 +279,33 @@ in
       {
         # The tunnel is the security boundary, so make its absence loud rather
         # than letting plaintext voice quietly ride an untrusted link.
-        assertion = isWg || isWgQuick
+        assertion = isWg || isWgQuick || isTailscale
           || cfg.transport == "debug"
           || overTheAir cfg.transport;
         message = ''
-          services.demod-talk.interface = "${cfg.interface}" is not a WireGuard
-          interface declared on this host. DCF carries no encryption, so the
-          tunnel IS the confidentiality boundary. Either declare the interface
-          under networking.wireguard.interfaces / networking.wg-quick.interfaces,
-          or choose an over-the-air transport where plaintext is expected and
-          lawful.
+          services.demod-talk.interface = "${cfg.interface}" is not a tunnel
+          interface on this host. DCF carries no encryption, so the tunnel IS
+          the confidentiality boundary. Declare it under
+          networking.wireguard.interfaces or networking.wg-quick.interfaces,
+          enable services.tailscale and point this at "${tsIface}", or choose an
+          over-the-air transport where plaintext is expected and lawful.
         '';
       }
     ];
 
     warnings =
-      optional (overTheAir cfg.transport) ''
+      # configuration.nix states plainly that tailscale0 is NOT a trusted
+      # interface, because every tailnet peer would otherwise reach whatever
+      # listens on it. That stance applies here: opening a UDP port on the
+      # tailnet exposes the room to the whole tailnet unless ACLs say otherwise.
+      optional (isTailscale && cfg.openFirewall && !cfg.tailscale.acknowledgeTailnetReach) ''
+        services.demod-talk is opening UDP ${toString cfg.port} on ${tsIface},
+        which every peer in your tailnet can reach. This host's own policy treats
+        tailscale0 as untrusted for exactly that reason. Restrict the room with a
+        Tailscale ACL keyed on a tag (see services.demod-talk.tailscale.tag), then
+        set tailscale.acknowledgeTailnetReach = true to silence this.
+      ''
+      ++ optional (overTheAir cfg.transport) ''
         services.demod-talk.transport = "${cfg.transport}" transmits in the
         clear, and that is not merely a default — on US amateur bands, FCC Part
         97.113(a)(4) prohibits messages encoded to obscure their meaning, so
@@ -204,7 +325,8 @@ in
     };
 
     systemd.services.demod-talk = {
-      description = "DCF-Talk — decentralized voice and text over DeModFrame";
+      description = "DCF-Talk — decentralized voice and text over DeModFrame"
+        + optionalString (cfg.tailscale.tag != null) " (ACL ${cfg.tailscale.tag})";
       documentation = [ "https://github.com/ALH477/HydraMesh" ];
       wantedBy = [ "multi-user.target" ];
       after = [ "network-online.target" ]
@@ -226,6 +348,16 @@ in
           "--transport" cfg.transport
         ]
         ++ optionals cfg.hub.enable [ "--hub" (toString cfg.hub.maxSources) ]
+        ++ optionals cfg.agent.enable [
+          "--agent" cfg.agent.name
+          "--agent-max-tokens" (toString cfg.agent.maxTokens)
+        ]
+        ++ optionals (cfg.agent.enable && cfg.agent.llmCommand != [ ])
+          [ "--llm" (concatStringsSep " " cfg.agent.llmCommand) ]
+        ++ optionals (cfg.agent.enable && cfg.agent.sttCommand != [ ])
+          [ "--stt" (concatStringsSep " " cfg.agent.sttCommand) ]
+        ++ optionals (cfg.agent.enable && cfg.agent.ttsCommand != [ ])
+          [ "--tts" (concatStringsSep " " cfg.agent.ttsCommand) ]
         ++ cfg.extraArgs);
 
         Restart = "on-failure";
@@ -256,11 +388,16 @@ in
         RestrictNamespaces = true;
         RestrictRealtime = true;
         RestrictSUIDSGID = true;
-        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ];
+        # AF_UNIX is needed only when an agent shells out to a local model
+        # server (ollama, llama.cpp) over a socket.
+        RestrictAddressFamilies = [ "AF_INET" "AF_INET6" ]
+          ++ optional cfg.agent.enable "AF_UNIX";
         LockPersonality = true;
         MemoryDenyWriteExecute = true;
         SystemCallArchitectures = "native";
         SystemCallFilter = [ "@system-service" "~@privileged" "~@resources" ];
+        # An agent forks STT/LLM/TTS helpers; without one, nothing is spawned.
+        NoExecPaths = mkIf (!cfg.agent.enable) [ "/" ];
         CapabilityBoundingSet = [ "" ];
         AmbientCapabilities = [ "" ];
         UMask = "0077";
