@@ -50,6 +50,21 @@ let
     };
   };
 
+  # First-boot welcome notification.
+  # Kept as its own script rather than an inline exec-once: the body is
+  # multi-line, and Hyprland's config parser is strictly line-based, so a
+  # value containing real newlines emits continuation lines it rejects as
+  # invalid config. printf builds the newlines at runtime instead.
+  welcomeScript = pkgs.writeShellScript "oligarchy-welcome" ''
+    stamp="$HOME/.config/oligarchy/welcome-shown"
+    [ -e "$stamp" ] && exit 0
+    sleep 5
+    ${pkgs.libnotify}/bin/notify-send -t 15000 "Welcome to Oligarchy" \
+      "$(printf 'Super+Return: Terminal\nSuper+D: Control Center\nSuper+Space: App Launcher\nSuper+F1: Keybind Help\nSuper+Escape: Logout')"
+    mkdir -p "$(dirname "$stamp")"
+    touch "$stamp"
+  '';
+
   # Determine monitor based on hardware features
   # If hasBattery, assume laptop; otherwise desktop
   # Override in your flake if you have a different setup
@@ -110,7 +125,7 @@ in
         [ "[workspace special:mon silent] kitty --class scratch-mon -e htop" ]
 
         # First-boot welcome — essential keybinds shown once on fresh login
-        [ "bash -c 'test ! -f ~/.config/oligarchy/welcome-shown && sleep 5 && notify-send -t 15000 \"Welcome to Oligarchy\" \"Super+Return: Terminal\nSuper+D: Control Center\nSuper+Space: App Launcher\nSuper+F1: Keybind Help\nSuper+Escape: Logout\" && mkdir -p ~/.config/oligarchy && touch ~/.config/oligarchy/welcome-shown'" ]
+        [ "${welcomeScript}" ]
       ];
 
       # Environment variables - comprehensive for all use cases
