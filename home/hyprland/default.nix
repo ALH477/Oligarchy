@@ -65,7 +65,7 @@ let
     [ -e "$stamp" ] && exit 0
     sleep 5
     ${pkgs.libnotify}/bin/notify-send -t 15000 "Welcome to Oligarchy" \
-      "$(printf 'Super+Return: Terminal\nSuper+D: Control Center\nSuper+Space: App Launcher\nSuper+F1: Keybind Help\nSuper+Escape: Logout')"
+      "$(printf 'Super+Return: Terminal\nSuper+D: Control Center\nSuper+Space: App Launcher\nSuper+F1: Command Center (incl. Keybinds)\nSuper+Escape: Logout')"
     mkdir -p "$(dirname "$stamp")"
     touch "$stamp"
   '';

@@ -4,6 +4,8 @@
 
 ![logo](Untitled.jpg)
 
+> This README is written in-character (satire — decrees, fake legal threats, all of it). For the plain, practical version — what this actually is and how to build/customize it — see [`docs/architecture.md`](docs/architecture.md).
+
 Oligarchy NixOS isn’t some boring distro hack.  
 It’s the **first personal OS in history** to unleash a **self-healing, real-time DSP coprocessor** that obliterates latency with **~0.38–2.66 ms round-trip** — forged straight from the same flake that rules your host. 
 
@@ -177,8 +179,7 @@ The entire desktop is now a DeMoD war room:
 | `Super + T / Y / I`       | Dropdown scratchpads — terminal / notes / htop     |
 | `Super + Z`               | Resize submap (then `h j k l` / arrows)            |
 | `Super + Ctrl + arrows`   | Nudge-resize the focused window                    |
-| `Super + F7 / Shift + F7` | Cycle the DeMoD color palette                      |
-| `Super + F8`              | Theme switcher                                     |
+| `Super + F8`              | Theme switcher — cycle live (see Color Palettes)   |
 | `Super + F10`             | Caffeine — keep-awake toggle (☕ in the bar)       |
 | `Super + Escape`          | Power menu (wlogout)                               |
 | `Super + Ctrl + L`        | Lock screen (hyprlock)                             |
@@ -188,16 +189,18 @@ Volume/brightness keys show a **swayosd** on-screen display; the waybar carries 
 
 ## Color Palettes
 
-Cycle with `Super + F7`:
+`Super + F8` cycles live (no rebuild — re-skins waybar/wofi/hyprlock/GTK/Kvantum/kitty in place); `Super + Shift + F8` opens a Wofi picker.
 
-| Palette   | Active Border     | Description               |
-|-----------|-------------------|---------------------------|
-| demod     | Cyan gradient     | DeMoD brand colors        |
-| vim       | Green gradient    | Classic vim theme         |
-| amber     | Orange gradient   | Warm amber tones          |
-| purple    | Purple-pink gradient | Synthwave style        |
-| rose      | Rose gradient     | Soft rose colors          |
-| gold      | Gold gradient     | Luxury gold tones         |
+| Palette      | Description                              |
+|--------------|-------------------------------------------|
+| demod        | DeMoD brand colors (teal/violet)          |
+| catppuccin   | Catppuccin Mocha                          |
+| nord         | Nord                                      |
+| rosepine     | Rosé Pine                                 |
+| gruvbox      | Gruvbox                                   |
+| dracula      | Dracula                                   |
+| tokyo        | Tokyo Night (Omarchy's canonical palette, **default**) |
+| phosphor     | CRT phosphor green/magenta                |
 
 ## Idle Management – Power Discipline
 

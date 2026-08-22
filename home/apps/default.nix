@@ -12,6 +12,7 @@ in
   # session. Kvantum/Qt/GTK theming stays for remaining Qt apps (kdenlive, qt6ct).
   imports = [
     ./theme-variants.nix # Per-theme palette.json + manifest (theme-switch.sh's data source)
+    ./wallpaper-variants.nix # Per-theme generated gradient wallpaper (theme-switch.sh swaps it live)
     ./kvantum.nix # Kvantum Qt theme engine (theme-aware)
     ./qt-theming.nix # Qt5/6 configuration
     ./gtk-theming.nix # GTK 3/4 theming (theme-aware)

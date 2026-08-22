@@ -70,6 +70,16 @@ apply_theme() {
     ln -sfn "$dir/gtk3.css"      "$HOME/.config/gtk-3.0/gtk.css"
     ln -sfn "$dir/gtk4.css"      "$HOME/.config/gtk-4.0/gtk.css"
 
+    # Live wallpaper swap via hyprpaper's IPC socket (ipc = on in
+    # hyprpaper.conf). Falls back silently to whatever wallpaper is already
+    # loaded if this theme has no generated wallpaper.png yet (e.g. a stale
+    # ~/.config/oligarchy/themes from before this existed) or hyprpaper isn't
+    # running.
+    if [[ -f "$dir/wallpaper.png" ]]; then
+        hyprctl hyprpaper preload "$dir/wallpaper.png" >/dev/null 2>&1 || true
+        hyprctl hyprpaper wallpaper ",$dir/wallpaper.png" >/dev/null 2>&1 || true
+    fi
+
     # Kvantum keys themes by directory name; every palette's own named dir
     # already exists (home/apps/kvantum.nix), so switching is just this.
     printf '[General]\ntheme=%s\n' "$display_name" > "$HOME/.config/Kvantum/kvantum.kvconfig"

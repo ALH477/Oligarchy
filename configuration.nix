@@ -135,9 +135,9 @@
       services.boot-intro = {
         enable = lib.mkDefault false;
 
-        # Theme selection — pick your DeMoD palette
-        # Options: classic, amber, cyan, magenta, red, white, oligarchy, archibald
-        theme = "oligarchy";
+        # Theme selection — matches home/themes/default.nix's desktop themes
+        # Options: demod, catppuccin, nord, rosepine, gruvbox, dracula, tokyo, phosphor, steam
+        theme = "tokyo";
 
         # Branding
         titleText = "Initiating Oligarchy";

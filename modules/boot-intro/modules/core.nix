@@ -7,43 +7,49 @@ let
 
   # ════════════════════════════════════════════════════════════════════════════
   # DeMoD Color Palettes — Design ≠ Marketing
+  #
+  # Ids and colors mirror the 8 desktop theme names in home/themes/default.nix
+  # (primary/waveform = accent, secondary = accentAlt, accent = border, text =
+  # text, background = bg) so the boot splash and the live desktop theme never
+  # tell two different naming stories. `steam` is the one deliberate exception
+  # — a Big Picture-style cosmetic option with no desktop-theme counterpart.
   # ════════════════════════════════════════════════════════════════════════════
   demodPalettes = {
-    classic = {
-      primary = "#00FF88"; secondary = "#00CC6A"; accent = "#88FFBB";
-      background = "#000000"; text = "#00FF88"; waveform = "#00FF88";
+    demod = {
+      primary = "#00F5D4"; secondary = "#00E5C7"; accent = "#252530";
+      background = "#080810"; text = "#FFFFFF"; waveform = "#00F5D4";
+    };
+    catppuccin = {
+      primary = "#CBA6F7"; secondary = "#F5C2E7"; accent = "#45475A";
+      background = "#11111B"; text = "#CDD6F4"; waveform = "#CBA6F7";
+    };
+    nord = {
+      primary = "#88C0D0"; secondary = "#81A1C1"; accent = "#4C566A";
+      background = "#242933"; text = "#ECEFF4"; waveform = "#88C0D0";
+    };
+    rosepine = {
+      primary = "#C4A7E7"; secondary = "#EBBCBA"; accent = "#403D52";
+      background = "#191724"; text = "#E0DEF4"; waveform = "#C4A7E7";
+    };
+    gruvbox = {
+      primary = "#D79921"; secondary = "#98971A"; accent = "#665C54";
+      background = "#1D2021"; text = "#EBDBB2"; waveform = "#D79921";
+    };
+    dracula = {
+      primary = "#BD93F9"; secondary = "#FF79C6"; accent = "#44475A";
+      background = "#1E1F29"; text = "#F8F8F2"; waveform = "#BD93F9";
+    };
+    tokyo = {
+      primary = "#7AA2F7"; secondary = "#BB9AF7"; accent = "#414868";
+      background = "#0E0E14"; text = "#C0CAF5"; waveform = "#7AA2F7";
+    };
+    phosphor = {
+      primary = "#00FFFF"; secondary = "#FF00FF"; accent = "#404040";
+      background = "#0A0A0A"; text = "#FFFFFF"; waveform = "#00FFFF";
     };
     steam = {
       primary = "#66c0f4"; secondary = "#1b2838"; accent = "#2a475e";
       background = "#171a21"; text = "#c7d5e0"; waveform = "#FB7E14";
-    };
-    amber = {
-      primary = "#FFB000"; secondary = "#CC8800"; accent = "#FFCC44";
-      background = "#0A0800"; text = "#FFB000"; waveform = "#FFB000";
-    };
-    cyan = {
-      primary = "#00FFFF"; secondary = "#00CCCC"; accent = "#88FFFF";
-      background = "#000808"; text = "#00FFFF"; waveform = "#00FFFF";
-    };
-    magenta = {
-      primary = "#FF00FF"; secondary = "#CC00CC"; accent = "#FF88FF";
-      background = "#080008"; text = "#FF00FF"; waveform = "#FF00FF";
-    };
-    red = {
-      primary = "#FF3333"; secondary = "#CC2222"; accent = "#FF6666";
-      background = "#080000"; text = "#FF3333"; waveform = "#FF3333";
-    };
-    white = {
-      primary = "#FFFFFF"; secondary = "#CCCCCC"; accent = "#FFFFFF";
-      background = "#000000"; text = "#FFFFFF"; waveform = "#FFFFFF";
-    };
-    oligarchy = {
-      primary = "#7AA2F7"; secondary = "#3D59A1"; accent = "#BB9AF7";
-      background = "#1A1B26"; text = "#C0CAF5"; waveform = "#7AA2F7";
-    };
-    archibald = {
-      primary = "#A6E3A1"; secondary = "#94E2D5"; accent = "#F5C2E7";
-      background = "#11111B"; text = "#CDD6F4"; waveform = "#A6E3A1";
     };
   };
 
@@ -378,8 +384,12 @@ in {
 
     theme = mkOption {
       type = types.enum (attrNames demodPalettes);
-      default = "classic";
-      description = "DeMoD colour palette for the boot intro.";
+      default = "tokyo";
+      description = ''
+        Colour palette for the boot intro. Matches the desktop theme names in
+        home/themes/default.nix (demod, catppuccin, nord, rosepine, gruvbox,
+        dracula, tokyo, phosphor), plus the desktop-theme-independent `steam`.
+      '';
     };
 
     videoFile = mkOption {

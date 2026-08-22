@@ -117,70 +117,37 @@ show_category() {
     done <<< "$bindings"
 }
 
-# Interactive menu
+# Interactive menu — a single fuzzy-searchable fzf list (type to filter by
+# key, action, or category; Esc/Ctrl-C quits). Replaces the old numbered
+# category picker and the separate `search` flow with one live-searchable
+# view, matching the fzf UI used everywhere else in this repo's tooling
+# (oligarchy-ctl.sh's persona/action pickers, theme-switch.sh's gui menu).
 interactive_menu() {
-    print_header
-    echo -e "${WHITE}Select a category:${RESET}"
-    echo ""
-    
-    local i=1
-    local cats=()
-    for category in "${!CATEGORIES[@]}" "All Keybindings" "Quit"; do
-        echo -e "  ${WHITE}$i${RESET}. $category"
-        cats+=("$category")
-        ((i++))
-    done
-    
-    echo ""
-    read -p "Choose [1-$i]: " choice
-    
-    if [[ "$choice" -eq $(( ${#cats[@]} + 1 )) ]]; then
-        echo -e "${CYAN}Goodbye!${RESET}"
-        exit 0
-    elif [[ "$choice" -eq ${#cats[@]} ]]; then
-        print_header
-        show_all_bindings
-    else
-        print_header
-        show_category "${cats[$((choice-1))]}"
-    fi
-    
-    echo ""
-    read -p "Press Enter to continue..."
-}
-
-# Search bindings
-search_bindings() {
-    local query=$1
+    local initial_query="${1:-}"
     local bindings
     bindings=$(parse_keybindings)
-    
-    print_header
-    print_category "Search Results for: $query"
-    
-    local found=false
-    while IFS='|' read -r key action; do
-        if echo "$action" | grep -qi "$query"; then
-            print_binding "$key" "$action"
-            found=true
-        fi
-    done <<< "$bindings"
-    
-    if [[ "$found" != "true" ]]; then
-        echo -e "${YELLOW}No bindings found matching: $query${RESET}"
-    fi
-    
-    echo ""
-    read -p "Press Enter to continue..."
+
+    local rows
+    rows=$(while IFS='|' read -r key action; do
+        local category
+        category=$(get_category "$action")
+        printf '%-22s  %-45s  [%s]\n' "$key" "$action" "$category"
+    done <<< "$bindings")
+
+    echo "$rows" | fzf \
+        --prompt="Keybinds > " \
+        --header="Type to search — Esc to quit" \
+        --height=80% --reverse --border \
+        --preview-window=hidden \
+        --query="$initial_query" \
+        >/dev/null || true
 }
 
 # Main
 main() {
     case "${1:-menu}" in
         "menu")
-            while true; do
-                interactive_menu
-            done
+            interactive_menu
             ;;
         "all")
             print_header
@@ -191,7 +158,7 @@ main() {
                 echo "Usage: $0 search <term>"
                 exit 1
             fi
-            search_bindings "$2"
+            interactive_menu "$2"
             ;;
         *)
             echo "Usage: $0 {menu|all|search <term>}"

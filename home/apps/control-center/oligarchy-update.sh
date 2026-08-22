@@ -178,8 +178,8 @@ case "$deploy" in
   *) say "  ${DIM}standing down — the forged system stays cached for later.${RESET}"; exit 0 ;;
 esac
 
-say "  ${DIM}sudo nixos-rebuild $mode --flake $FLAKE_DIR#$HOST${RESET}\n"
-if sudo nixos-rebuild "$mode" --flake "$FLAKE_DIR#$HOST"; then
+say "  ${DIM}sudo nixos-rebuild $mode --flake $FLAKE_DIR#$HOST --impure${RESET}\n"
+if sudo nixos-rebuild "$mode" --flake "$FLAKE_DIR#$HOST" --impure; then
   say ""
   say "${GREEN}  ╔══════════════════════════════════════════════════════╗${RESET}"
   say "${GREEN}  ║   ⌁  REARMAMENT COMPLETE — the regime is ($mode)ed"'      '"║${RESET}"

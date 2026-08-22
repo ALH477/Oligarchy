@@ -60,15 +60,18 @@ status() {
 }
 
 cats() {
+  # Category ids and their item groupings (items() below) are untouched —
+  # only display labels changed, to align with Omarchy's Style/Setup naming
+  # for the same concepts (theme+wallpaper picking / persona+default picking).
   cat <<'EOF'
-appearance|🎨 Appearance
+appearance|🎨 Style
 ai|🧠 AI Stack
 dsp|🎛 Audio / DSP
 dcf|🛰 DCF Fabric
 network|🌐 Network
 security|🛡 Security
 power|⚡ Power
-persona|🎚 Persona
+persona|🎚 Setup
 rig|🎸 DSP Rig
 system|⚙ System & Kernel
 EOF
