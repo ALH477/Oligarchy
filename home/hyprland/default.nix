@@ -30,7 +30,12 @@ let
   # To customize: override monitors.laptop or monitors.desktop in your config
   monitors = {
     laptop = {
-      name = "eDP-1";
+      # desc: (EDID-based), not a connector name: eDP-N numbering can shift
+      # across kernel/driver updates (this board is currently enumerated as
+      # eDP-2, not eDP-1), and Hyprland silently no-ops a monitor rule
+      # targeting a name that doesn't exist rather than erroring — so a stale
+      # connector name here fails invisibly instead of failing loudly.
+      name = "desc:BOE 0x0BC9";
       resolution = "2560x1600@165";
       position = "0x0";
       scale = "1";

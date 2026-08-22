@@ -100,17 +100,23 @@ in
     text = ''
       #!/usr/bin/env bash
       set -u
-      
+
+      # desc: (EDID-based) rather than a connector name (eDP-1/eDP-2/...):
+      # connector numbering can shift across kernel/driver updates, which
+      # silently breaks a literal name match — hyprctl no-ops on an unmatched
+      # output instead of erroring, so this was hard to notice when it broke.
+      internal_display="desc:BOE 0x0BC9"
+
       # Only disable internal display if external monitor is connected
       case "''${1:-}" in
         close)
           # Check if we have more than one monitor before disabling
           if hyprctl monitors -j 2>/dev/null | jq -e 'length > 1' >/dev/null 2>&1; then
-            hyprctl keyword monitor "eDP-1,disable" 2>/dev/null || true
+            hyprctl keyword monitor "$internal_display,disable" 2>/dev/null || true
           fi
           ;;
         open)
-          hyprctl keyword monitor "eDP-1,preferred,auto,1" 2>/dev/null || true
+          hyprctl keyword monitor "$internal_display,preferred,auto,1" 2>/dev/null || true
           ;;
         *)
           echo "Usage: $0 {close|open}"
@@ -507,17 +513,25 @@ in
     text = ''
       #!/usr/bin/env bash
       set -u
-      
+
+      # desc: (EDID-based) rather than a connector name: when the panel is
+      # currently disabled it won't appear in `hyprctl monitors -j` at all, so
+      # there's nothing to dynamically detect a connector name from in the
+      # enable branch below — desc: is the one identifier that stays valid
+      # whether the output is listed or not, and survives connector
+      # renumbering across kernel/driver updates either way.
+      internal_display="desc:BOE 0x0BC9"
+
       if ! hyprctl monitors -j 2>/dev/null | jq -e '.[] | select(.name | test("^(DP|HDMI)"))' >/dev/null 2>&1; then
         notify-send -u warning -i dialog-warning "Clamshell" "No external monitor detected" 2>/dev/null || true
         exit 1
       fi
-      
+
       if hyprctl monitors -j 2>/dev/null | jq -e '.[] | select(.name | test("^eDP"))' >/dev/null 2>&1; then
-        hyprctl keyword monitor "eDP-1,disable" 2>/dev/null && \
+        hyprctl keyword monitor "$internal_display,disable" 2>/dev/null && \
           notify-send "Clamshell" "Laptop screen disabled" 2>/dev/null || true
       else
-        hyprctl keyword monitor "eDP-1,preferred,auto,1" 2>/dev/null && \
+        hyprctl keyword monitor "$internal_display,preferred,auto,1" 2>/dev/null && \
           notify-send "Clamshell" "Laptop screen enabled" 2>/dev/null || true
       fi
     '';
