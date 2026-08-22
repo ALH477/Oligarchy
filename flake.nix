@@ -183,6 +183,13 @@
         # Declared before configuration.nix and the modules that consume it.
         ./modules/user.nix
 
+        # custom.desktopFeatures.* — makes home/home.nix's feature set
+        # (enableDev/enableGaming/enableAudio/enableDCF/enableScratchpads/
+        # enablePersonalApps) a real, overridable option instead of a
+        # hardcoded home-manager let-binding. Declared before configuration.nix
+        # and home/home.nix, both of which consume it.
+        ./modules/desktop-features.nix
+
         # Local modules - order matters! Options must be defined before config uses them
         # Boot intro options (single module; TUI/API/StreamDB stubs were removed)
         boot-intro.nixosModules.boot-intro

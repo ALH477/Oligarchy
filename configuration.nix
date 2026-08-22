@@ -19,9 +19,25 @@
     ./modules/hypr-controller/nixos-module.nix
     ./modules/terminus-dev.nix
   ]
-  # Optional local overrides written by the control center (kernel/platform
-  # selection). Must be git-tracked for the flake to see it; the UI runs `git add`.
-  ++ lib.optional (builtins.pathExists ./oligarchy-local.nix) ./oligarchy-local.nix;
+  # Optional local overrides, both at absolute paths OUTSIDE the repo so a
+  # fresh clone never sees them (Nix's local-flake source filtering excludes
+  # gitignored files from the evaluated source tree entirely — an in-repo
+  # override file would vanish from `nix build`/`nixos-rebuild switch` even on
+  # this machine the moment it's gitignored, which is why these live under
+  # ~/.config/oligarchy instead of the old in-repo oligarchy-local.nix):
+  #   local.nix — hand-maintained personal toggles (steam, malware-shield,
+  #     the DSP VM, the personal package list, etc.), never touched by tooling.
+  #   state.nix — written by the control center (kernel/gpu/persona picks);
+  #     kept separate because the control center wholesale-overwrites its file
+  #     on every UI action, which would silently wipe local.nix if shared.
+  #
+  # NOTE: hardcodes "asher" rather than config.custom.user.name — `imports` is
+  # evaluated to determine what `config` even contains, so referencing `config`
+  # here is a circular dependency ("infinite recursion encountered").
+  ++ lib.optional (builtins.pathExists "/home/asher/.config/oligarchy/local.nix")
+       "/home/asher/.config/oligarchy/local.nix"
+  ++ lib.optional (builtins.pathExists "/home/asher/.config/oligarchy/state.nix")
+       "/home/asher/.config/oligarchy/state.nix";
 
   options = {
     custom.steam.enable = lib.mkEnableOption "Steam and gaming support";
@@ -117,7 +133,7 @@
       # DeMoD Boot Intro
       # ──────────────────────────────────────────────────────────────────────────
       services.boot-intro = {
-        enable = true;
+        enable = lib.mkDefault false;
 
         # Theme selection — pick your DeMoD palette
         # Options: classic, amber, cyan, magenta, red, white, oligarchy, archibald
@@ -221,7 +237,7 @@
       # Blipply consumes the MCP over stdio; Claude Code reads .mcp.json which
       # points each aspect entry at `oligarchy-mcp <aspect>` (the umbrella binary
       # exec-spawns the matching aspect server).
-      custom.mcpServers.enable = true;
+      custom.mcpServers.enable = lib.mkDefault false;
 
       # Blipply local voice assistant (Whisper -> ollama -> Piper). Calls the MCP
       # over stdio for read-only system tools.
@@ -285,49 +301,25 @@
       # doesn't apply here: the "studio" persona already turns AI off
       # (custom.persona.active=studio -> aiEnable=false in modules/personas.nix),
       # so heavy LLM use and low-latency audio work aren't expected to
-      # coincide. Two devices, both nofail so a missing/unmounted swapfile
-      # never blocks boot:
-      #   1. /swapfile on the root ext4 (nvme1n1, system drive) — plain
-      #      NixOS-managed swapfile; `size` makes NixOS create it on switch.
-      #   2. A swapfile on the btrfs data drive (nvme0n1). btrfs swapfiles
-      #      MUST be nodatacow (the kernel refuses a COW swapfile) — NixOS's
-      #      own `size`-based auto-creation doesn't know that, so it's left
-      #      unmanaged here (no `size`) and instead created idempotently and
-      #      correctly by the activation script below.
+      # coincide. Generic device only — nofail so a missing/unmounted
+      # swapfile never blocks boot:
+      #   /swapfile on the root ext4 (nvme1n1, system drive) — plain
+      #   NixOS-managed swapfile; `size` makes NixOS create it on switch.
+      #
+      # A second, machine-specific swapDevices entry (an ad hoc
+      # udisks2-automounted external drive) plus the activation script that
+      # creates it (nodatacow, since btrfs swapfiles must be) both live in
+      # ~/.config/oligarchy/local.nix now, not here — see the local-override
+      # comment at the top of this file. Both option types merge cleanly
+      # across separate modules, so that entry just appends to this list on
+      # machines where the override file is present.
       swapDevices = [
         {
           device = "/swapfile";
           size = 32768; # 32 GiB
           priority = 10;
         }
-        {
-          # Machine-specific: an ad hoc udisks2-automounted external drive on
-          # the maintainer's own host. Drop this entry entirely on a fresh
-          # install unless you have the same physical drive.
-          device = "/run/media/${config.custom.user.name}/a82fcfcf-e913-413e-ab4f-4a3b104b2de0/.swapfile";
-          priority = 10;
-          options = [ "nofail" ];
-        }
       ];
-
-      # Creates the btrfs data-drive swapfile correctly (nodatacow, no holes)
-      # if it doesn't exist yet. Idempotent — safe to run on every switch.
-      # Skips quietly if the drive isn't mounted at activation time (it's an
-      # ad hoc udisks2 automount, not a NixOS-declared filesystem, so it may
-      # not be present yet at early boot/pre-login switch) — the `nofail`
-      # swapDevices entry above then just doesn't activate that leg, same as
-      # any other missing backup device.
-      system.activationScripts.btrfsSwapfile = ''
-        swapfile=/run/media/${config.custom.user.name}/a82fcfcf-e913-413e-ab4f-4a3b104b2de0/.swapfile
-        mountpoint=/run/media/${config.custom.user.name}/a82fcfcf-e913-413e-ab4f-4a3b104b2de0
-        if [ -d "$mountpoint" ] && ${pkgs.util-linux}/bin/mountpoint -q "$mountpoint" && [ ! -e "$swapfile" ]; then
-          ${pkgs.coreutils}/bin/truncate -s 0 "$swapfile"
-          ${pkgs.e2fsprogs}/bin/chattr +C "$swapfile" 2>/dev/null || true
-          ${pkgs.util-linux}/bin/fallocate -l 32G "$swapfile"
-          ${pkgs.coreutils}/bin/chmod 600 "$swapfile"
-          ${pkgs.util-linux}/bin/mkswap "$swapfile"
-        fi
-      '';
       #
       # ── zram: OOM cushion without the disk cost or the RT-audio penalty ──────
       # There was NO swap of any kind on this box (22 GiB RAM, swapDevices empty
@@ -361,7 +353,7 @@
       # The AI-only swapfile lives on root ext4 (always mounted), and the
       # container mem/swap caps prevent Ollama from eating the entire system.
       services.ollamaAgentic.dedicatedSwap = {
-        enable = true;
+        enable = lib.mkDefault false;
         sizeGB = 24;
         priority = 50;
       };
@@ -413,7 +405,7 @@
       # ──────────────────────────────────────────────────────────────────────────
       # Gaming
       # ──────────────────────────────────────────────────────────────────────────
-      custom.steam.enable = true;
+      custom.steam.enable = lib.mkDefault false;
 
       # Isolate Steam + games from swap (DDR5-only): under memory pressure
       # games were dipping into the disk swapfile / zram and stalling hard
@@ -450,19 +442,19 @@
       # ──────────────────────────────────────────────────────────────────────────
       # oligarchy-forge — sandboxed coding-agent runner
       # ──────────────────────────────────────────────────────────────────────────
-      custom.oligarchyForge.enable = true;
+      custom.oligarchyForge.enable = lib.mkDefault false;
 
       # ──────────────────────────────────────────────────────────────────────────
       # Terminus Developer Edition (local-only, references working trees)
       # ──────────────────────────────────────────────────────────────────────────
-      custom.terminus-dev.enable = true;
+      custom.terminus-dev.enable = lib.mkDefault false;
 
       # ──────────────────────────────────────────────────────────────────────────
       # ArchibaldOS DSP Coprocessor VM
       # RT DSP guest with PREEMPT_RT kernel, CPU 0 isolated, NETJACK audio
       # ──────────────────────────────────────────────────────────────────────────
       custom.vm.dsp = {
-        enable = true;
+        enable = lib.mkDefault false;
         # Do NOT autostart at boot: the guest currently spins at 100% CPU on the
         # isolated cores and never boots (OVMF firmware not wired into the qemu
         # launch + no guest serial console), which soft-locks the host. Units
@@ -534,7 +526,7 @@
       # loaded (undervolt/thermal tooling). vendor tracks custom.platform.cpu.
       # Verify: grep -r . /sys/devices/system/cpu/vulnerabilities/
       hardware.cpuSecurity = {
-        enable = true;
+        enable = lib.mkDefault false;
         preset = "hardened";
       };
 
@@ -879,7 +871,7 @@
       # positives, then raise level to "quarantine". onAccess stays off (DSP
       # latency). Closure is scanned at build via `nix build .#malwareScan`.
       custom.malwareShield = {
-        enable = true;
+        enable = lib.mkDefault false;
         level = "monitor";
         clamav = { enable = true; onAccess = false; };
         rootkit.enable = true;
@@ -909,12 +901,12 @@
       # sops-nix wiring (modules/secrets.nix). Safe with zero consumers:
       # declares only the age key location until a secret sub-option is on.
       # Pre-req: sudo age-keygen -o /var/lib/sops-nix/key.txt (see .sops.yaml).
-      custom.secrets.enable = true;
+      custom.secrets.enable = lib.mkDefault false;
 
       # Security hardening ladder (modules/security/hardening.nix):
       # SSH keys-only + fail2ban now; apparmor/auditd flip on after soak.
       custom.security.hardening = {
-        enable = true;
+        enable = lib.mkDefault false;
         preset = "hardened";
         # Deferred to Phase 6 of the rollout — enable after a clean soak:
         apparmor = false;
@@ -932,7 +924,7 @@
       # chain — which keeps `policy drop` — and black-holed egress outright.
       # Both bugs are fixed; re-enforce only after a soak on a populated set.
       networking.firewall.strictEgress = {
-        enable = true;
+        enable = lib.mkDefault false;
         preset = "developer";
         recovery.dryRun = true;
         allow = {
@@ -1013,7 +1005,7 @@
       # Astrill VPN egress list -> demod-blk-v4/v6. VPN detection, not threat
       # intel; the blocklists module below carries the actual threat feeds.
       services.demod-ip-blocker = {
-        enable = true;
+        enable = lib.mkDefault false;
         updateInterval = "24h";
       };
 
@@ -1029,7 +1021,7 @@
       #
       # Escape hatch, no rebuild required: sudo oligarchy-blocklist panic
       networking.firewall.blocklists = {
-        enable = true;
+        enable = lib.mkDefault false;
         feeds = [ "ipsum" "spamhaus-drop" "blocklist-de" "cins" ];
         ipsumLevel = 3;
         direction = "both";
@@ -1385,17 +1377,10 @@
       # System Packages (removed legacy audio tools)
       # ──────────────────────────────────────────────────────────────────────────
       environment.systemPackages = with pkgs; [
-        # `docker` CLI is provided on PATH by virtualisation.docker (docker_29);
-        # listing pkgs.docker here pulled the insecure docker_28 default.
-        android-studio
-        android-tools
-        jdk17
-        (androidenv.composeAndroidPackages {
-          platformVersions = [ "34" ];
-          buildToolsVersions = [ "34.0.0" ];
-          includeEmulator = false;
-          includeSources = false;
-        }).androidsdk
+        # ── Essentials: needed to actually use/debug this desktop on this
+        # hardware, regardless of who built it or why. Everything personal
+        # (dev toolchain, DAWs, SDR, games, creative apps, browsers/office,
+        # Android tooling) lives in the enablePersonalApps block below.
         vim
         git
         git-lfs
@@ -1403,28 +1388,12 @@
         htop
         nvme-cli
         lm_sensors
-        s-tui
-        stress
         dmidecode
         util-linux
         gparted
         usbutils
         # dual-HS bus recover (PCI rebind 0000:c5:00.3); sudo NOPASSWD for asher
         xhci-recover
-
-        (python3.withPackages (ps: with ps; [
-          pip
-          virtualenv
-          cryptography
-          pycryptodome
-          grpcio
-          grpcio-tools
-          protobuf
-          numpy
-          matplotlib
-          python-snappy
-          tkinter
-        ]))
 
         wireshark
         tcpdump
@@ -1439,6 +1408,80 @@
         ethtool
         wavemon
         networkmanagerapplet
+
+        vulkan-tools
+        vulkan-loader
+        vulkan-validation-layers
+        libva-utils
+
+        blueberry
+        font-awesome
+        fastfetch
+        gnugrep
+        kitty
+        wofi
+        waybar
+        hyprpaper
+        brightnessctl
+        zip
+        unzip
+        xarchiver
+
+        gvfs
+        udiskie
+        polkit_gnome
+        framework-tool
+        blucontrol
+
+        wl-clipboard
+        grim
+        slurp
+        v4l-utils
+        cliphist
+        hyprpicker
+        wlogout
+        playerctl
+        jq
+        hyprlock
+        hypridle
+        libnotify
+        swappy
+        hyprshot
+        satty
+        gpu-screen-recorder
+        gpu-screen-recorder-gtk
+
+        # IceWM backup system
+        icewm
+      ] ++ lib.optionals config.custom.desktopFeatures.enablePersonalApps [
+        # `docker` CLI is provided on PATH by virtualisation.docker (docker_29);
+        # listing pkgs.docker here pulled the insecure docker_28 default.
+        android-studio
+        android-tools
+        jdk17
+        (androidenv.composeAndroidPackages {
+          platformVersions = [ "34" ];
+          buildToolsVersions = [ "34.0.0" ];
+          includeEmulator = false;
+          includeSources = false;
+        }).androidsdk
+
+        s-tui
+        stress
+
+        (python3.withPackages (ps: with ps; [
+          pip
+          virtualenv
+          cryptography
+          pycryptodome
+          grpcio
+          grpcio-tools
+          protobuf
+          numpy
+          matplotlib
+          python-snappy
+          tkinter
+        ]))
 
         cmake
         gcc
@@ -1471,11 +1514,6 @@
         docker-compose
         docker-buildx
 
-        vulkan-tools
-        vulkan-loader
-        vulkan-validation-layers
-        libva-utils
-
         dhewm3
         darkradiant
         zandronum
@@ -1491,19 +1529,7 @@
         brave
         vscode
 
-        blueberry
         legcord
-        font-awesome
-        fastfetch
-        gnugrep
-        kitty
-        wofi
-        waybar
-        hyprpaper
-        brightnessctl
-        zip
-        unzip
-        xarchiver
         obsidian
 
         gimp
@@ -1514,30 +1540,6 @@
         libreoffice
         krita
         synfigstudio
-
-        gvfs
-        udiskie
-        polkit_gnome
-        framework-tool
-        blucontrol
-
-        wl-clipboard
-        grim
-        slurp
-        v4l-utils
-        cliphist
-        hyprpicker
-        wlogout
-        playerctl
-        jq
-        hyprlock
-        hypridle
-        libnotify
-        swappy
-        hyprshot
-        satty
-        gpu-screen-recorder
-        gpu-screen-recorder-gtk
 
         mininet
 
@@ -1556,9 +1558,6 @@
 
         ollama
         opencode # open-webui alpaca aichat aider-chat  # disabled: open-webui npm build OOMs
-
-        # IceWM backup system
-        icewm
 
         #(perl.withPackages (ps: with ps; [
         #  JSON GetoptLong CursesUI ModulePluggable Appcpanminus

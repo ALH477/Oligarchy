@@ -1,4 +1,4 @@
-{ config, pkgs, lib, primaryUsername ? "asher", ... }:
+{ config, pkgs, lib, primaryUsername ? "asher", osConfig ? { }, ... }:
 
 let
   user = primaryUsername;
@@ -15,19 +15,30 @@ let
   activeTheme = themeSystem.activePalette;
 
   # ── Features ───────────────────────────────────────────────────────────────
-  # Static Framework 16 laptop profile. Deliberately NOT lib.pathExists:
+  # hasBattery/hasTouchpad/hasBacklight/hasBluetooth/sessionType/x11Wm are a
+  # static Framework 16 laptop profile. Deliberately NOT lib.pathExists:
   # impure /sys probes break pure flake eval and lie when building on another
   # machine. This config targets exactly one laptop — say so.
+  #
+  # The enable* flags used to be hardcoded true here, which meant a fresh
+  # clone came loaded with the maintainer's full personal desktop with no way
+  # to turn it off. They now come from custom.desktopFeatures (see
+  # modules/desktop-features.nix), which defaults to false everywhere — a
+  # local override outside the repo restores the real setup on the
+  # maintainer's own machine (see configuration.nix's local-override import).
+  desktopFeatures = osConfig.custom.desktopFeatures or { };
   features = {
     hasBattery = true;
     hasTouchpad = true;
     hasBacklight = true;
     hasBluetooth = true;
-    enableDev = true;
-    enableGaming = true;
-    enableAudio = true;
-    enableDCF = false;
-    enableAIStack = false;
+    enableDev = desktopFeatures.enableDev or false;
+    enableGaming = desktopFeatures.enableGaming or false;
+    enableAudio = desktopFeatures.enableAudio or false;
+    enableDCF = desktopFeatures.enableDCF or false;
+    enableAIStack = false; # unused downstream; kept for API parity
+    enableScratchpads = desktopFeatures.enableScratchpads or false;
+    enablePersonalApps = desktopFeatures.enablePersonalApps or false;
     sessionType = "wayland";
     x11Wm = "icewm";
   };

@@ -58,19 +58,23 @@
     ]
 
     # ══════════════════════════════════════════════════════════════════════════
-    # Desktop Applications
+    # Desktop Applications — browser + file manager are the baseline; the rest
+    # is personal preference (and thunderbird/libreoffice duplicate packages
+    # already gated in configuration.nix's system-level personal-apps block).
     # ══════════════════════════════════════════════════════════════════════════
-    [ 
+    [
       brave
       xfce.thunar
       xfce.tumbler
+    ]
+    (lib.optionals (features.enablePersonalApps or false) [
       vlc
       gnome-calculator
       gnome-system-monitor
       thunderbird
       libreoffice-qt6-fresh
-    ]
-    
+    ])
+
     # Development Tools (conditional)
     (lib.optionals (features.enableDev or false) [ 
       vscode-fhs

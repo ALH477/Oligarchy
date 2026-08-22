@@ -133,7 +133,7 @@ input.
 | `modules/secrets.nix` | sops-nix wiring for `custom.secrets` |
 | `modules/secure-boot.nix` | lanzaboote signed boot chain + optional TPM2-sealed LUKS |
 | `modules/platform.nix` | GPU/CPU/framework probes, `custom.platform.gpu`, kernel-module fixes (e.g. AMD `usb-storage.quirks=:u`), Framework "You are based" banner. On dual-AMD-GPU hosts, `custom.platform.displayGpu` (default `"dgpu"`) plus `dgpuPciId`/`igpuPciId` select which GPU client apps (games, anything launched from Hyprland) render on via Mesa `DRI_PRIME`. This never touches Hyprland/Aquamarine's own backend device — the compositor always uses the iGPU, since the dGPU module has no display engine path of its own and telling Aquamarine to open it as primary is a fatal, unrecoverable crash (see `docs/dgpu-steam-forcing.md`) |
-| `modules/personas.nix` | `studio / gaming / dev / battery` — one-switch re-arming of kernel + DSP + AI + audio quantum + power (`dev` is the default) |
+| `modules/personas.nix` | `studio / gaming / dev / battery / minimal` — one-switch re-arming of kernel + DSP + AI + audio quantum + power (`minimal` is the fresh-clone default) |
 | `modules/blipply-integration.nix` | Voice assistant wiring; reads the MCP over stdio |
 
 ### Sub-flakes
@@ -238,7 +238,7 @@ never duplicate dispatch logic:
   (appearance, ai, dsp, dcf, network, security, power, persona, rig,
   system). Mutates live state (`hyprctl keyword`, `pw-metadata`,
   `powerprofilesctl`) and persists build-time choices (persona/kernel/gpu)
-  to `oligarchy-local.nix` — this is the read-write control layer,
+  to `~/.config/oligarchy/state.nix` (outside the repo, requires `nixos-rebuild switch --impure` to be picked up) — this is the read-write control layer,
   deliberately separate from the read-only MCP surface.
 - `oligarchy-menu` (wofi, Super+D) / `oligarchy-control` (fzf, terminal) —
   both support the category→action browse and a flat "🔎 Search all
@@ -400,11 +400,11 @@ the guest keeps audio latency in the sub-millisecond range.
 | Recovery | 180–350 ms kexec restart |
 | Persona | `studio` arms the DSP and drops AI; `dev` is the day-to-day default |
 
-Personas (`studio / gaming / dev / battery`) re-arm the whole rig in one
+Personas (`studio / gaming / dev / battery / minimal`) re-arm the whole rig in one
 switch — kernel, DSP coprocessor, AI tier, audio quantum, gamemode and
 power policy. Runtime toggles (power profile, animations, live PipeWire
 quantum) flip instantly; build-time pieces are written to
-`oligarchy-local.nix` and applied on the next `nixos-rebuild`.
+`~/.config/oligarchy/state.nix` and applied on the next `nixos-rebuild switch --impure`.
 
 **DSP Rigs — Pedalboard as Code** (optional via `custom.dsp.enable`):
 declarative LV2 plugin chains *and* Faust `.dsp` programs that run as JACK

@@ -19,11 +19,21 @@ nix develop
 # Format Nix files
 nixpkgs-fmt <file.nix>
 
-# Evaluate/build the full system without switching (catches most errors)
+# Evaluate/build the full system without switching (catches most errors).
+# This builds the fresh-clone-minimal config (no local overrides visible
+# without --impure — see below) — useful on its own for checking what a
+# fresh clone actually gets. Add --impure to build asher's real personal
+# config instead.
 nix build .#nixosConfigurations.nixos.config.system.build.toplevel
 
-# Apply the config to a running NixOS host
-sudo nixos-rebuild switch --flake .#nixos
+# Apply the config to a running NixOS host. --impure is required on any
+# machine with a ~/.config/oligarchy/{local,state}.nix override (see
+# configuration.nix): those files live outside the repo on purpose, and
+# checking whether an ambient filesystem path exists is exactly what pure
+# evaluation (this system's default) disallows. Without it, personal
+# toggles (steam, malware-shield, the DSP VM, persona, etc.) silently fall
+# back to their fresh-clone-minimal defaults instead of erroring.
+sudo nixos-rebuild switch --flake .#nixos --impure
 
 # Build the installer ISO (the flake's default package)
 nix build .#iso          # -> result/iso/nixos-*.iso

@@ -4,9 +4,10 @@
 # System Personas / "Modes"
 # One switch retunes the whole machine — kernel, the ArchibaldOS DSP coprocessor,
 # the local-AI tier, audio quantum, gamemode and power policy. Build-time knobs
-# are owned here (mkDefault, so a host or oligarchy-local.nix can still override);
-# the control center (`oligarchy-ctl persona <name>`) flips the runtime bits live
-# and writes `custom.persona.active` into oligarchy-local.nix for the rest.
+# are owned here (mkDefault, so a host or ~/.config/oligarchy/state.nix can
+# still override); the control center (`oligarchy-ctl persona <name>`) flips
+# the runtime bits live and writes `custom.persona.active` into state.nix for
+# the rest.
 # ─────────────────────────────────────────────────────────────────────────────
 
 with lib;
@@ -43,6 +44,14 @@ let
       quantum = 512;  minQuantum = 256; gamemode = false; power = "power-saver";
       apps = [ ];
     };
+    # Fresh-clone default: everything heavy off, balanced power. Not "battery"
+    # (that name would misdescribe a desktop or CI box) — just plain minimal.
+    minimal = {
+      description = "Minimal — fresh-clone default: AI/DSP off, no gamemode, balanced power.";
+      kernel = "zen"; dsp = false; aiEnable = false; aiPreset = "cpu-fallback";
+      quantum = 1024; minQuantum = 256; gamemode = false; power = "balanced";
+      apps = [ ];
+    };
   };
 
   p = personas.${cfg.active};
@@ -51,18 +60,18 @@ in
   options.services.dsp-vm.enable = mkEnableOption "DSP VM";
   options.custom.persona.active = mkOption {
     type = types.enum (attrNames personas);
-    default = "dev";
+    default = "minimal";
     description = ''
       Active system persona. One switch retunes kernel, the DSP coprocessor,
       the AI tier, audio quantum, gamemode and power policy. Change it live with
       `oligarchy-ctl persona <name>` (control center), which also writes
-      custom.persona.active into oligarchy-local.nix and prompts the rebuild for
-      the build-time pieces.
+      custom.persona.active into ~/.config/oligarchy/state.nix and prompts the
+      rebuild for the build-time pieces.
     '';
   };
 
   config = {
-    # Build-time knobs (mkDefault → a host or oligarchy-local.nix can override).
+    # Build-time knobs (mkDefault → a host or state.nix can override).
     custom.kernel.variant = mkDefault p.kernel;
     services.dsp-vm.enable = mkDefault p.dsp;
     services.ollamaAgentic.enable = mkDefault p.aiEnable;

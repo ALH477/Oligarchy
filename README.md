@@ -89,7 +89,7 @@ The Oligarchy endures.
 | Boot Experience                  | CRT boot cinematic — FFmpeg-forged scanlines/chromatic-aberration/grain, mpv on tty1 (StreamDB/TUI/API pretenders executed) |
 | Welcome Experience               | Rust-powered greeting — Kitty graphics, adaptive images, terminal-native TUI            |
 | Control Center                   | `Super+D` Wofi war-room hub + `oligarchy-control` TUI — every toggle, service & switch on one surface |
-| Personas                         | studio / gaming / dev / battery — one switch re-arms kernel, DSP, AI tier, audio quantum & power |
+| Personas                         | studio / gaming / dev / battery / minimal — one switch re-arms kernel, DSP, AI tier, audio quantum & power |
 | VM Manager                       | 4 dedicated VMs: DSP, Coding Sandbox, Kali, OpenWRT                                   |
 | DSP Coprocessor                  | ArchibaldOS-DSP QEMU/KVM + NETJACK — 1.33ms @ 96kHz                                   |
 | Voice AI                         | DeMoD Voice — Local TTS and voice cloning (Coqui XTTS-v2, Piper)                      |
@@ -133,7 +133,7 @@ The machine has no single mood. Pick a persona and the whole rig re-arms in one 
 | `dev`     | off             | on               | 256                   | balanced     |
 | `battery` | off             | off              | 512                   | power-saver  |
 
-Runtime knobs (power profile, animations, live PipeWire quantum) flip **instantly**; the build-time pieces (kernel, DSP, AI tier) are written to `oligarchy-local.nix` and applied on the next `nixos-rebuild`. `dev` is the default and reproduces the everyday baseline. Arm `studio` and prove the latency yourself with `dsp-bench`. Each persona can also **launch its app set** (studio → guitarix + qpwgraph; dev → editor + terminals), and `persona-layout save/restore` snapshots which workspace every window lives on. Watch the whole machine live in the **War Room** (`Super+F2`): persona, kernel, DSP latency, power, temps, AI and DCF nodes on one screen.
+Runtime knobs (power profile, animations, live PipeWire quantum) flip **instantly**; the build-time pieces (kernel, DSP, AI tier) are written to `~/.config/oligarchy/state.nix` (outside the repo, so a fresh clone never sees it) and applied on the next `nixos-rebuild switch --flake .#nixos --impure` — `--impure` is required whenever that file, or a hand-written `~/.config/oligarchy/local.nix`, is present. `minimal` is the fresh-clone default; `dev` reproduces the maintainer's everyday baseline. Arm `studio` and prove the latency yourself with `dsp-bench`. Each persona can also **launch its app set** (studio → guitarix + qpwgraph; dev → editor + terminals), and `persona-layout save/restore` snapshots which workspace every window lives on. Watch the whole machine live in the **War Room** (`Super+F2`): persona, kernel, DSP latency, power, temps, AI and DCF nodes on one screen.
 
 ## DSP Rigs — Pedalboard as Code
 
@@ -226,7 +226,7 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 - **Rust Greeting System**: Kitty graphics protocol for displaying brand images directly in terminal, adaptive layout based on terminal size, system info display, and interactive TUI launcher.
 - **Boot Intro Suite v2**: A software-forged CRT war-cinematic — FFmpeg renders your audio into mirrored waveforms drowned in scanlines, chromatic aberration, bloom and analog grain, then mpv slams it onto tty1 before the display manager ever draws breath. Generate from any audio file or supply your own pre-rendered clip; nine theme palettes; fast→ultra quality presets. (The StreamDB/TUI/API "suite" pretenders were taken out back — they were `mpv --help` in a trenchcoat.)
 - **Three War Machines, One Flake**: GPU-agnostic `custom.platform` module — forge the same empire for AMD (ROCm), pure Intel (CPU), or Intel + Nvidia Optimus (PRIME offload + CUDA). Flip one enum and the flake re-forges drivers, kernel modules, power policy, and AI acceleration. Conquest, portable.
-- **One War Room**: a unified Control Center (`Super+D` Wofi hub + `oligarchy-control` TUI + the `Super+F2` live cockpit) over every toggle, service, status and switch — plus **personas** (studio/gaming/dev/battery) that re-arm the kernel, DSP coprocessor, AI tier, audio quantum and power in a single motion.
+- **One War Room**: a unified Control Center (`Super+D` Wofi hub + `oligarchy-control` TUI + the `Super+F2` live cockpit) over every toggle, service, status and switch — plus **personas** (studio/gaming/dev/battery/minimal) that re-arm the kernel, DSP coprocessor, AI tier, audio quantum and power in a single motion.
 - **DSP Rigs — Pedalboard as Code**: declarative LV2 chains *and* Faust `.dsp` programs for the coprocessor, hot-swapped like personas (`custom.dsp.enable`). Your guitar tone is a line in your NixOS config — the seed of the Terminus FX Bazaar.
 - **Hyprland, Sharpened**: dropdown scratchpads, a workspace overview (hyprexpo), keyboard resize, a caffeine keep-awake, swayosd OSDs, and a sane idle ladder (see the keybind table).
 - **Virtual DSP Coprocessor**: Soundproof clean-room RT guest inside the chaotic host party bus — a technical masterpiece.

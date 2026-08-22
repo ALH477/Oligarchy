@@ -13,7 +13,11 @@ set -uo pipefail
 
 FLAKE_DIR="${OLIGARCHY_FLAKE_DIR:-/etc/nixos}"
 HOST="${OLIGARCHY_HOST:-nixos}"
-LOCAL_FILE="$FLAKE_DIR/oligarchy-local.nix"
+# Outside the repo on purpose: Nix's local-flake source filtering excludes
+# gitignored files from the evaluated source tree entirely, so an in-repo
+# override file would silently vanish from `nix build`/`nixos-rebuild switch`
+# the moment it's gitignored. See configuration.nix's local-override import.
+LOCAL_FILE="$HOME/.config/oligarchy/state.nix"
 STATE="$HOME/.config/oligarchy/state.json"
 TERM_CMD="${TERMINAL:-kitty}"
 
@@ -40,7 +44,7 @@ in_term() { setsid -f "$TERM_CMD" -e "$@" >/dev/null 2>&1; }
 status() {
   echo "Kernel : $(uname -r)"
   echo "Host   : $HOST"
-  echo "Persona: $(cat /etc/oligarchy/persona 2>/dev/null || echo dev)"
+  echo "Persona: $(cat /etc/oligarchy/persona 2>/dev/null || echo minimal)"
   if command -v powerprofilesctl >/dev/null 2>&1; then
     echo "Power  : $(powerprofilesctl get 2>/dev/null || echo n/a)"
   fi
@@ -110,7 +114,7 @@ dsp-bench|Benchmark DSP latency
 EOF
       ;;
     persona)
-      local active; active="$(cat /etc/oligarchy/persona 2>/dev/null || echo dev)"
+      local active; active="$(cat /etc/oligarchy/persona 2>/dev/null || echo minimal)"
       echo "persona-menu|🎚 Switch persona… (current: $active)"
       cat <<'EOF'
 persona-show|Current persona
@@ -118,6 +122,7 @@ persona-studio|Studio — DSP, lowest latency
 persona-gaming|Gaming — FPS + gamemode
 persona-dev|Dev — balanced, AI on
 persona-battery|Battery — endurance
+persona-minimal|Minimal — fresh-clone default, everything heavy off
 persona-apps|Launch this persona's app set
 layout-save|Save window layout
 layout-restore|Restore window layout
@@ -191,15 +196,15 @@ all_items() {
   done
 }
 
-# One-shot persona picker: shows all 4 personas with the active one marked,
+# One-shot persona picker: shows all 5 personas with the active one marked,
 # switches with a single selection. Reuses apply_persona (below) via `run`
 # so there is exactly one place persona-switch logic lives.
 persona_menu() {
   local active choice
-  active="$(cat /etc/oligarchy/persona 2>/dev/null || echo dev)"
+  active="$(cat /etc/oligarchy/persona 2>/dev/null || echo minimal)"
   picker() {
     local label id
-    for id in studio gaming dev battery; do
+    for id in studio gaming dev battery minimal; do
       label="$(items persona | awk -F'|' -v i="persona-$id" '$1==i{print $2}')"
       if [ "$id" = "$active" ]; then echo "✓ $label"; else echo "  $label"; fi
     done
@@ -215,11 +220,16 @@ persona_menu() {
     *Gaming*)  run persona-gaming ;;
     *Dev*)     run persona-dev ;;
     *Battery*) run persona-battery ;;
+    *Minimal*) run persona-minimal ;;
   esac
 }
 
 rebuild_cmd_copy() {
-  local cmd="sudo nixos-rebuild switch --flake $FLAKE_DIR#$HOST"
+  # --impure is required: LOCAL_FILE/STATE live outside the repo specifically
+  # so a fresh clone never sees them, and checking whether an ambient
+  # filesystem path exists is exactly what pure evaluation (this system's
+  # default — see configuration.nix's local-override comment) disallows.
+  local cmd="sudo nixos-rebuild switch --flake $FLAKE_DIR#$HOST --impure"
   if command -v wl-copy >/dev/null 2>&1; then printf '%s' "$cmd" | wl-copy; fi
   note "Rebuild command copied: $cmd"
 }
@@ -236,20 +246,18 @@ build_fragment() {
   printf '%s' "$frag"
 }
 
-# Persist a choice (kernel/gpu/persona) and regenerate the local override fragment.
+# Persist a choice (kernel/gpu/persona) and regenerate the local override
+# fragment. LOCAL_FILE lives outside the repo (~/.config/oligarchy/state.nix),
+# so unlike the old in-repo oligarchy-local.nix this never needs `git add` —
+# it's picked up by configuration.nix's builtins.pathExists import as-is.
 set_local() { # $1=key $2=value
   local tmp frag
   tmp="$(mktemp)"
   jq --arg k "$1" --arg v "$2" '.[$k]=$v' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
   frag="$(build_fragment)"
-  if { [ -e "$LOCAL_FILE" ] && [ -w "$LOCAL_FILE" ]; } || [ -w "$FLAKE_DIR" ]; then
-    printf '%s\n' "$frag" > "$LOCAL_FILE"
-    git -C "$FLAKE_DIR" add oligarchy-local.nix >/dev/null 2>&1 || true
-    note "Set $1=$2 → wrote $LOCAL_FILE. Rebuild to apply (command copied)."
-  else
-    if command -v wl-copy >/dev/null 2>&1; then printf '%s' "$frag" | wl-copy; fi
-    note "Set $1=$2. $FLAKE_DIR not writable — fragment copied. Save as oligarchy-local.nix, git add, then rebuild."
-  fi
+  mkdir -p "$(dirname "$LOCAL_FILE")"
+  printf '%s\n' "$frag" > "$LOCAL_FILE"
+  note "Set $1=$2 → wrote $LOCAL_FILE. Rebuild to apply (command copied)."
   rebuild_cmd_copy
 }
 
@@ -271,7 +279,7 @@ ai_pull() {
 }
 
 # Switch persona: apply the runtime bits instantly (power, animations, live audio
-# quantum), then write custom.persona.active to oligarchy-local.nix for the
+# quantum), then write custom.persona.active to state.nix for the
 # build-time bits (kernel/DSP/AI/gamemode) and surface the rebuild command.
 apply_persona() { # $1=name $2=powerprofile $3=anims(0|1) $4=quantum
   command -v powerprofilesctl >/dev/null 2>&1 && powerprofilesctl set "$2" >/dev/null 2>&1 || true
@@ -285,7 +293,7 @@ apply_persona() { # $1=name $2=powerprofile $3=anims(0|1) $4=quantum
 # "workspace|command" lines) onto their workspaces.
 launch_persona_apps() {
   local active f ws cmd
-  active="$(cat /etc/oligarchy/persona 2>/dev/null || echo dev)"
+  active="$(cat /etc/oligarchy/persona 2>/dev/null || echo minimal)"
   f="/etc/oligarchy/persona-apps/$active"
   [ -r "$f" ] || { note "no app set for $active"; return 0; }
   while IFS='|' read -r ws cmd; do
@@ -360,11 +368,12 @@ run() {
 
     dsp-bench)       visible dsp-bench ;;
     persona-menu)    persona_menu ;;
-    persona-show)    note "Persona: $(cat /etc/oligarchy/persona 2>/dev/null || echo dev)" ;;
+    persona-show)    note "Persona: $(cat /etc/oligarchy/persona 2>/dev/null || echo minimal)" ;;
     persona-studio)  apply_persona studio  performance 0 64 ;;
     persona-gaming)  apply_persona gaming  performance 1 256 ;;
     persona-dev)     apply_persona dev     balanced    1 256 ;;
     persona-battery) apply_persona battery power-saver 0 512 ;;
+    persona-minimal) apply_persona minimal balanced    0 1024 ;;
     persona-apps)    launch_persona_apps ;;
     layout-save)     visible persona-layout save ;;
     layout-restore)  visible persona-layout restore ;;

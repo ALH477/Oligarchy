@@ -119,10 +119,15 @@ in
         # Ensure XWayland has proper cursor
         [ "sleep 1 && hyprctl setcursor idTech4 24" ]
 
-        # Dropdown scratchpads — pre-spawned hidden on their special workspaces
-        [ "[workspace special:term silent] kitty --class scratch-term" ]
-        [ "[workspace special:notes silent] kitty --class scratch-notes -e nvim ~/Documents/notes.md" ]
-        [ "[workspace special:mon silent] kitty --class scratch-mon -e htop" ]
+        # Dropdown scratchpads — pre-spawned hidden on their special workspaces.
+        # Off by default (custom.desktopFeatures.enableScratchpads): the
+        # scratch-mon one runs htop continuously, a non-obvious idle-resource
+        # cost that shouldn't ship on a fresh install.
+        (lib.optionals (features.enableScratchpads or false) [
+          "[workspace special:term silent] kitty --class scratch-term"
+          "[workspace special:notes silent] kitty --class scratch-notes -e nvim ~/Documents/notes.md"
+          "[workspace special:mon silent] kitty --class scratch-mon -e htop"
+        ])
 
         # First-boot welcome — essential keybinds shown once on fresh login
         [ "${welcomeScript}" ]

@@ -22,7 +22,8 @@ let
   # ─────────────────────────────────────────────────────────────────────────
   # Variant is now a declarative option: custom.kernel.variant
   # ("zen" | "xanmod" | "latest" | "lts" | "cachyos-bore"). Set it in
-  # configuration.nix or via the control center (writes ./oligarchy-local.nix).
+  # configuration.nix or via the control center (writes
+  # ~/.config/oligarchy/state.nix).
   cfg = config.custom.kernel;
 
   # ─────────────────────────────────────────────────────────────────────────

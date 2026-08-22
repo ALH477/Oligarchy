@@ -35,7 +35,7 @@ while true; do
   clear
   printf "${Bold}${A}  ⌁ OLIGARCHY WAR ROOM${Rst}    ${Dim}%s${Rst}\n" "$(date '+%a %d %b · %H:%M:%S')"
   hr
-  row "Persona" "$(cat /etc/oligarchy/persona 2>/dev/null || echo dev)"
+  row "Persona" "$(cat /etc/oligarchy/persona 2>/dev/null || echo minimal)"
   row "Kernel"  "$(uname -r)"
   row "Uptime"  "$(uptime -p 2>/dev/null | sed 's/^up //' || echo n/a)"
   row "Load"    "$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || echo n/a)"
