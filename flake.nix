@@ -215,6 +215,7 @@
         ./modules/secrets.nix
         ./modules/security/strict-egress.nix
         ./modules/security/dcf-spa-gate.nix
+        ./modules/security/ip-blocklists.nix
         ./modules/security/hardening.nix
         ./modules/security/malware-shield.nix
         ./modules/security/security-cli.nix
@@ -406,6 +407,7 @@
               custom.dcfIdentity.enable = lib.mkForce false;
               services.dcf-tray.enable = lib.mkForce false;
               networking.firewall.strictEgress.enable = lib.mkForce false;
+              networking.firewall.blocklists.enable = lib.mkForce false;
               hardware.cpuSecurity.enable = lib.mkForce false;
               custom.security.hardening.enable = lib.mkForce false;
               custom.malwareShield.enable = lib.mkForce false;

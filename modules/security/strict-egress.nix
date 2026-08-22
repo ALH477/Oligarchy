@@ -10,6 +10,13 @@
 #     everything else goes through the 127.0.0.53 stub
 #   - recovery.dryRun switches the policy to accept and logs WOULDBLOCK lines,
 #     so the allowlist can be soaked before enforcement
+#
+# Two failure modes worth not reintroducing (both cost a full outage):
+#   - resolve with pkgs.getent, NOT pkgs.glibc.bin — getent is a separate
+#     derivation, and the wrong path made every lookup fail into /dev/null,
+#     leaving the dynamic sets empty on every generation
+#   - recover with `nft delete table`, NOT `nft flush chain` — a base chain
+#     keeps `policy drop` across a flush, so flushing fails *closed*
 { config, lib, pkgs, ... }:
 
 with lib;
@@ -101,7 +108,8 @@ let
 
   portRules = concatMapStringsSep "\n      "
     (pp:
-      "${pp.proto or "tcp"} dport ${toString pp.port} accept"
+      let dport = if pp.to != null then "${toString pp.port}-${toString pp.to}" else toString pp.port;
+      in "${pp.proto or "tcp"} dport ${dport} accept"
     )
     cfg.allow.ports;
 
@@ -186,20 +194,43 @@ let
 
   # ── Resolver: populate the dynamic sets through the pinned stub ─────────────
   # getent ahosts resolves via NSS -> systemd-resolved, the one path the
-  # ruleset guarantees. Elements carry a 26h timeout (daily timer + slack),
-  # so stale IPs age out on their own.
+  # ruleset guarantees. Elements carry a 26h timeout while the timer refreshes
+  # every 15m, so each domain accumulates its provider's live address pool and
+  # genuinely stale IPs still age out on their own.
   resolveScript = pkgs.writeShellScriptBin "strict-egress-resolve" ''
     set -u
     NFT=${pkgs.nftables}/bin/nft
+    # getent lives in its own derivation — it is NOT in glibc.bin. Pointing at
+    # glibc.bin here silently resolved nothing at all (every lookup died with
+    # "No such file or directory" into /dev/null), so the dynamic sets stayed
+    # empty on every generation and enforcement black-holed the whole machine.
+    GETENT=${pkgs.getent}/bin/getent
     RUNDIR=/run/strict-egress
     mkdir -p "$RUNDIR"
     : > "$RUNDIR/resolved.txt.new"
+
+    # ── Wait for real connectivity ────────────────────────────────────────────
+    # network-online.target is reached immediately on this host (both
+    # *-wait-online units are force-disabled), so without this the first pass
+    # runs ~20s before DHCP completes and every single lookup fails.
+    for attempt in $(seq 1 30); do
+      if [ -n "$(${pkgs.iproute2}/bin/ip -4 route show default 2>/dev/null)" ] \
+        && $GETENT ahosts ${head mandatoryDomains} >/dev/null 2>&1; then
+        break
+      fi
+      if [ "$attempt" -eq 30 ]; then
+        echo "strict-egress: WARNING no connectivity after 60s — resolving anyway" >&2
+      fi
+      sleep 2
+    done
 
     failed=0
     for domain in ${toString allDomains}; do
       ips=""
       for attempt in 1 2 3; do
-        ips=$(${pkgs.glibc.bin}/bin/getent ahosts "$domain" 2>/dev/null | ${pkgs.gawk}/bin/awk '{print $1}' | sort -u)
+        # stderr is deliberately NOT discarded: swallowing it is what hid the
+        # broken getent path for weeks.
+        ips=$($GETENT ahosts "$domain" | ${pkgs.gawk}/bin/awk '{print $1}' | sort -u)
         [ -n "$ips" ] && break
         sleep 2
       done
@@ -216,22 +247,68 @@ let
         echo "$domain $ip" >> "$RUNDIR/resolved.txt.new"
       done
     done
+
+    ${optionalString cfg.autoDetect.tailscale ''
+      # ── Tailscale DERP relays ─────────────────────────────────────────────
+      # ~88 relay nodes spread over ~47 unrelated /24s (Linode, Hetzner, DO…)
+      # that drift over time, so pull the authoritative map out of tailscaled
+      # instead of hardcoding ranges. `debug derp-map` needs no root. Without
+      # this, relay fallback is blocked whenever direct UDP:41641 can't be
+      # established — controlplane/login alone are not enough.
+      derp=0
+      if derpmap=$(${config.services.tailscale.package}/bin/tailscale debug derp-map 2>/dev/null); then
+        for ip in $(printf '%s' "$derpmap" \
+          | ${pkgs.gnugrep}/bin/grep -oE '"IPv[46]": *"[0-9a-fA-F.:]+"' \
+          | ${pkgs.gnused}/bin/sed -E 's/.*"([0-9a-fA-F.:]+)"$/\1/' | sort -u); do
+          case "$ip" in
+            *:*) $NFT add element inet strict-egress egress_dyn6 "{ $ip timeout 26h }" 2>/dev/null || continue ;;
+            *)   $NFT add element inet strict-egress egress_dyn4 "{ $ip timeout 26h }" 2>/dev/null || continue ;;
+          esac
+          derp=$((derp+1))
+          echo "derp-map $ip" >> "$RUNDIR/resolved.txt.new"
+        done
+        echo "strict-egress: added $derp DERP relay addresses from the tailscale derp-map"
+      else
+        echo "strict-egress: WARNING tailscale derp-map unavailable (tailscaled down?) — relay fallback may be blocked" >&2
+      fi
+    ''}
+
     mv "$RUNDIR/resolved.txt.new" "$RUNDIR/resolved.txt"
     echo "strict-egress: resolved $(wc -l < "$RUNDIR/resolved.txt") entries ($failed domains failed)"
 
     ${optionalString (!cfg.recovery.dryRun) ''
-      # Post-flight: enforcing a broken allowlist must not brick nixos-rebuild.
-      if ! ${pkgs.curl}/bin/curl -fsSL --connect-timeout ${toString cfg.recovery.activationTimeout} \
-          --max-time 30 https://cache.nixos.org >/dev/null 2>&1; then
-        echo "strict-egress: ERROR cache.nixos.org unreachable under enforcement!" >&2
+      # Post-flight: enforcing a broken allowlist must not brick nixos-rebuild
+      # — or the interactive session. Probe several independently-hosted
+      # endpoints, because cache.nixos.org alone cannot tell us that everything
+      # the user actually reaches for is dead.
+      reachable=0
+      total=0
+      for probe in ${concatStringsSep " " cfg.recovery.probeHosts}; do
+        total=$((total+1))
+        if ${pkgs.curl}/bin/curl -fsSL --connect-timeout ${toString cfg.recovery.activationTimeout} \
+            --max-time 30 "https://$probe" >/dev/null 2>&1; then
+          reachable=$((reachable+1))
+        else
+          echo "strict-egress: post-flight probe FAILED: $probe" >&2
+        fi
+      done
+
+      if [ "$reachable" -eq 0 ]; then
+        echo "strict-egress: ERROR no probe host reachable under enforcement ($total tried)!" >&2
         ${if cfg.recovery.failOpen then ''
-          echo "strict-egress: failOpen=true -> flushing egress chain (FAIL OPEN)" >&2
-          $NFT flush chain inet strict-egress egress || true
+          echo "strict-egress: failOpen=true -> deleting the egress table (FAIL OPEN)" >&2
+          # NOT `flush chain`: a base chain keeps its `policy drop` across a
+          # flush, so flushing strips every accept rule (loopback, established,
+          # DNS pinning, RFC1918) and silently black-holes ALL egress — the
+          # opposite of failing open. Dropping the table removes the hook.
+          $NFT delete table inet strict-egress || true
           exit 1
         '' else ''
-          echo "strict-egress: failOpen=false -> staying closed. Fix allowlist or run: nft flush chain inet strict-egress egress" >&2
+          echo "strict-egress: failOpen=false -> staying closed. Fix the allowlist or run: nft delete table inet strict-egress" >&2
           exit 1
         ''}
+      elif [ "$reachable" -lt "$total" ]; then
+        echo "strict-egress: WARNING only $reachable/$total probe hosts reachable — the allowlist has gaps" >&2
       fi
     ''}
   '';
@@ -255,7 +332,7 @@ let
     set -u
     host="''${1:?usage: strict-egress-test <hostname>}"
     echo "Resolving $host through the stub..."
-    ${pkgs.glibc.bin}/bin/getent ahosts "$host" | ${pkgs.gawk}/bin/awk '{print "  " $1}' | sort -u
+    ${pkgs.getent}/bin/getent ahosts "$host" | ${pkgs.gawk}/bin/awk '{print "  " $1}' | sort -u
     echo "Connectivity (https):"
     if ${pkgs.curl}/bin/curl -fsSL --max-time 5 "https://$host" >/dev/null 2>&1; then
       echo "  OK — egress permitted"
@@ -301,13 +378,23 @@ in
       ports = mkOption {
         type = types.listOf (types.submodule {
           options = {
-            port = mkOption { type = types.port; };
+            port = mkOption { type = types.port; description = "Start port (or the only port, if `to` is unset)."; };
+            to = mkOption {
+              type = types.nullOr types.port;
+              default = null;
+              description = ''
+                End port, making this an inclusive range (port-to). Leave
+                null for a single port. For destination-IP-diverse traffic
+                that can't be domain-allowlisted (e.g. game servers), this is
+                the escape hatch: it accepts by port regardless of address.
+              '';
+            };
             proto = mkOption { type = types.enum [ "tcp" "udp" ]; default = "tcp"; };
           };
         });
         default = [ ];
-        description = "Destination ports always allowed regardless of address.";
-        example = [{ port = 41641; proto = "udp"; }];
+        description = "Destination ports (or port ranges via `to`) always allowed regardless of address.";
+        example = [{ port = 41641; proto = "udp"; } { port = 27000; to = 27100; proto = "udp"; }];
       };
       uids = mkOption {
         type = types.listOf types.str;
@@ -323,6 +410,17 @@ in
       acme = mkOption { type = types.bool; default = true; description = "Auto-allow Let's Encrypt when ACME certs are configured."; };
       docker = mkOption { type = types.bool; default = true; description = "Auto-allow Docker Hub when docker (rootful or rootless) is enabled."; };
       firmware = mkOption { type = types.bool; default = true; description = "Auto-allow fwupd metadata/firmware downloads when fwupd is enabled."; };
+      tailscale = mkOption {
+        type = types.bool;
+        default = config.services.tailscale.enable;
+        defaultText = literalExpression "config.services.tailscale.enable";
+        description = ''
+          Auto-allow Tailscale DERP relays by pulling the live derp-map from
+          tailscaled at each refresh. The relay set spans dozens of unrelated
+          /24s and drifts, so it cannot be usefully hardcoded; without this,
+          relay fallback breaks whenever a direct connection can't be made.
+        '';
+      };
     };
 
     recovery = {
@@ -334,7 +432,17 @@ in
       activationTimeout = mkOption {
         type = types.int;
         default = 30;
-        description = "Seconds for the post-resolve cache.nixos.org reachability check (enforce mode).";
+        description = "Connect timeout, in seconds, for each post-resolve reachability probe (enforce mode).";
+      };
+      probeHosts = mkOption {
+        type = types.listOf types.str;
+        default = [ "cache.nixos.org" "api.anthropic.com" ];
+        description = ''
+          Hosts probed after resolution under enforcement. Recovery triggers
+          only when every probe fails; a partial failure logs a warning. Use
+          independently-hosted endpoints — a single CDN-fronted host cannot
+          distinguish "one domain is missing" from "all egress is dead".
+        '';
       };
       dryRun = mkOption {
         type = types.bool;
@@ -345,9 +453,9 @@ in
         type = types.bool;
         default = true;
         description = ''
-          If the post-resolve check cannot reach cache.nixos.org under
-          enforcement, flush the egress chain (fail open) instead of leaving
-          the machine unable to rebuild. Set false for strict environments.
+          If no host in recovery.probeHosts is reachable under enforcement,
+          delete the egress table (fail open) instead of leaving the machine
+          unable to rebuild. Set false for strict environments.
         '';
       };
     };
@@ -390,7 +498,10 @@ in
       requires = [ "strict-egress-rules.service" ];
       serviceConfig = {
         Type = "oneshot";
-        RemainAfterExit = true;
+        # Deliberately NOT RemainAfterExit: a oneshot that stays "active" makes
+        # every timer-driven `systemctl start` a no-op, so the refresh below
+        # would never actually re-run.
+        RemainAfterExit = false;
         ExecStart = "${resolveScript}/bin/strict-egress-resolve";
       };
     };
@@ -400,9 +511,12 @@ in
       wantedBy = [ "timers.target" ];
       timerConfig = {
         OnBootSec = "2m"; # catch-up: wait-online is masked on this host
-        OnCalendar = "daily";
-        RandomizedDelaySec = "1h";
-        Persistent = true;
+        # CDN-fronted domains (GitHub/Fastly, CloudFront, Cloudflare) hand out a
+        # rotating handful of addresses per lookup. Elements carry a 26h timeout
+        # and `nft add element` accumulates, so refreshing every 15m builds up
+        # the provider's actual pool instead of pinning a two-IP snapshot.
+        OnUnitActiveSec = "15m";
+        RandomizedDelaySec = "2m";
         Unit = "strict-egress-resolve.service";
       };
     };

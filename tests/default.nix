@@ -191,7 +191,84 @@ let
     '';
   };
 
+  # ── IP blocklists: the protected-space preflight is the whole safety story ──
+  # A feed that carries RFC1918/CGNAT must be rejected WHOLESALE rather than
+  # quietly filtered, and a rejected feed must never clobber a good live set.
+  # firehol_level1 is the real-world instance of this: it bundles fullbogons, so
+  # loading it would blackhole the LAN, the gateway and the Tailscale mesh.
+  ip-blocklists = pkgs.testers.runNixOSTest {
+    name = "ip-blocklists";
+
+    nodes.machine = { config, pkgs, ... }: {
+      imports = [ ../modules/security/ip-blocklists.nix ];
+      networking.firewall.blocklists = {
+        enable = true;
+        # One source keeps the cache filename predictable (ipsum-L3.txt).
+        feeds = [ "ipsum" ];
+        ipsumLevel = 3;
+        direction = "both";
+      };
+    };
+
+    testScript = ''
+      machine.wait_for_unit("firewall.service", timeout=120)
+
+      state = "/var/lib/oligarchy-blocklists"
+      cache = state + "/cache/ipsum-L3.txt"
+
+      # 1. Rules are wired into BOTH chains against our own sets, and the
+      #    iptables backend is still live — we did not flip to nftables.
+      machine.succeed("iptables -S INPUT  | grep -q 'olig-blk-v4'")
+      machine.succeed("iptables -S OUTPUT | grep -q 'olig-blk-v4'")
+      machine.succeed("ipset list olig-blk-v4 >/dev/null")
+
+      # 2. A clean feed loads. The VM is offline, so curl fails and the updater
+      #    falls back to the cache — which is exactly the path we want covered.
+      machine.succeed(f"mkdir -p {state}/cache")
+      machine.succeed(
+          f"for i in $(seq 1 254); do echo 203.0.113.$i; done > {cache}"
+      )
+      machine.succeed("systemctl start oligarchy-blocklists-update.service")
+      machine.succeed("ipset test olig-blk-v4 203.0.113.5")
+
+      # 3. Protected space is never in the set, even though it was never in the
+      #    feed — the mandatory subtraction is unconditional.
+      machine.fail("ipset test olig-blk-v4 192.168.1.1")
+      machine.fail("ipset test olig-blk-v4 100.64.0.1")
+      machine.fail("ipset test olig-blk-v4 127.0.0.1")
+
+      # 4. THE FIREHOL CASE. One line of RFC1918 poisons the whole feed: the
+      #    service must fail loudly rather than load a filtered remainder.
+      machine.succeed(f"cp {cache} {cache}.good")
+      machine.succeed(f"echo '192.168.0.0/16' >> {cache}")
+      machine.fail("systemctl start oligarchy-blocklists-update.service")
+      machine.succeed(
+          "journalctl -u oligarchy-blocklists-update.service | grep -q 'REJECTED'"
+      )
+
+      # 5. ...and the previously-good set is still intact. A rejected feed must
+      #    never leave the machine with an empty or half-loaded set.
+      machine.succeed("ipset test olig-blk-v4 203.0.113.5")
+      machine.fail("ipset test olig-blk-v4 192.168.0.1")
+
+      # 6. A feed that shrinks below its sanity band is rejected too (truncated
+      #    body / error page served with 200).
+      machine.succeed(f"head -5 {cache}.good > {cache}")
+      machine.fail("systemctl start oligarchy-blocklists-update.service")
+      machine.succeed("ipset test olig-blk-v4 203.0.113.5")
+
+      # 7. panic empties the sets, making the iptables rules inert without
+      #    touching the firewall. Contrast strict-egress, where flushing the nft
+      #    chain keeps `policy drop` and fails CLOSED.
+      machine.succeed("oligarchy-blocklist panic")
+      machine.fail("ipset test olig-blk-v4 203.0.113.5")
+      machine.succeed("iptables -S INPUT | grep -q 'olig-blk-v4'")
+
+      print("ip-blocklists: preflight rejection, mandatory subtraction, set preservation and panic verified")
+    '';
+  };
+
 in
 {
-  inherit strict-egress malware-shield hardening dcf-spa-gate;
+  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists;
 }

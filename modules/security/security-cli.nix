@@ -36,12 +36,23 @@ let
       else echo "off"; fi
     }
     q_events() { [ -f /var/lib/malware-shield/events.log ] && wc -l < /var/lib/malware-shield/events.log || echo 0; }
+    q_blocklist() {
+      # Entry count of the merged threat-intel set, or "off". Reads the state
+      # file rather than shelling out to ipset, which needs root.
+      local m=/var/lib/oligarchy-blocklists/manifest.json
+      if [ -f "$m" ]; then
+        jq -r '"\(.v4 + .v6) entries"' "$m" 2>/dev/null || echo "unknown"
+      else
+        echo "off"
+      fi
+    }
 
     build_status() {
-      local ssh_pw fail2ban egress clamd apparmor auditd usbguard docker_rootless events
+      local ssh_pw fail2ban egress clamd apparmor auditd usbguard docker_rootless events blocklist
       ssh_pw=$(q_ssh_password)
       fail2ban=$(q_unit fail2ban.service)
       egress=$(q_egress_mode)
+      blocklist=$(q_blocklist)
       clamd=$(q_unit clamav-daemon.service)
       apparmor=$(q_unit apparmor.service)
       auditd=$(q_unit auditd.service)
@@ -52,10 +63,12 @@ let
         --arg ssh_pw "$ssh_pw" --arg fail2ban "$fail2ban" --arg egress "$egress" \
         --arg clamd "$clamd" --arg apparmor "$apparmor" --arg auditd "$auditd" \
         --arg usbguard "$usbguard" --arg docker_rootless "$docker_rootless" \
+        --arg blocklist "$blocklist" \
         --argjson events "''${events:-0}" --arg ts "$(date -Is)" \
         '{ts:$ts, ssh_password_auth:$ssh_pw, fail2ban:$fail2ban, egress:$egress,
           clamav:$clamd, apparmor:$apparmor, auditd:$auditd, usbguard:$usbguard,
-          docker_rootless:$docker_rootless, malware_events:$events}'
+          docker_rootless:$docker_rootless, malware_events:$events,
+          blocklist:$blocklist}'
     }
 
     cmd_status() {
@@ -70,6 +83,7 @@ let
             "SSH password auth : \(.ssh_password_auth)",
             "fail2ban          : \(.fail2ban)",
             "Strict egress     : \(.egress)",
+            "IP blocklists     : \(.blocklist)",
             "ClamAV daemon     : \(.clamav)",
             "AppArmor          : \(.apparmor)",
             "auditd            : \(.auditd)",

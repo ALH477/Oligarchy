@@ -32,6 +32,9 @@ pub const NET: &[&str] = &[
     "resolvectl",
     "ip",
     "demod-ip-blocker",
+    // `oligarchy-blocklist status` / `test <ip>` only — both read-only. The
+    // `update` and `panic` verbs mutate, so they are never passed from here.
+    "oligarchy-blocklist",
 ];
 
 /// CLIs the `dcf` aspect may invoke.

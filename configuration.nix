@@ -922,26 +922,70 @@
       };
 
       # Strict egress filtering (modules/security/strict-egress.nix) —
-      # ENFORCING as of the 2026-08-09 audit soak. failOpen stays true (see
-      # recovery.failOpen) so a broken allowlist can't brick nixos-rebuild.
+      # back in DRY-RUN as of 2026-08-16.
+      #
+      # The "2026-08-09 audit soak" this was previously enforced on proved
+      # nothing: the resolver pointed at a getent that does not exist, so the
+      # dynamic allowlist was empty on every generation and the WOULDBLOCK log
+      # was simply recording all public traffic. Enforcing on top of that
+      # dropped everything off-LAN, and the failOpen path then flushed the
+      # chain — which keeps `policy drop` — and black-holed egress outright.
+      # Both bugs are fixed; re-enforce only after a soak on a populated set.
       networking.firewall.strictEgress = {
         enable = true;
         preset = "developer";
-        recovery.dryRun = false;
+        recovery.dryRun = true;
         allow = {
           domains = [
-            # Tailscale coordination + DERP relays (extend from soak logs)
+            # Tailscale coordination. The DERP relay set is pulled live from
+            # tailscaled via autoDetect.tailscale — it spans dozens of
+            # unrelated /24s and cannot be usefully listed here.
             "controlplane.tailscale.com"
             "login.tailscale.com"
+            # Claude Code / Anthropic API
+            "api.anthropic.com"
+            "claude.ai"
+            "statsig.anthropic.com"
             # ollama (model pulls) + blipply-assistant (model downloads)
             "ollama.com"
             "registry.ollama.ai"
             "huggingface.co"
             # dcf-node-binary
             "api.demod.ltd"
+            # Steam store/community/API/CDN — confirmed against live
+            # WOULDBLOCK entries during the dry-run soak (store.steampowered.com
+            # -> 23.0.194.117, api.steampowered.com -> 23.41.4.x,
+            # cdn.steamstatic.com -> 199.232.211/215.52 all matched logged
+            # would-blocks). Game-server traffic itself is IP-diverse by
+            # design (arbitrary hosts, including Valve's SDR relays) and
+            # can't be domain-allowlisted — see allow.ports below instead.
+            "steampowered.com"
+            "store.steampowered.com"
+            "api.steampowered.com"
+            "help.steampowered.com"
+            "steamcommunity.com"
+            "cdn.steamstatic.com"
+            "community.akamai.steamstatic.com"
+            "shared.akamai.steamstatic.com"
+            "clientconfig.akamai.steamstatic.com"
+            "steamcdn-a.akamaihd.net"
           ];
-          # WireGuard direct connections between tailscale peers
-          ports = [{ port = 41641; proto = "udp"; }];
+          # Steam Remote Play / Big Picture LAN device discovery (SSDP
+          # NOTIFY). Multicast-scoped (TTL=1, never leaves the local
+          # segment) so allowing the destination outright costs nothing.
+          ips = [ "239.255.255.250/32" ];
+          ports = [
+            # WireGuard direct connections between tailscale peers
+            { port = 41641; proto = "udp"; }
+            # Steam/Source game-server + content ports (query, RCON,
+            # in-game traffic, SDR). Destination IP is arbitrary — this is
+            # the escape hatch strict-egress.nix documents for exactly that
+            # case. Confirmed live: an established store.steampowered.com
+            # session on TCP 27018 plus several logged UDP would-blocks on
+            # 27055/27061/27079/27123 during the same soak.
+            { port = 27000; to = 27100; proto = "tcp"; }
+            { port = 27000; to = 27100; proto = "udp"; }
+          ];
         };
       };
 
@@ -966,9 +1010,30 @@
       # docker -> multi-user.target hostage for 30s every boot.
       systemd.services.NetworkManager-wait-online.enable = lib.mkForce false;
 
+      # Astrill VPN egress list -> demod-blk-v4/v6. VPN detection, not threat
+      # intel; the blocklists module below carries the actual threat feeds.
       services.demod-ip-blocker = {
         enable = true;
         updateInterval = "24h";
+      };
+
+      # Threat-intel blocklists (modules/security/ip-blocklists.nix) -> its own
+      # olig-blk-v4/v6 sets, so the two never collide.
+      #
+      # Enforcing on both directions. That is safe here only because every feed
+      # passes a preflight that rejects it wholesale if it carries protected
+      # space, and because RFC1918/CGNAT/loopback, the live interface addresses,
+      # the default gateway and every strict-egress-resolved IP are subtracted
+      # unconditionally. FireHOL level1 is excluded for exactly that reason — it
+      # bundles fullbogons and would blackhole the LAN and the Tailscale mesh.
+      #
+      # Escape hatch, no rebuild required: sudo oligarchy-blocklist panic
+      networking.firewall.blocklists = {
+        enable = true;
+        feeds = [ "ipsum" "spamhaus-drop" "blocklist-de" "cins" ];
+        ipsumLevel = 3;
+        direction = "both";
+        updateInterval = "6h";
       };
 
       # ──────────────────────────────────────────────────────────────────────────

@@ -55,6 +55,22 @@ impl Server {
         runner::run(ASPECT, "demod-ip-blocker", &["status"], QUICK_TIMEOUT)
             .unwrap_or_else(|e| format!("[error] {e}"))
     }
+
+    #[tool(description = "Threat-intel IP blocklist status: mode, per-feed \
+                          validation results, live ipset sizes, recent hits.")]
+    fn blocklist_status(&self) -> String {
+        audit::tool(ASPECT, "blocklist_status", "");
+        runner::run(ASPECT, "oligarchy-blocklist", &["status"], QUICK_TIMEOUT)
+            .unwrap_or_else(|e| format!("[error] {e}"))
+    }
+
+    #[tool(description = "Check whether a single IP is in the threat-intel \
+                          blocklist sets, and which set matched.")]
+    fn blocklist_test(&self, #[tool(param)] ip: String) -> String {
+        audit::tool(ASPECT, "blocklist_test", &ip);
+        runner::run(ASPECT, "oligarchy-blocklist", &["test", &ip], QUICK_TIMEOUT)
+            .unwrap_or_else(|e| format!("[error] {e}"))
+    }
 }
 
 #[tool(tool_box)]
