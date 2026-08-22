@@ -298,47 +298,53 @@ rec {
     # ══════════════════════════════════════════════════════════════════════════
     # Tokyo Night
     # ══════════════════════════════════════════════════════════════════════════
+    # Values are Omarchy's (basecamp/omarchy) actual canonical Tokyo Night —
+    # sourced verbatim from themes/tokyo-night/colors.toml, which is also
+    # Omarchy's own default theme on a fresh install (install/user/theme.sh:
+    # `omarchy-theme-set "Tokyo Night"` runs whenever no theme has been chosen
+    # yet). Not the generic standalone "Tokyo Night" VS Code/Neovim scheme —
+    # several fields (orange/cyan/the bright* set) differ from that one.
     tokyo = {
       name = "Tokyo Night";
-      bg = "#16161E";
-      bgAlt = "#1A1B26";
-      surface = "#24283B";
-      surfaceAlt = "#292E42";
-      overlay = "#343A52";
-      border = "#3B4261";
-      borderFocus = "#7AA2F7";
-      borderHover = "#BB9AF7";
+      bg = "#0E0E14"; # colors.toml: darker_background
+      bgAlt = "#13141C"; # colors.toml: dark_background
+      surface = "#1A1B26"; # colors.toml: background (Omarchy's dominant bg, e.g. mako/terminal)
+      surfaceAlt = "#24283B"; # colors.toml: lighter_background
+      overlay = "#292E42"; # colors.toml: selection
+      border = "#414868"; # colors.toml: muted
+      borderFocus = "#7AA2F7"; # colors.toml: accent
+      borderHover = "#BB9AF7"; # colors.toml: bright_magenta
       accent = "#7AA2F7";
       accentAlt = "#BB9AF7";
       accentDim = "#5A7DD6";
       gradientStart = "#7AA2F7";
       gradientEnd = "#BB9AF7";
       gradientAngle = "45deg";
-      text = "#C0CAF5";
-      textAlt = "#A9B1D6";
-      textDim = "#565F89";
-      textOnAccent = "#1A1B26";
-      success = "#9ECE6A";
-      warning = "#E0AF68";
-      error = "#F7768E";
-      info = "#7DCFFF";
-      purple = "#BB9AF7";
-      pink = "#FF007C";
-      orange = "#FF9E64";
+      text = "#C0CAF5"; # colors.toml: bright_foreground
+      textAlt = "#A9B1D6"; # colors.toml: foreground
+      textDim = "#565F89"; # colors.toml: dark_foreground
+      textOnAccent = "#0E0E14";
+      success = "#9ECE6A"; # colors.toml: green
+      warning = "#E0AF68"; # colors.toml: yellow
+      error = "#F7768E"; # colors.toml: red
+      info = "#0DB9D7"; # colors.toml: bright_cyan
+      purple = "#AD8EE6"; # colors.toml: magenta
+      pink = "#BB9AF7"; # colors.toml has no distinct pink; reuses bright_magenta
+      orange = "#EB927B"; # colors.toml: orange
       yellow = "#E0AF68";
-      cyan = "#7DCFFF";
+      cyan = "#449DAB"; # colors.toml: cyan
       green = "#9ECE6A";
-      black = "#1A1B26";
-      brightBlack = "#414868";
+      black = "#1A1B26"; # colors.toml: background (terminal apps use this as ANSI black)
+      brightBlack = "#414868"; # colors.toml: muted
       red = "#F7768E";
-      brightRed = "#FF899D";
-      brightGreen = "#B2DC82";
-      brightYellow = "#ECC580";
+      brightRed = "#FF7A93"; # colors.toml: bright_red
+      brightGreen = "#B9F27C"; # colors.toml: bright_green
+      brightYellow = "#FF9E64"; # colors.toml: bright_yellow
       blue = "#7AA2F7";
-      brightBlue = "#8CB4F9";
-      magenta = "#BB9AF7";
-      brightMagenta = "#CDACF9";
-      brightCyan = "#91D9FF";
+      brightBlue = "#7DA6FF"; # colors.toml: bright_blue
+      magenta = "#AD8EE6";
+      brightMagenta = "#BB9AF7";
+      brightCyan = "#0DB9D7";
       white = "#C0CAF5";
       brightWhite = "#FFFFFF";
     };
@@ -403,7 +409,9 @@ rec {
 
   # Active theme - set default here
   # Options: demod, catppuccin, nord, rosepine, gruvbox, dracula, tokyo, phosphor
-  activeThemeName = "demod";
+  # tokyo = Omarchy's canonical Tokyo Night (its own fresh-install default) —
+  # see the tokyo palette above for the colors.toml source.
+  activeThemeName = "tokyo";
 
   # Get the active palette
   activePalette = palettes.${activeThemeName};
