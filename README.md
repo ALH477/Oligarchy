@@ -6,6 +6,8 @@
 
 > This README is written in-character (satire — decrees, fake legal threats, all of it). For the plain, practical version — what this actually is and how to build/customize it — see [`docs/architecture.md`](docs/architecture.md).
 
+<img width="1316" height="1195" alt="file_0000000070048230b82f800f9e6fa7cc" src="https://github.com/user-attachments/assets/69eead37-4957-458a-b27b-69cd357e29c5" />
+
 Oligarchy NixOS isn’t some boring distro hack.  
 It’s the **first personal OS in history** to unleash a **self-healing, real-time DSP coprocessor** that obliterates latency with **~0.38–2.66 ms round-trip** — forged straight from the same flake that rules your host. 
 
