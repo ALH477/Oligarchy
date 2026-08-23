@@ -17,7 +17,7 @@ You’re now commanding the machine that burned the proprietary DSP empire to th
 
 <img width="2560" height="1600" alt="Screenshot_20260118_231927" src="https://github.com/user-attachments/assets/8f0bfabe-70b0-4475-9e12-6490c12fcedc" />
 
-The recent California age verification bill you're referring to is **AB 1043** (the Digital Age Assurance Act), signed into law by Governor Newsom on October 13, 2025, and operative starting **January 1, 2027** (with some grace periods into mid-2027). It forces **operating system providers** (defined broadly to include anyone who develops, licenses, or controls OS software on general-purpose computing devices—yes, that sweeps in custom NixOS distros like Oligarchy if distributed/used in CA) to:
+The recent California age verification bill we are referring to is **AB 1043** (the Digital Age Assurance Act), signed into law by Governor Newsom on October 13, 2025, and operative starting **January 1, 2027** (with some grace periods into mid-2027). It forces **operating system providers** (defined broadly to include anyone who develops, licenses, or controls OS software on general-purpose computing devices—yes, that sweeps in custom NixOS distros like Oligarchy if distributed/used in CA) to:
 
 - Provide an "accessible interface" during account/device setup requiring the account holder (parent/guardian or adult user) to input birth date, age, or both.
 - Generate and expose a digital "age bracket signal" (e.g., under 13, 13-15, 16-17, 18+) via a real-time API to apps in covered app stores upon developer request.
