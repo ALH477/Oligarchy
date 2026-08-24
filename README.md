@@ -1,4 +1,4 @@
-# ![Oligarchy](./assets/oligarchy.gif) NixOS – The Unstoppable War Machine
+# Oligarchy NixOS – The Unstoppable War Machine
 
 **Framework 16 Native · 13K+ LoC · AMD 7040 · Intel · Nvidia Optimus · Hyprland · Plasma 6 · IceWM · LeftWM · X11/Wayland · CachyOS/Zen kernel · ~5–7 W idle · Nuclear-grade DSP coprocessor · Calamares Install · DeMoD Branded · DCF Compute Fabric**
 
