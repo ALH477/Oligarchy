@@ -91,6 +91,16 @@ in
         # closing. Restarting in here would hide that from the host.
         Restart = "no";
 
+        # The guest's journal is inside a disposable VM that nobody can log
+        # into, so anything written only there is written nowhere. The console
+        # is the one surface that escapes: microvm.nix pipes it to the host's
+        # `microvm@<id>.service`, which is where an operator — and the tier 2
+        # gate — actually looks. Without this a plugin's own log messages are
+        # invisible, which is exactly what happened while this was being
+        # brought up.
+        StandardOutput = "journal+console";
+        StandardError = "journal+console";
+
         # MemoryDenyWriteExecute stays OFF, deliberately and without apology:
         # this is the one place in the whole design a self-JIT plugin is
         # *supposed* to have writable-executable memory. The boundary here is the

@@ -144,6 +144,18 @@ let
 
   enabledPlugins = filterAttrs (_: p: p.autoStart) cfg.declaredPlugins;
 
+  # Context IDs must be unique per guest, and 0/1/2 are reserved (hypervisor,
+  # loopback, host). Assigned by position in the sorted name list so it is
+  # deterministic across rebuilds rather than dependent on attrset iteration
+  # order. Needed in two places — the guest's own microvm.vsock.cid, and the
+  # declared index the host reads to know how to reach it — so it lives here
+  # rather than inside either.
+  microvmPlugins = filterAttrs (_: p: p.tier == "microvm") cfg.declaredPlugins;
+  cidOf = name:
+    3 + lib.lists.findFirstIndex (n: n == name)
+      (throw "unreachable: ${name} is not a microvm plugin")
+      (lib.attrNames microvmPlugins);
+
   # "The bwrap tiers" governs which systemd directives a drop-in needs, whether
   # bubblewrap belongs on a unit's PATH, and which tiers get compiled into
   # plugind at all. Named because spelling it out inline in six places is how
@@ -329,19 +341,25 @@ let
           ${optionalString (p.caps.cpuQuota != null) "CPUQuota=${toString p.caps.cpuQuota}%"}
           DevicePolicy=closed
           ${concatStringsSep "\n" (map (d: "DeviceAllow=${d} rw") p.caps.devices)}
-          ${optionalString (!p.caps.network) ''
-            PrivateNetwork=yes
-            ${
-              # AF_NETLINK for the bwrap tiers and only for them: bwrap brings
-              # up loopback inside the netns it creates and needs a
-              # NETLINK_ROUTE socket to do it, so denying it fails the sandbox
-              # before the plugin loads, with an error that reads like a kernel
-              # problem. The namespace is empty and the process holds no
-              # capabilities, so there is nothing in there to configure but lo.
-              "RestrictAddressFamilies=AF_UNIX"
-              + optionalString bwrapTier " AF_NETLINK"
-            }
-          ''}
+          ${optionalString (!p.caps.network) (
+            # Tier 2's host side is a vsock proxy, and both of the usual network
+            # restrictions break it: AF_VSOCK is an address family like any
+            # other, so RestrictAddressFamilies=AF_UNIX makes socket(AF_VSOCK)
+            # fail outright, and PrivateNetwork=yes puts the unit in a netns the
+            # guest transport does not follow it into. Neither is a loss worth
+            # defending — nothing plugin-supplied runs in this unit, and the
+            # isolation that matters for tier 2 is a separate kernel.
+            #
+            # For the other tiers: AF_NETLINK goes to the bwrap ones only,
+            # because bwrap brings up loopback inside the netns it creates and
+            # needs a NETLINK_ROUTE socket to do it.
+            if p.tier == "microvm" then ''
+              RestrictAddressFamilies=AF_UNIX AF_VSOCK
+            '' else ''
+              PrivateNetwork=yes
+              ${"RestrictAddressFamilies=AF_UNIX" + optionalString bwrapTier " AF_NETLINK"}
+            ''
+          )}
         '';
       };
     };
@@ -740,10 +758,14 @@ in
           # drop-in computed for a different plugin.
           environment.etc."oligarchy/plugins/declared.json".text = builtins.toJSON
             (lib.mapAttrs
-              (_: p: {
+              (name: p: {
                 store_path = "${p.artifact}";
                 inherit (p) tier jit;
                 autostart = p.autoStart;
+                # Tier 2 only. The host needs it because how you reach a guest
+                # depends on the hypervisor: qemu uses kernel vhost-vsock and
+                # there is no socket file to wait for, only a cid to dial.
+                vsock_cid = if p.tier == "microvm" then cidOf name else null;
               })
               cfg.declaredPlugins);
 
@@ -979,19 +1001,6 @@ in
           })
 
       ] ++ optional (options ? microvm) (mkIf cfg.microvm.enable (
-        let
-          microvmPlugins = filterAttrs (_: p: p.tier == "microvm") cfg.declaredPlugins;
-          # Context IDs must be unique per guest, and 0/1/2 are reserved
-          # (hypervisor, loopback, host). The first version hardcoded 3 for every
-          # VM, which works for exactly one plugin and then silently gives two
-          # guests the same address. Assigned by position in the sorted name list
-          # so it is deterministic across rebuilds rather than dependent on attrset
-          # iteration order.
-          cidOf = name:
-            3 + lib.lists.findFirstIndex (n: n == name)
-              (throw "unreachable: ${name} is not a microvm plugin")
-              (lib.attrNames microvmPlugins);
-        in
         {
           # Tier 2 hosts. Guests are generated from declaredPlugins with
           # tier = "microvm". Unlike the other tiers, microvm plugins cannot be
@@ -999,6 +1008,17 @@ in
           # one is a rebuild. That is a real limitation of this tier, not an
           # oversight — imperative install works for wasm/native/lua.
           microvm.host.enable = true;
+
+          # vhost-vsock is how qemu (and crosvm) implement the guest transport:
+          # the device is backed by /dev/vhost-vsock on the host, so without this
+          # module the VM comes up with no vsock at all and the plugin agent
+          # inside it listens on a socket nothing can reach. microvm.nix loads
+          # `tap` and `vhost_net` for networking but not this — nothing else in
+          # its default set needs it.
+          #
+          # Harmless for firecracker and cloud-hypervisor, which implement vsock
+          # in userspace behind a unix socket and never touch the device.
+          boot.kernelModules = [ "vhost_vsock" ];
 
           # Deliberately NOT microvm.autostart. The plugin's own systemd instance
           # starts `microvm@<id>.service` when the plugin is enabled and stops it

@@ -96,9 +96,6 @@ impl Conn {
 }
 
 impl MicrovmPlugin {
-    /// Boot the VM and handshake. `runner` is the wrapper script that
-    /// microvm.nix generated for this plugin's declarative microVM, or the
-    /// imperative `microvm -r <name>` path.
     /// Bring up the guest and connect to the plugin inside it.
     ///
     /// systemd owns the VM, and the dependency is declared rather than issued.
@@ -114,10 +111,15 @@ impl MicrovmPlugin {
     /// with "Access denied", because this process is the plugin's unit and that
     /// unit runs as an unprivileged user. Asking systemd to start something is a
     /// privileged operation; *depending* on it is not. So the per-instance
-    /// drop-in carries `Requires=`/`After=microvm@<id>.service` and a matching
-    /// `PartOf=` on the VM, and by the time this runs the guest is already
-    /// booting. All this has to do is wait for it.
-    pub fn boot(m: Manifest, vm_dir: &Path) -> Result<Self> {
+    /// drop-in carries `Requires=`/`After=`/`PropagatesStopTo=microvm@<id>.service`,
+    /// and by the time this runs the guest is already booting. All this has to
+    /// do is wait for it.
+    ///
+    /// `PropagatesStopTo` rather than `PartOf=` on the VM, which was a third
+    /// wrong turn: microvm.nix defines `microvm@.service` itself, so adding a
+    /// `PartOf=` drop-in to it collides with that definition. Expressing the
+    /// same relationship from our own side needs no cooperation from theirs.
+    pub fn boot(m: Manifest, vm_dir: &Path, cid: Option<u32>) -> Result<Self> {
         let unit = format!("microvm@{}.service", m.id);
         let sock = vm_dir.join("notify.vsock");
         let t0 = Instant::now();
@@ -134,13 +136,8 @@ impl MicrovmPlugin {
         // failure, short enough that a guest which never comes up is still a
         // failed unit rather than a hung supervisor — and `PropagatesStopTo`
         // means the VM goes away with it either way.
-        let stream = wait_for_socket(&sock, Duration::from_secs(120)).with_context(|| {
-            format!(
-                "guest never opened {}; check `journalctl -u {unit}`",
-                sock.display()
-            )
-        })?;
-        vsock_connect(&stream, GUEST_PORT).context("vsock CONNECT handshake")?;
+        let stream = connect_guest(&sock, cid, GUEST_PORT, Duration::from_secs(120))
+            .with_context(|| format!("reaching the guest; check `journalctl -u {unit}`"))?;
 
         tracing::info!(
             plugin = %m.id,
@@ -198,15 +195,86 @@ fn vsock_connect(stream: &UnixStream, port: u32) -> Result<()> {
     Ok(())
 }
 
-fn wait_for_socket(path: &Path, timeout: Duration) -> Result<UnixStream> {
+/// Reach the plugin inside the guest, by whichever route this hypervisor uses.
+///
+/// There are two, and assuming one is what made tier 2 look broken when it was
+/// nearly working:
+///
+///   * **firecracker and cloud-hypervisor** implement vsock in *userspace*. The
+///     VMM listens on a unix socket — `notify.vsock` in the VM's directory, which
+///     is why the runner needs that as its working directory — and a host-side
+///     connection is a unix connect followed by a `CONNECT <port>` line.
+///   * **qemu** uses the kernel's vhost-vsock. There is no socket file at all,
+///     ever; the host opens a real `AF_VSOCK` socket and dials the guest's
+///     context id. Waiting for `notify.vsock` under qemu waits forever, which is
+///     exactly what happened: the guest agent had started and was listening.
+///
+/// Both are tried until one answers, so the transport is not something the
+/// caller has to know or the module has to keep in sync with `hypervisor`.
+fn connect_guest(
+    sock: &Path,
+    cid: Option<u32>,
+    port: u32,
+    timeout: Duration,
+) -> Result<UnixStream> {
     let deadline = Instant::now() + timeout;
+    let mut last: Option<anyhow::Error> = None;
     loop {
-        match UnixStream::connect(path) {
-            Ok(s) => return Ok(s),
-            Err(_) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            Err(e) => return Err(e).context("connecting to guest vsock"),
+        // Userspace vsock behind a unix socket.
+        if let Ok(s) = UnixStream::connect(sock) {
+            match vsock_connect(&s, port) {
+                Ok(()) => return Ok(s),
+                Err(e) => last = Some(e.context("CONNECT handshake over the VMM's unix socket")),
+            }
         }
+        // Kernel vhost-vsock, dialled by context id.
+        if let Some(cid) = cid {
+            match vsock_dial(cid, port) {
+                Ok(s) => return Ok(s),
+                Err(e) => last = Some(e),
+            }
+        }
+        if Instant::now() >= deadline {
+            let route = match cid {
+                None => "no cid is known for this plugin, so only the unix-socket \
+                         route was tried — is it a declared plugin?"
+                    .to_string(),
+                Some(c) => format!(
+                    "cid {c} was dialled too. If the hypervisor is qemu or crosvm \
+                     the guest transport is vhost-vsock, which needs the \
+                     vhost_vsock module on the host"
+                ),
+            };
+            return Err(last.unwrap_or_else(|| anyhow::anyhow!("timed out")))
+                .with_context(|| {
+                    format!("no route to the guest: {} does not exist and {route}", sock.display())
+                });
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// Dial a guest over kernel vhost-vsock.
+///
+/// Returns a `UnixStream` over the AF_VSOCK fd: it is a stream socket and we
+/// only read, write and close it, which keeps one type flowing through `Conn`
+/// regardless of which transport answered. The guest side does the same thing in
+/// reverse (see guest.rs).
+fn vsock_dial(cid: u32, port: u32) -> Result<UnixStream> {
+    use nix::sys::socket::{connect, socket, AddressFamily, SockFlag, SockType, VsockAddr};
+    use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
+
+    let fd = socket(
+        AddressFamily::Vsock,
+        SockType::Stream,
+        SockFlag::empty(),
+        None,
+    )
+    .context("socket(AF_VSOCK)")?;
+    connect(fd.as_raw_fd(), &VsockAddr::new(cid, port))
+        .with_context(|| format!("connect(vsock cid={cid} port={port})"))?;
+    // SAFETY: a connected stream socket we own; ownership moves into the stream.
+    Ok(unsafe { UnixStream::from_raw_fd(fd.into_raw_fd()) })
 }
 
 impl Plugin for MicrovmPlugin {

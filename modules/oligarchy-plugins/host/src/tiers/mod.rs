@@ -28,6 +28,11 @@ pub struct Ctx<'a> {
     pub runtime_dir: &'a Path,
     pub policy: &'a Policy,
     pub config: BTreeMap<String, String>,
+    /// Tier 2 only: the guest's vsock context id, from the declared index.
+    /// None for every other tier, and for a tier 2 plugin that somehow reached
+    /// here without one — in which case only the unix-socket transport is
+    /// available. See MicrovmPlugin::boot.
+    pub vsock_cid: Option<u32>,
 }
 
 pub fn load(m: Manifest, ctx: Ctx<'_>) -> Result<Box<dyn Plugin>> {
@@ -82,7 +87,7 @@ pub fn load(m: Manifest, ctx: Ctx<'_>) -> Result<Box<dyn Plugin>> {
                     vm_dir.display()
                 );
             }
-            Ok(Box::new(microvm::MicrovmPlugin::boot(m, &vm_dir)?))
+            Ok(Box::new(microvm::MicrovmPlugin::boot(m, &vm_dir, ctx.vsock_cid)?))
         }
     }
 }

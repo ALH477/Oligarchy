@@ -553,27 +553,36 @@ fn write_dropin(m: &Manifest, state_dir: &Path) -> Result<()> {
     }
 
     if !m.caps.network {
-        s.push_str("PrivateNetwork=yes\n");
-        // AF_NETLINK for the bwrap tiers, and only for them.
+        // Tier 2's host side is a vsock proxy, and both of the usual network
+        // restrictions break it:
         //
-        // bwrap brings up loopback inside the network namespace it creates, and
-        // that needs a NETLINK_ROUTE socket. Denying it fails the sandbox before
-        // the plugin is ever loaded, with "loopback: Failed to create
-        // NETLINK_ROUTE socket: Address family not supported by protocol" —
-        // which reads like a kernel problem rather than a policy one.
+        //   * AF_VSOCK is an address family like any other, so
+        //     RestrictAddressFamilies=AF_UNIX makes socket(AF_VSOCK) fail with
+        //     EAFNOSUPPORT before a connection is ever attempted;
+        //   * PrivateNetwork=yes puts the unit in its own network namespace,
+        //     and the guest transport does not follow it there.
         //
-        // The widening is small and bounded: the namespace bwrap just made is
-        // empty, so there is nothing in it to configure except lo, and the
-        // process holds no capabilities. Tier 0 does not use bwrap and does not
-        // get it.
-        let mut families = vec!["AF_UNIX"];
-        if m.uses_bwrap() {
-            families.push("AF_NETLINK");
+        // Neither is a loss worth defending. Nothing plugin-supplied runs in
+        // this unit — the plugin is inside the guest, which is the whole point
+        // of the tier — and this process speaks to exactly one thing, a vsock
+        // endpoint belonging to its own VM. The isolation that matters here is
+        // a separate kernel, not a netns around the proxy.
+        if m.tier == Tier::Microvm {
+            s.push_str("RestrictAddressFamilies=AF_UNIX AF_VSOCK\n");
+        } else {
+            s.push_str("PrivateNetwork=yes\n");
+            // AF_NETLINK for the bwrap tiers, and only for them: bwrap brings
+            // up loopback inside the network namespace it creates and needs a
+            // NETLINK_ROUTE socket to do it, so denying it fails the sandbox
+            // before the plugin loads with an error that reads like a kernel
+            // problem. The namespace is empty and the process holds no
+            // capabilities, so there is nothing in there to configure but lo.
+            let mut families = vec!["AF_UNIX"];
+            if m.uses_bwrap() {
+                families.push("AF_NETLINK");
+            }
+            s.push_str(&format!("RestrictAddressFamilies={}\n", families.join(" ")));
         }
-        s.push_str(&format!(
-            "RestrictAddressFamilies={}\n",
-            families.join(" ")
-        ));
     }
 
     let path = dir.join("10-sandbox.conf");

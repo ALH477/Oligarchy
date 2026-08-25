@@ -539,8 +539,17 @@
                 # And the payoff, from inside the guest: a self-JIT plugin gets
                 # the executable memory it asked for, because the boundary here
                 # is a kernel and not a filter.
+                #
+                # Polled rather than read once: the guest's console travels
+                # guest journald -> guest console -> qemu stdout -> host
+                # journald, and that pipeline is not synchronous with the host
+                # having called init() over the vsock.
+                machine.wait_until_succeeds(
+                    "journalctl -u microvm@wxvm.service --no-pager | grep -q WXPROBE",
+                    timeout=60,
+                )
                 guest = machine.succeed("journalctl -u microvm@wxvm.service --no-pager")
-                assert "WXPROBE exec=allowed memfd=allowed" in guest, guest
+                assert "WXPROBE exec=allowed memfd=allowed anon=allowed" in guest, guest
               '';
             };
 

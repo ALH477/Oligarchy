@@ -478,8 +478,8 @@ fn run_one(cli: &Cli, policy: &Policy, id: &str) -> Result<()> {
     let store = Store::open(&cli.state_dir)?;
     let index = declared::load(&cli.declared)?;
 
-    let (manifest, store_path) = match store.get(id) {
-        Some(e) => (e.manifest.clone(), e.store_path.clone()),
+    let (manifest, store_path, vsock_cid) = match store.get(id) {
+        Some(e) => (e.manifest.clone(), e.store_path.clone(), None),
         None => declared::resolve(&index, id)?.with_context(|| {
             format!(
                 "no such plugin {id}: not in the registry and not in {}",
@@ -507,6 +507,7 @@ fn run_one(cli: &Cli, policy: &Policy, id: &str) -> Result<()> {
                     runtime_dir: &cli.runtime_dir,
                     policy,
                     config,
+                    vsock_cid,
                 },
             )?;
             p.init()?;
@@ -581,6 +582,7 @@ fn shim(cli: &Cli, store_path: &Path, id: &str) -> Result<()> {
             runtime_dir: &cli.runtime_dir,
             policy: &policy,
             config,
+            vsock_cid: None,
         },
     )?;
     p.init()?;

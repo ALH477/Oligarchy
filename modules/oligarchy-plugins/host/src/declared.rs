@@ -35,6 +35,16 @@ pub struct Declared {
     pub tier: Tier,
     pub jit: Jit,
     pub autostart: bool,
+    /// The guest's vsock context id, for tier 2. Assigned by the module, which
+    /// is the only thing in a position to keep them unique.
+    ///
+    /// The host needs it because how you reach a guest depends on the
+    /// hypervisor: firecracker and cloud-hypervisor implement vsock in
+    /// userspace behind a unix socket, while qemu uses the kernel's vhost-vsock
+    /// and there is no socket file at all — you dial the cid. See
+    /// MicrovmPlugin::boot.
+    #[serde(default)]
+    pub vsock_cid: Option<u32>,
 }
 
 pub type Index = BTreeMap<String, Declared>;
@@ -61,7 +71,7 @@ pub fn load(path: &Path) -> Result<Index> {
 /// manifest asks for W^X to be omitted. Refusing is the only safe answer, and
 /// it has to happen here because no build-time check can read a derivation's
 /// contents without an import-from-derivation.
-pub fn resolve(index: &Index, id: &str) -> Result<Option<(Manifest, PathBuf)>> {
+pub fn resolve(index: &Index, id: &str) -> Result<Option<(Manifest, PathBuf, Option<u32>)>> {
     let Some(d) = index.get(id) else {
         return Ok(None);
     };
@@ -94,7 +104,7 @@ pub fn resolve(index: &Index, id: &str) -> Result<Option<(Manifest, PathBuf)>> {
         );
     }
 
-    Ok(Some((manifest, d.store_path.clone())))
+    Ok(Some((manifest, d.store_path.clone(), d.vsock_cid)))
 }
 
 #[cfg(test)]
@@ -103,7 +113,7 @@ mod tests {
 
     fn index(tier: &str, jit: &str) -> Index {
         serde_json::from_str(&format!(
-            r#"{{"p":{{"store_path":"/nix/store/x-p","tier":"{tier}","jit":"{jit}","autostart":true}}}}"#
+            r#"{{"p":{{"store_path":"/nix/store/x-p","tier":"{tier}","jit":"{jit}","autostart":true,"vsock_cid":7}}}}"#
         ))
         .unwrap()
     }
@@ -118,6 +128,7 @@ mod tests {
         assert_eq!(d.tier, Tier::Microvm);
         assert_eq!(d.jit, Jit::SelfJit);
         assert!(d.autostart);
+        assert_eq!(d.vsock_cid, Some(7));
     }
 
     #[test]
