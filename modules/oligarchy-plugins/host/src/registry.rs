@@ -56,6 +56,45 @@ pub struct Entry {
     pub signature_verified: bool,
 }
 
+/// Who is asking, and therefore what they are allowed to ask for.
+///
+/// Deliberately one type rather than a pair of bools. The two concessions it
+/// gates — installing an unsigned artifact, and granting a plugin
+/// writable-executable memory — are both things only someone who can already
+/// write the registry may request, and bundling them means the *next*
+/// concession is added in one place instead of threaded as a third bool that
+/// some call site forgets.
+#[derive(Debug, Clone, Copy)]
+pub enum Authority {
+    /// A direct write to the registry: root, or whoever owns it.
+    Local { allow_unsigned: bool },
+    /// Arrived over the control socket from a member of the install group.
+    /// `control::Request` can express neither concession.
+    Socket,
+}
+
+impl Authority {
+    fn allow_unsigned(self) -> bool {
+        matches!(
+            self,
+            Authority::Local {
+                allow_unsigned: true
+            }
+        )
+    }
+
+    /// May this caller install a plugin that will run without W^X?
+    ///
+    /// No, over the socket. `jit = "self"` is the single largest concession in
+    /// the design — the instance runs with MemoryDenyWriteExecute=no — and
+    /// "which signed plugins may run" and "which signed plugins may have
+    /// executable memory" are different decisions. The signature says who wrote
+    /// it, not that the operator wants it holding W+X pages.
+    fn may_grant_wx(self) -> bool {
+        matches!(self, Authority::Local { .. })
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Registry {
     #[serde(default)]
@@ -215,14 +254,14 @@ impl Store {
     /// as trustworthy whether it arrived by substitution or was already here —
     /// which is also what makes "an unprivileged user installs a signed
     /// plugin" testable without first standing up a cache.
-    pub fn install(&mut self, source: &str, policy: &Policy, allow_unsigned: bool) -> Result<String> {
+    pub fn install(&mut self, source: &str, policy: &Policy, who: Authority) -> Result<String> {
         let store_path = match local_store_path(source) {
             Some(p) => p,
             None => realise(source, &self.root, policy)?,
         };
 
         let verified = verify_signature(&store_path, &self.root, policy)?;
-        match policy.authorize_signature(verified, allow_unsigned) {
+        match policy.authorize_signature(verified, who.allow_unsigned()) {
             SigVerdict::Accept => {}
             SigVerdict::PolicyRequiresSignature => bail!(
                 "{} has no valid signature from a trusted key, and \
@@ -248,6 +287,18 @@ impl Store {
         policy
             .authorize(&manifest)
             .with_context(|| format!("host policy refused plugin {}", manifest.id))?;
+
+        if manifest.grants_wx_to_plugin() && !who.may_grant_wx() {
+            bail!(
+                "plugin {} declares jit = \"self\", so its instance would run \
+                 without MemoryDenyWriteExecute. Whether a signed plugin may \
+                 hold writable-executable memory is the operator's call, not \
+                 something membership of the install group buys — install it as \
+                 root, or route it to tier = \"microvm\" where the W+X pages \
+                 live in a disposable guest kernel.",
+                manifest.id
+            );
+        }
 
         // Pin against the garbage collector. Without this, the next `nix
         // store gc` deletes a plugin out from under a running rig.
@@ -379,11 +430,7 @@ impl Store {
     }
 
     pub fn config_for(&self, id: &str) -> BTreeMap<String, String> {
-        let path = self.root.join("config").join(id).join("config.toml");
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|s| toml::from_str(&s).ok())
-            .unwrap_or_default()
+        config_for(&self.root, id)
     }
 }
 
@@ -417,6 +464,31 @@ fn write_dropin(m: &Manifest) -> Result<()> {
         "MemoryDenyWriteExecute={}\n",
         if m.wx_enforced() { "yes" } else { "no" }
     ));
+    if m.uses_bwrap() {
+        // bwrap mounts its own /proc inside the namespace it creates, and the
+        // kernel refuses that in a user namespace if any submount of the outer
+        // /proc is locked read-only — which is precisely what
+        // ProtectKernelTunables does. With it on, tier 1 cannot start at all:
+        // "bwrap: Can't mount proc on /newroot/proc: Operation not permitted".
+        //
+        // Turning it off here is not a net loss. Inside the sandbox the plugin
+        // has a fresh procfs showing only its own namespace, no capabilities in
+        // any namespace, and a Landlock ruleset that does not name /proc at all
+        // — so it cannot write a kernel tunable by any route. Tier 0 keeps the
+        // directive, because tier 0 has no bwrap to replace it with.
+        s.push_str("# tier 1: bwrap supplies /proc; see registry::write_dropin\n");
+        s.push_str("ProtectKernelTunables=no\n");
+        // Type=notify with a sandbox wrapper needs this, and the default hides
+        // it well: NotifyAccess=main permits only the unit's MainPID to report
+        // readiness, MainPID here is *bwrap*, and the process that actually
+        // becomes ready is the plugind shim bwrap forked. So systemd discards
+        // the notification and the unit sits until TimeoutStartSec — five
+        // minutes of "start operation timed out" with a fully working,
+        // correctly confined plugin logging "ready" in the journal the whole
+        // time. There is no narrower value: `exec` still means MainPID plus
+        // ExecStart* processes, not a grandchild.
+        s.push_str("NotifyAccess=all\n");
+    }
     if m.tier == Tier::Wasm {
         s.push_str("# tier=wasm: MDWE is off because THIS process runs Cranelift.\n");
         s.push_str("# The guest is confined by wasmtime, not by seccomp; setting\n");
@@ -449,7 +521,27 @@ fn write_dropin(m: &Manifest) -> Result<()> {
     }
 
     if !m.caps.network {
-        s.push_str("PrivateNetwork=yes\nRestrictAddressFamilies=AF_UNIX\n");
+        s.push_str("PrivateNetwork=yes\n");
+        // AF_NETLINK for the bwrap tiers, and only for them.
+        //
+        // bwrap brings up loopback inside the network namespace it creates, and
+        // that needs a NETLINK_ROUTE socket. Denying it fails the sandbox before
+        // the plugin is ever loaded, with "loopback: Failed to create
+        // NETLINK_ROUTE socket: Address family not supported by protocol" —
+        // which reads like a kernel problem rather than a policy one.
+        //
+        // The widening is small and bounded: the namespace bwrap just made is
+        // empty, so there is nothing in it to configure except lo, and the
+        // process holds no capabilities. Tier 0 does not use bwrap and does not
+        // get it.
+        let mut families = vec!["AF_UNIX"];
+        if m.uses_bwrap() {
+            families.push("AF_NETLINK");
+        }
+        s.push_str(&format!(
+            "RestrictAddressFamilies={}\n",
+            families.join(" ")
+        ));
     }
 
     let path = dir.join("10-sandbox.conf");
@@ -486,6 +578,19 @@ fn systemctl(args: &[&str]) -> Result<()> {
 }
 
 // --- nix glue -------------------------------------------------------------
+
+/// A plugin's runtime config, read straight off disk.
+///
+/// A free function rather than only a Store method because the shim needs it
+/// and the shim deliberately has no Store: taking the registry lock inside the
+/// sandbox would be both impossible (the directory is root-owned) and wrong.
+pub fn config_for(state_dir: &Path, id: &str) -> BTreeMap<String, String> {
+    let path = state_dir.join("config").join(id).join("config.toml");
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| toml::from_str(&s).ok())
+        .unwrap_or_default()
+}
 
 /// Register `link` as a real garbage-collector root for `store_path`.
 ///

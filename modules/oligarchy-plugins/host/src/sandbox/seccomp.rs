@@ -162,18 +162,52 @@ pub fn apply(prog: &BpfProgram) -> Result<()> {
     Ok(())
 }
 
-/// Self-test used by `plugind verify`. Attempts precisely the thing the
-/// filter is supposed to stop, in a forked child, and reports whether the
-/// kernel agreed with us. Run this in CI on every kernel bump — the failure
-/// mode of a silently-ineffective seccomp filter is invisible.
+/// What a probe found, for `plugind selftest`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Observed {
+    /// `mprotect(PROT_EXEC)` on an anonymous RW mapping was refused.
+    pub exec_denied: bool,
+    /// `memfd_create` was refused. This is the half systemd's
+    /// MemoryDenyWriteExecute leaves open, and the reason MDWE alone is not
+    /// W^X: memfd plus two mappings of the same fd never produces a single W+X
+    /// mapping, so a filter that only watches mmap/mprotect never fires.
+    pub memfd_denied: bool,
+}
+
+/// The child's exit status is a bitset of what was DENIED, so these must stay
+/// outside `0..=3`. They did not once, and a correctly-enforced filter reported
+/// as a broken one.
+const EXIT_NO_FILTER: i32 = 10;
+const EXIT_NO_MMAP: i32 = 11;
+
+/// Install this manifest's filter in a forked child and report what the child
+/// could actually still do.
+///
+/// The fork is not an implementation detail. `apply` is irrevocable for the
+/// calling thread, so a process that tested its own filter could never go on to
+/// do anything else — and a selftest that only ran in debug builds tests a
+/// binary nobody ships. This runs in release, on the kernel in front of you,
+/// which is the only place the answer is real: `build()` can prove we assembled
+/// the right BPF and cannot prove the kernel loaded or honoured it.
 #[cfg(target_os = "linux")]
-pub fn selftest_wx_denied() -> Result<bool> {
+pub fn probe(m: &Manifest) -> Result<Observed> {
     use nix::sys::wait::{waitpid, WaitStatus};
     use nix::unistd::{fork, ForkResult};
 
+    let prog = build(m).context("building the filter to probe")?;
+
     match unsafe { fork() }.context("fork for seccomp selftest")? {
         ForkResult::Child => {
-            let denied = unsafe {
+            // Everything from here to _exit must be async-signal-safe: this is
+            // a forked child of a multithreaded process. No allocation, no
+            // tracing, and _exit rather than process::exit so no atexit handler
+            // or Rust destructor runs.
+            let mut bits = 0u8;
+            unsafe {
+                if seccompiler::apply_filter(&prog).is_err() {
+                    libc::_exit(EXIT_NO_FILTER);
+                }
+
                 let len = 4096;
                 let p = libc::mmap(
                     std::ptr::null_mut(),
@@ -184,20 +218,36 @@ pub fn selftest_wx_denied() -> Result<bool> {
                     0,
                 );
                 if p == libc::MAP_FAILED {
-                    false
-                } else {
-                    libc::mprotect(p, len, libc::PROT_READ | libc::PROT_EXEC) != 0
-                        && *libc::__errno_location() == libc::EPERM
+                    libc::_exit(EXIT_NO_MMAP);
                 }
-            };
-            // _exit, not process::exit: this is a forked child of a
-            // multithreaded process, so running atexit handlers and Rust
-            // destructors here is unsound.
-            unsafe { libc::_exit(if denied { 0 } else { 1 }) };
+                if libc::mprotect(p, len, libc::PROT_READ | libc::PROT_EXEC) != 0 {
+                    bits |= 1;
+                }
+
+                // libc has no memfd_create wrapper on every target, and the
+                // syscall is what the filter names anyway.
+                let fd = libc::syscall(libc::SYS_memfd_create, c"probe".as_ptr(), 0u32);
+                if fd < 0 {
+                    bits |= 2;
+                } else {
+                    libc::close(fd as libc::c_int);
+                }
+
+                libc::_exit(bits as libc::c_int);
+            }
         }
         ForkResult::Parent { child } => match waitpid(child, None)? {
-            WaitStatus::Exited(_, 0) => Ok(true),
-            _ => Ok(false),
+            WaitStatus::Exited(_, code @ 0..=3) => Ok(Observed {
+                exec_denied: code & 1 != 0,
+                memfd_denied: code & 2 != 0,
+            }),
+            WaitStatus::Exited(_, EXIT_NO_FILTER) => {
+                anyhow::bail!("the child could not install the filter at all")
+            }
+            WaitStatus::Exited(_, EXIT_NO_MMAP) => {
+                anyhow::bail!("the child's probe mmap failed")
+            }
+            other => anyhow::bail!("probe child ended unexpectedly: {other:?}"),
         },
     }
 }

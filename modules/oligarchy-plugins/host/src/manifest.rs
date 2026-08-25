@@ -230,6 +230,18 @@ impl Manifest {
     ///              the guest's W+X pages are in the guest's kernel.
     ///   native  -> enforced unless the manifest declares jit=self. THIS is
     ///   lua        the case the whole design exists to get right.
+    /// Does this tier run the plugin under bubblewrap?
+    ///
+    /// Named because "the bwrap tiers" governs a growing set of decisions —
+    /// which systemd directives the drop-in needs, whether AF_NETLINK is
+    /// required, which unit gets bubblewrap on its PATH — and it was spelled
+    /// out inline in eight places. That is how the two drop-in generators
+    /// drifted: `NotifyAccess` and the AF_NETLINK branch each reached the Rust
+    /// mirror alone.
+    pub fn uses_bwrap(&self) -> bool {
+        matches!(self.tier, Tier::Native | Tier::Lua)
+    }
+
     pub fn wx_enforced(&self) -> bool {
         match self.tier {
             Tier::Wasm => false,
@@ -242,7 +254,7 @@ impl Manifest {
     /// off because the tier does its own confinement. Only this case is a
     /// concession that needs auditing; `plugind lint` keys off it.
     pub fn grants_wx_to_plugin(&self) -> bool {
-        self.jit == Jit::SelfJit && matches!(self.tier, Tier::Native | Tier::Lua)
+        self.jit == Jit::SelfJit && self.uses_bwrap()
     }
 
     /// Expand `$STATE`, `$CONFIG`, `$STORE` in capability paths.

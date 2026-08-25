@@ -102,8 +102,8 @@
             pkgs.nixpkgs-fmt
             pkgs.statix
           ];
-          # mlua's vendored LuaJIT needs a C toolchain; wasmtime needs cmake
-          # for some backends.
+          # wasmtime needs cmake for some backends; mlua links nixpkgs' LuaJIT
+          # through pkg-config, so pkg-config and luajit are both required.
           nativeBuildInputs = [ pkgs.cmake pkgs.stdenv.cc ];
           shellHook = ''
             echo "oligarchy-plugins dev shell"
@@ -161,10 +161,57 @@
               unsigned = fixture { id = "unsigned"; tier = "wasm"; jit = "host"; };
             };
 
-            fixtureEtc = lib.mapAttrs'
-              (n: drv:
-                lib.nameValuePair "oligarchy/test/${n}" { source = drv; })
-              fixtures;
+            # Fixtures reach a node as /etc/oligarchy/test/<name>.
+            etcOf = lib.mapAttrs'
+              (n: drv: lib.nameValuePair "oligarchy/test/${n}" { source = drv; });
+
+            fixtureEtc = etcOf fixtures;
+
+            # ── Tier 1 fixtures: a REAL native plugin ─────────────────────
+            #
+            # Everything else that touches W^X is indirect. The unit tests prove
+            # the right BPF was assembled; wx-enforcement proves the right
+            # MemoryDenyWriteExecute reached systemd; `plugind selftest` proves
+            # the kernel honours the filter in a forked child of plugind. None
+            # of them prove that a plugin's own machine code, dlopen'd inside
+            # bwrap after Landlock and seccomp are applied, gets the answer its
+            # manifest declared. This fixture asks the kernel from there.
+            wxProbe = { id, jit }:
+              let
+                manifest = nodePkgs.writeText "plugin.toml" ''
+                  id      = "${id}"
+                  version = "0.0.1"
+                  tier    = "native"
+                  jit     = "${jit}"
+                  trust   = "first-party"
+                  entry   = "lib/libwxprobe.so"
+                  abi     = "oligarchy:plugin@0.1.0"
+
+                  [caps]
+                  fs_read_write = ["$STATE"]
+                  network       = false
+                '';
+              in
+              nodePkgs.runCommand "plugin-${id}"
+                {
+                  nativeBuildInputs = [ nodePkgs.stdenv.cc ];
+                } ''
+                mkdir -p $out/lib
+                cc -shared -fPIC -O1 -Wall -Wextra -Werror \
+                   -I${./host/include} -DPLUGIN_ID='"${id}"' \
+                   -o $out/lib/libwxprobe.so ${./tests/wx-probe.c}
+                cp ${manifest} $out/plugin.toml
+              '';
+
+            tier1Fixtures = {
+              # jit=none: the filter is installed, so both probes must be denied.
+              wxnone = wxProbe { id = "wxnone"; jit = "none"; };
+              # jit=self: the concession. Both must be allowed, or the tier is
+              # useless for the LuaJIT/Faust case it exists to serve.
+              wxself = wxProbe { id = "wxself"; jit = "self"; };
+            };
+
+            tier1Etc = etcOf tier1Fixtures;
 
             # A throwaway signing keypair, generated once with
             #   nix-store --generate-binary-cache-key oligarchy-plugins-test-1 …
@@ -276,6 +323,85 @@
                 machine.fail("plugind install /etc/oligarchy/test/nativeplain --allow-unsigned")
                 # self-JIT with allowSelfJit=false: refused by policy.
                 machine.fail("plugind install /etc/oligarchy/test/jitty --allow-unsigned")
+              '';
+            };
+
+            # Tier 1, end to end, on a booted kernel: bwrap namespaces, the
+            # Landlock ruleset, the seccomp filter, dlopen of a real .so, the C
+            # vtable, the host log callback — and then the only question that
+            # matters, asked from inside the sandbox by the plugin's own code.
+            tier1-runtime = nodePkgs.testers.runNixOSTest {
+              name = "oligarchy-plugins-tier1";
+              nodes.machine = { ... }: {
+                imports = [ ./modules/plugins.nix ];
+                environment.etc = tier1Etc;
+                custom.plugins = {
+                  enable = true;
+                  allowedTiers = [ "wasm" "native" "lua" ];
+                  # Required to load a jit=self plugin at all, which is half of
+                  # what this test is for.
+                  allowSelfJit = true;
+                  requireSignature = false;
+                  minTrust = "untrusted";
+                };
+                virtualisation.memorySize = 2048;
+              };
+              testScript = ''
+                machine.wait_for_unit("oligarchy-plugind.service")
+
+                # Tier 1 needs unprivileged user namespaces: bubblewrap dropped
+                # its setuid mode, so there is nothing else to get them from.
+                #
+                # Assert the knob that actually governs, which is kernel-
+                # dependent. `security.unprivilegedUsernsClone` writes
+                # kernel.unprivileged_userns_clone, and that sysctl exists only
+                # on kernels carrying the Debian patch — zen and xanmod do, the
+                # vanilla kernel this VM boots does not, so the option is a
+                # no-op here and userns comes from user.max_user_namespaces
+                # instead. Asserting the option's sysctl would have tested the
+                # wrong thing on half the kernels this distro offers.
+                doctor = machine.succeed("plugind doctor")
+                assert "max_user_namespaces: 0\n" not in doctor, doctor
+                assert int(machine.succeed("cat /proc/sys/user/max_user_namespaces")) > 0
+
+                # The same claim plugind makes about W^X, on this kernel, before
+                # any plugin is involved.
+                machine.succeed("plugind selftest")
+
+                def probe(plugin):
+                    machine.succeed(f"plugind install /etc/oligarchy/test/{plugin} --allow-unsigned")
+                    machine.succeed(f"plugind enable {plugin}")
+                    machine.wait_for_unit(f"oligarchy-plugin@{plugin}.service")
+                    return machine.succeed(
+                        f"journalctl -u oligarchy-plugin@{plugin}.service --no-pager"
+                    )
+
+                # ── jit=none: the filter is installed, so the plugin's own
+                #    mprotect(PROT_EXEC) must fail — and so must memfd_create,
+                #    which is the half MemoryDenyWriteExecute leaves open.
+                j = probe("wxnone")
+                assert "WXPROBE exec=denied memfd=denied" in j, j
+                # ...and the unit says so where an auditor would look.
+                cat = machine.succeed("systemctl cat oligarchy-plugin@wxnone.service")
+                assert "MemoryDenyWriteExecute=yes" in cat, cat
+
+                # ── jit=self: the concession. Both must be allowed, or tier 1
+                #    cannot serve the LuaJIT/Faust case it exists for.
+                j = probe("wxself")
+                assert "WXPROBE exec=allowed memfd=allowed" in j, j
+                cat = machine.succeed("systemctl cat oligarchy-plugin@wxself.service")
+                assert "MemoryDenyWriteExecute=no" in cat, cat
+                assert "jit=self" in cat, cat
+
+                # The sandbox is real: Landlock reported enforcement, and the
+                # plugin ran confined rather than falling back to unconfined.
+                assert "landlock fully enforced" in j or "landlock partially" in j, j
+                assert "ready (confined)" in j, j
+
+                # And the grant is per-instance, not per-machine: the jit=none
+                # unit is still hardened after the jit=self one was granted.
+                cat = machine.succeed("systemctl cat oligarchy-plugin@wxnone.service")
+                assert "MemoryDenyWriteExecute=yes" in cat, cat
               '';
             };
 

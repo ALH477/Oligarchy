@@ -366,8 +366,35 @@
         ({ config, ... }: {
           custom.plugins = {
             enable = true;
-            allowedTiers = [ "wasm" ];
-            allowSelfJit = false;
+
+            # Stage 3: tier 1. Native and Lua plugins run under bwrap +
+            # Landlock + seccomp, which is what makes CLAP/LV2/Faust-native DSP
+            # possible on a sub-millisecond guitar path where the Wasm boundary
+            # is measurable. This is the WORKSTATION only — a stage rig or a
+            # shipped instrument keeps [ "wasm" ] and allowSelfJit = false,
+            # because there it is running plugins somebody else wrote.
+            allowedTiers = [ "wasm" "native" "lua" ];
+
+            # The concession, and it is a real one: a plugin declaring
+            # jit = "self" runs with MemoryDenyWriteExecute=no. It emits a build
+            # warning on purpose. Verified on this hardware rather than assumed
+            # — `plugind selftest` reports mprotect(PROT_EXEC) and memfd_create
+            # DENIED for jit=none and allowed for jit=self on the zen kernel.
+            #
+            # Two things keep it bounded. Manifest validation refuses
+            # untrusted + jit=self outside tier 2 outright, and a request that
+            # arrived over the control socket cannot ask for it at all
+            # (Authority::Socket) — whether a signed plugin may hold W+X pages
+            # is the operator's call, not something install-group membership
+            # buys.
+            allowSelfJit = true;
+
+            # Tightened now that native code can load: refuse a manifest that
+            # only claims "untrusted". Read it as a filter on a claim rather
+            # than a boundary — see the option docs — but combined with
+            # requireSignature it means an author put their name to it.
+            minTrust = "trusted";
+
             requireSignature = true;
 
             # Stage 2: this account can ask the supervisor for a
@@ -572,6 +599,7 @@
         plugins-wx-enforcement = oligarchy-plugins.checks.${system}.wx-enforcement;
         plugins-policy-refusal = oligarchy-plugins.checks.${system}.policy-refusal;
         plugins-signed-install = oligarchy-plugins.checks.${system}.signed-install;
+        plugins-tier1-runtime = oligarchy-plugins.checks.${system}.tier1-runtime;
 
         # ════════════════════════════════════════════════════════════════════
         # Malware Shield build gate — scans the FULL system closure with pinned,

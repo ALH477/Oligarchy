@@ -92,10 +92,15 @@ impl FsPolicy {
     /// public bits, and nothing else. Note the store is read_exec, never
     /// read_write — combined with the store being read-only anyway, this is
     /// what makes `jit=none` + noexec-writable-mounts actually hold.
-    pub fn baseline(store_path: &Path) -> Self {
+    /// `store_path` is deliberately NOT listed separately. It lives under
+    /// /nix/store, so it is already covered — and adding it again with EXECUTE
+    /// stripped (as the first version did) risks the opposite of the intent: a
+    /// narrower rule on the very directory the artifact is dlopen'd from, in a
+    /// ruleset where the more specific rule may be the one that decides. The
+    /// argument stays because a future rule may want it.
+    pub fn baseline(_store_path: &Path) -> Self {
         FsPolicy {
             read_exec: vec![PathBuf::from("/nix/store")],
-            read: vec![store_path.to_path_buf()],
             ..Default::default()
         }
     }
@@ -188,6 +193,19 @@ fn add(
     path: &Path,
     access: BitFlags<AccessFs>,
 ) -> Result<landlock::RulesetCreated> {
+    // Directory rights on a non-directory are not merely useless, they are
+    // *reported as degradation*: BestEffort strips them and the whole ruleset
+    // comes back PartiallyEnforced, so every tier 1 start logged "landlock
+    // partially enforced; kernel is older than the policy" — a specific and
+    // false claim — because one rule covered a unix socket. Narrow the mask to
+    // what a file can have and the report means what it says again.
+    let is_dir = path.metadata().map(|m| m.is_dir()).unwrap_or(true);
+    let access = if is_dir {
+        access
+    } else {
+        access & AccessFs::from_file(TARGET_ABI)
+    };
+
     // A missing path is a manifest bug, not a reason to fall open. We create
     // state dirs ahead of time in the caller; anything still missing here
     // means the plugin asked for something that does not exist.

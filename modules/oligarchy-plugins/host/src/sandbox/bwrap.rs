@@ -39,7 +39,11 @@ pub struct BwrapPlan {
 pub struct Paths<'a> {
     pub store_path: &'a Path,
     pub state_dir: &'a Path,
-    pub abi_dir: &'a Path,
+    /// policy.json. Bound read-only because the shim re-authorises inside the
+    /// sandbox, and without it Policy::load falls back to the hardened
+    /// defaults — which allow tier 0 only, so every tier 1 plugin would be
+    /// refused by its own host with a confusing message.
+    pub policy_file: &'a Path,
 }
 
 /// Small builder so we never hold two mutable borrows of the argv vector at
@@ -94,13 +98,21 @@ pub fn plan(m: &Manifest, p: Paths<'_>, bwrap: PathBuf, plugind: &Path) -> Resul
         a.flag("--share-net");
     }
 
-    a.bind("--ro-bind", Path::new("/nix/store"), "/nix/store")
-        .bind("--ro-bind", p.abi_dir, "/abi");
+    a.bind_same("--ro-bind", Path::new("/nix/store"))
+        .bind_same("--ro-bind", p.policy_file);
 
+    // Bound at their REAL paths, not remapped to /state and /config.
+    //
+    // This is not cosmetic. The shim computes its Landlock ruleset and expands
+    // `$STATE`/`$CONFIG` from the same manifest the host does, using host
+    // paths — so if the sandbox showed them somewhere else, every PathFd::new
+    // would fail with ENOENT and the ruleset would refuse to build. Keeping one
+    // set of names means the manifest, the Landlock rules, the bind mounts and
+    // anything a plugin logs all agree.
     let state = p.state_dir.join("state").join(&m.id);
     let config = p.state_dir.join("config").join(&m.id);
-    a.bind("--bind", &state, "/state")
-        .bind("--ro-bind-try", &config, "/config");
+    a.bind_same("--bind", &state)
+        .bind_same("--ro-bind-try", &config);
 
     a.flag("--proc").arg("/proc")
         .flag("--dev").arg("/dev")
@@ -118,7 +130,11 @@ pub fn plan(m: &Manifest, p: Paths<'_>, bwrap: PathBuf, plugind: &Path) -> Resul
             false
         }
         Ok(s) => {
-            a.bind_same("--ro-bind-try", Path::new(&s));
+            // --bind, not --ro-bind: connecting to a unix socket needs write
+            // permission on it, and a read-only bind is the wrong side of that
+            // question to be guessing about. It is one socket, in /run, that
+            // systemd owns.
+            a.bind_same("--bind-try", Path::new(&s));
             true
         }
         Err(_) => false,
@@ -141,7 +157,17 @@ pub fn plan(m: &Manifest, p: Paths<'_>, bwrap: PathBuf, plugind: &Path) -> Resul
         a.bind_same("--ro-bind-try", &path);
     }
 
-    a.flag("--").arg(plugind).arg("shim").arg(m.id.as_str());
+    // The shim gets its manifest from the store path on argv, NOT from the
+    // registry: the registry is root-owned and deliberately not bound in here,
+    // and a confined process has no business reading the list of every other
+    // plugin on the machine. --store-path is the artifact it is already allowed
+    // to see.
+    a.flag("--")
+        .arg(plugind)
+        .flag("shim")
+        .flag("--store-path")
+        .arg(p.store_path)
+        .arg(m.id.as_str());
 
     Ok(BwrapPlan {
         bwrap,
@@ -189,16 +215,16 @@ mod tests {
         (
             PathBuf::from("/nix/store/xxx-p"),
             PathBuf::from("/var/lib/oligarchy/plugins"),
-            PathBuf::from("/run/oligarchy/plugins/abi"),
+            PathBuf::from("/etc/oligarchy/plugins/policy.json"),
         )
     }
 
     #[test]
     fn refuses_wrong_tier() {
-        let (s, st, abi) = paths();
+        let (s, st, pol) = paths();
         let r = plan(
             &m(Tier::Wasm),
-            Paths { store_path: &s, state_dir: &st, abi_dir: &abi },
+            Paths { store_path: &s, state_dir: &st, policy_file: &pol },
             "bwrap".into(),
             Path::new("/bin/plugind"),
         );
@@ -207,10 +233,10 @@ mod tests {
 
     #[test]
     fn no_network_by_default() {
-        let (s, st, abi) = paths();
+        let (s, st, pol) = paths();
         let p = plan(
             &m(Tier::Native),
-            Paths { store_path: &s, state_dir: &st, abi_dir: &abi },
+            Paths { store_path: &s, state_dir: &st, policy_file: &pol },
             "bwrap".into(),
             Path::new("/bin/plugind"),
         )
@@ -222,13 +248,35 @@ mod tests {
     }
 
     #[test]
+    fn state_and_policy_are_bound_at_their_real_paths() {
+        // Remapping these to /state and /config is what broke tier 1: the shim
+        // builds its Landlock ruleset from host paths, so they have to exist
+        // under those names inside the sandbox too.
+        let (s, st, pol) = paths();
+        let p = plan(
+            &m(Tier::Native),
+            Paths { store_path: &s, state_dir: &st, policy_file: &pol },
+            "bwrap".into(),
+            Path::new("/bin/plugind"),
+        )
+        .unwrap();
+        let r = render(&p);
+        assert!(r.contains("/var/lib/oligarchy/plugins/state/t"), "{r}");
+        assert!(!r.contains("\"/state\""), "{r}");
+        assert!(r.contains("policy.json"), "{r}");
+        // The store path reaches the shim, so it never opens the registry.
+        assert!(r.contains("--store-path"), "{r}");
+        assert!(r.contains("/nix/store/xxx-p"), "{r}");
+    }
+
+    #[test]
     fn device_must_be_under_dev() {
-        let (s, st, abi) = paths();
+        let (s, st, pol) = paths();
         let mut man = m(Tier::Native);
         man.caps.devices.push("/etc/shadow".into());
         assert!(plan(
             &man,
-            Paths { store_path: &s, state_dir: &st, abi_dir: &abi },
+            Paths { store_path: &s, state_dir: &st, policy_file: &pol },
             "bwrap".into(),
             Path::new("/bin/plugind"),
         )

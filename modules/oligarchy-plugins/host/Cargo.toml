@@ -42,9 +42,16 @@ wasmtime-wasi = "43.0"
 # Tier 1 native.
 libloading = { version = "0.8", optional = true }
 
-# Tier 1 lua. `luajit` (not `lua54`) is deliberate: LuaJIT is the tier's
-# reason for existing and the thing that exercises the jit=self path.
-mlua = { version = "0.10", features = ["luajit", "vendored", "send"], optional = true }
+# Tier 1 lua. `luajit` (not `lua54`) is deliberate: LuaJIT is the tier's reason
+# for existing and the thing that exercises the jit=self path.
+#
+# NOT `vendored`. That feature builds mlua's own bundled LuaJIT and ignores the
+# LUA_LIB/LUA_INC the derivation sets, which is the opposite of what a distro
+# wants: on this system LuaJIT should be nixpkgs' LuaJIT, so it carries the
+# hardening flags, appears in the closure where a security scan can see it, and
+# gets patched when nixpkgs patches it rather than when we remember to bump a
+# transitive crate. The derivation supplies pkg-config and luajit.
+mlua = { version = "0.10", features = ["luajit", "send"], optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # rust-landlock. 0.4 covers ABI v5; check ABI::new_current() at runtime rather

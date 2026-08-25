@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use control::{Reply, Request};
 use policy::Policy;
-use registry::Store;
+use registry::{Authority, Store};
 
 const DEFAULT_STATE: &str = "/var/lib/oligarchy/plugins";
 const DEFAULT_POLICY: &str = "/etc/oligarchy/plugins/policy.json";
@@ -97,7 +97,23 @@ enum Cmd {
     Daemon,
     /// Internal: runs inside the bwrap namespace.
     #[command(hide = true)]
-    Shim { id: String },
+    Shim {
+        /// The plugin's store path. Passed explicitly because the registry is
+        /// root-owned and deliberately not visible inside the sandbox — and a
+        /// confined plugin has no business reading the list of every other
+        /// plugin on the machine.
+        #[arg(long)]
+        store_path: PathBuf,
+        id: String,
+    },
+    /// Prove, on this kernel, that the W^X filter does what the manifest says.
+    ///
+    /// Builds the filter for a synthetic manifest at each `jit` setting,
+    /// applies it in a forked child, and has that child attempt exactly what
+    /// the filter is supposed to stop. Available in release builds on purpose:
+    /// a seccomp filter that silently failed to install is the worst outcome in
+    /// this design, and "we ran the unit tests" does not detect it.
+    Selftest,
     /// Internal: the host side of one plugin instance, started by the
     /// template unit.
     #[command(hide = true)]
@@ -129,7 +145,9 @@ fn main() -> Result<()> {
                 &mut Store::open(&cli.state_dir)?,
                 &req,
                 &policy,
-                asked_for_unsigned(&cli.cmd),
+                Authority::Local {
+                    allow_unsigned: asked_for_unsigned(&cli.cmd),
+                },
             )
         } else {
             anyhow::ensure!(
@@ -171,7 +189,7 @@ fn main() -> Result<()> {
                     sandbox::bwrap::Paths {
                         store_path: &e.store_path,
                         state_dir: &cli.state_dir,
-                        abi_dir: &cli.runtime_dir.join("abi"),
+                        policy_file: &cli.policy,
                     },
                     PathBuf::from("bwrap"),
                     &std::env::current_exe()?,
@@ -231,7 +249,12 @@ fn main() -> Result<()> {
         // move out of `cli.cmd` would forbid.
         Cmd::Run { ref id } => run_one(&cli, &policy, id)?,
 
-        Cmd::Shim { ref id } => shim(&cli, id)?,
+        Cmd::Shim {
+            ref store_path,
+            ref id,
+        } => shim(&cli, store_path, id)?,
+
+        Cmd::Selftest => print!("{}", sandbox::selftest()?),
 
         // Handled above by `apply`, locally or over the socket. Listed rather
         // than caught by `_` so adding a verb is a compile error here until it
@@ -287,9 +310,10 @@ fn daemon(cli: &Cli, policy: &Policy) -> Result<()> {
         // The registry is one small JSON file; re-reading it is cheaper than the
         // class of bug it removes.
         let mut store = Store::open(&state_dir)?;
-        // The `false` is not a check that could be forgotten in a refactor: the
-        // wire type has no field that could make it true. See control.rs.
-        apply(&mut store, &req, &policy, false)
+        // Authority::Socket is not a check that could be forgotten in a
+        // refactor: the wire type has no field that could express either
+        // concession it withholds. See control.rs.
+        apply(&mut store, &req, &policy, Authority::Socket)
     })
 }
 
@@ -300,18 +324,14 @@ fn daemon(cli: &Cli, policy: &Policy) -> Result<()> {
 /// CLI-to-wire mapping, and the daemon's arms — and they had already drifted
 /// into printing two different messages for `remove`.
 ///
-/// `allow_unsigned` is the one input the two callers do not agree on, which is
-/// the point: `control::Request` cannot express it, so a request that arrived
-/// over the socket can only ever pass false.
-fn apply(
-    store: &mut Store,
-    req: &Request,
-    policy: &Policy,
-    allow_unsigned: bool,
-) -> Result<Reply> {
+/// `who` is the one input the two callers do not agree on, and that is the
+/// point: `control::Request` can express neither of the concessions
+/// `Authority::Local` carries, so a request that arrived over the socket can
+/// only ever be `Authority::Socket`.
+fn apply(store: &mut Store, req: &Request, policy: &Policy, who: Authority) -> Result<Reply> {
     Ok(match req {
         Request::Install { source } => {
-            let id = store.install(source, policy, allow_unsigned)?;
+            let id = store.install(source, policy, who)?;
             let e = store
                 .get(&id)
                 .context("plugin vanished from the registry immediately after install")?;
@@ -457,7 +477,7 @@ fn run_one(cli: &Cli, policy: &Policy, id: &str) -> Result<()> {
                 sandbox::bwrap::Paths {
                     store_path: &e.store_path,
                     state_dir: &cli.state_dir,
-                    abi_dir: &cli.runtime_dir.join("abi"),
+                    policy_file: &cli.policy,
                 },
                 which_bwrap()?,
                 &std::env::current_exe()?,
@@ -480,13 +500,24 @@ fn run_one(cli: &Cli, policy: &Policy, id: &str) -> Result<()> {
 }
 
 /// Inside the namespace. Confine, then load. Nothing between these two steps.
-fn shim(cli: &Cli, id: &str) -> Result<()> {
-    let store = Store::open(&cli.state_dir)?;
-    let e = store.get(id).with_context(|| format!("no such plugin {id}"))?;
+fn shim(cli: &Cli, store_path: &Path, id: &str) -> Result<()> {
+    // No Store here. The manifest comes from the artifact itself, which is in
+    // the Nix store, immutable, and the only thing this process is allowed to
+    // see besides its own state. It has already been signature-verified and
+    // policy-authorised at install time; re-reading it and re-authorising is
+    // defence in depth, not the primary gate.
+    let manifest = manifest::Manifest::load(&store_path.join("plugin.toml"))?;
+    anyhow::ensure!(
+        manifest.id == id,
+        "shim asked for {id} but {} contains {}",
+        store_path.display(),
+        manifest.id
+    );
     let policy = Policy::load(&cli.policy)?;
+    let config = registry::config_for(&cli.state_dir, id);
 
-    let conf = sandbox::prepare(&e.manifest, &cli.state_dir, &e.store_path)?;
-    sandbox::apply(&conf, &e.manifest)?;
+    let conf = sandbox::prepare(&manifest, &cli.state_dir, store_path)?;
+    sandbox::apply(&conf, &manifest)?;
     // From here the process cannot see the filesystem outside its allowlist
     // and, unless jit=self, cannot obtain executable memory.
 
@@ -496,14 +527,14 @@ fn shim(cli: &Cli, id: &str) -> Result<()> {
     // address space on every tier 1 plugin start for nothing. Same waste that
     // run_one already avoids for microvm.
     let mut p = tiers::load(
-        e.manifest.clone(),
+        manifest,
         tiers::Ctx {
             engine: None,
-            store_path: &e.store_path,
+            store_path,
             state_dir: &cli.state_dir,
             runtime_dir: &cli.runtime_dir,
             policy: &policy,
-            config: store.config_for(id),
+            config,
         },
     )?;
     p.init()?;

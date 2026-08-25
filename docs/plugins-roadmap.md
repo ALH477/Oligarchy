@@ -1,6 +1,6 @@
 # Tiered Plugin Runtime — Design & Living Roadmap
 
-> **Status:** LIVING DOCUMENT. Stages 1 and 2 are landed. Update the stage table and
+> **Status:** LIVING DOCUMENT. Stages 1-3 are landed. Update the stage table and
 > the changelog at the bottom as work proceeds. The design section above the
 > line is the locked contract; the roadmap below the line is the work tracker.
 >
@@ -102,7 +102,7 @@ One stage per commit. Each stage's gate must be green before the next starts.
 |---|---|---|---|
 | 1 | Tier 0 (`wasm`) only, no imperative install, workstation host only | `plugind doctor` reports a usable Landlock ABI; `nix build .#plugins-wx-enforcement` passes | **DONE** |
 | 2 | Signed registry + imperative install | an unprivileged user can install a *signed* plugin and cannot install an unsigned one, with nobody in `trusted-users` | **DONE** |
-| 3 | Tier 1 (`native`/`lua`) on the workstation only | `jit=none` vs `jit=self` verified on real hardware, not just in the VM test | not started |
+| 3 | Tier 1 (`native`/`lua`) on the workstation only | `jit=none` vs `jit=self` verified on real hardware, not just in the VM test | **DONE** |
 | 4 | Tier 2 (`microvm`) | microvm.nix restored as an input; no collision with `vm-manager/` | not started |
 
 ### Current wiring (stage 1)
@@ -353,6 +353,127 @@ is exactly as verified as a fetched one.
 
 Gate: `nix build .#plugins-signed-install`.
 
+### Current wiring (stage 3)
+
+Tier 1 runs a `dlopen`'d `.so` (or LuaJIT) under bwrap + Landlock + seccomp, as
+the unprivileged `oligarchy` user, in its own systemd instance. Posture on the
+workstation — and **only** the workstation:
+
+```nix
+allowedTiers = [ "wasm" "native" "lua" ];
+allowSelfJit = true;         # emits a build warning; that is the point
+minTrust     = "trusted";    # tightened now that native code can load
+```
+
+A stage rig or a shipped instrument keeps `[ "wasm" ]` and
+`allowSelfJit = false`. There it is running plugins somebody else wrote.
+
+**The gate, met on real hardware.** `plugind selftest` is a release-build verb
+that builds the filter for a synthetic manifest at each `jit` setting, installs
+it in a forked child, and has that child attempt exactly what the filter is
+supposed to stop. On this Framework 16 (Linux 7.0.10-zen1, Landlock ABI v8):
+
+```
+  native jit=none  wx_enforced=true  mprotect(PROT_EXEC)=DENIED   memfd_create=DENIED   ok
+  native jit=self  wx_enforced=false mprotect(PROT_EXEC)=allowed  memfd_create=allowed  ok
+  wasm   jit=host  wx_enforced=false mprotect(PROT_EXEC)=allowed  memfd_create=allowed  ok
+```
+
+It is a release verb on purpose. A seccomp filter that silently failed to
+install is the worst outcome in this design, and it is invisible from inside the
+process that installed it — "the unit tests passed" does not detect it.
+
+**And end to end, in `nix build .#plugins-tier1-runtime`.** Everything else that
+touches W^X is indirect: unit tests prove the right BPF was assembled,
+`wx-enforcement` proves the right `MemoryDenyWriteExecute` reached systemd,
+`selftest` proves the kernel honours the filter in a child of plugind. None
+prove what actually matters — that a plugin's own machine code, `dlopen`'d
+inside bwrap after Landlock and seccomp are applied, gets the answer its
+manifest declared. So `tests/wx-probe.c` is a real Tier 1 plugin whose `init()`
+asks the kernel from exactly there and reports through the host log callback:
+
+```
+landlock fully enforced          plugin=wxnone
+WXPROBE exec=denied  memfd=denied   plugin=wxnone
+WXPROBE exec=allowed memfd=allowed  plugin=wxself
+```
+
+That one fixture exercises the whole tier at once: namespaces, the Landlock
+ruleset, the seccomp filter, `dlopen`, the C vtable, the host-services struct,
+the drop-in, and the journal.
+
+**Tier 1 had never run, and nothing about it worked.** Seven separate blockers,
+each of which stopped it dead:
+
+1. `--ro-bind $RUNTIME/abi /abi` — a directory nothing creates, so bwrap failed
+   on its first argument. It was vestigial; the C header is a compile-time
+   artifact for plugin authors, not a runtime path.
+2. State and config were remapped to `/state` and `/config`, but the shim builds
+   its Landlock ruleset and expands `$STATE` from the *host* paths — so every
+   `PathFd::new` would have hit ENOENT. Now bound at their real paths, so the
+   manifest, the rules, the mounts and anything a plugin logs all agree.
+3. The shim opened the registry, which is root-owned and deliberately not in the
+   sandbox. It now gets `--store-path` on argv and reads the manifest from the
+   artifact — which is also the right answer for confinement: a plugin has no
+   business reading the list of every other plugin on the machine.
+4. `policy.json` was not bound, so `Policy::load` fell back to the hardened
+   defaults — tier 0 only — and every tier 1 plugin was refused by its own host.
+5. `RestrictNamespaces = "user"` with the comment "bwrap needs userns and
+   nothing else". It does not: bwrap creates user, mount, pid, ipc, uts, cgroup
+   and net namespaces in **one** `clone()`, so denying any of them fails the
+   whole call — and bwrap then reports "no permissions to creating new namespace
+   … enable kernel.unprivileged_userns_clone", sending you after a sysctl that
+   was never the problem.
+6. `RestrictAddressFamilies=AF_UNIX` blocked the `NETLINK_ROUTE` socket bwrap
+   uses to bring up loopback in the netns it just made. AF_NETLINK is now
+   allowed for the bwrap tiers only; the namespace is empty and the process
+   holds no capabilities, so there is nothing in there to configure but `lo`.
+7. `ProtectKernelTunables=yes` locks a submount under `/proc`, and the kernel
+   refuses `mount("proc")` in a user namespace when it cannot see an
+   unobstructed `/proc`. Off for the bwrap tiers, where a fresh procfs, zero
+   capabilities and a Landlock ruleset that does not name `/proc` replace it.
+
+Then two that let it start but not *work*:
+
+- `Type=notify` with `NotifyAccess=main` (the default) discards the shim's
+  readiness notification, because MainPID is bwrap and the process that becomes
+  ready is the child it forked. The unit sat for five minutes hitting
+  `TimeoutStartSec` while a correctly confined plugin logged "ready" in the
+  journal. `NotifyAccess=all` for the bwrap tiers; `exec` is not narrower enough
+  to help. The notify socket also has to be in the Landlock ruleset and bound
+  writable, because the shim reports ready *after* the ruleset is in force.
+- `StartLimitBurst`/`StartLimitIntervalSec` were in `serviceConfig`, i.e.
+  `[Service]`, where systemd ignores them — it said so on every start. The
+  crashloop limit did not exist. They belong in `[Unit]`.
+
+Two smaller corrections found on the way:
+
+- `FsPolicy::baseline` added the artifact's own store path a *second* time with
+  `EXECUTE` stripped. `dlopen` needs EXECUTE, and a narrower rule on the very
+  directory the `.so` is loaded from is the last place to be relying on
+  Landlock's rule-precedence semantics. `/nix/store` read+exec already covers it.
+- A Landlock rule carrying directory rights on a non-directory (the notify
+  socket) is *reported as degradation*: BestEffort strips them and the whole
+  ruleset comes back `PartiallyEnforced`, so every tier 1 start logged "kernel
+  is older than the policy" — a specific and false claim. Narrowed with
+  `AccessFs::from_file`; it now reports `landlock fully enforced`.
+
+**Two deliberate decisions.**
+
+- **`mlua` no longer uses `vendored`.** That feature builds mlua's own bundled
+  LuaJIT and ignores the `LUA_LIB`/`LUA_INC` the derivation sets — the opposite
+  of what a distro wants. LuaJIT is now nixpkgs' LuaJIT: it carries the
+  hardening flags, appears in the closure where the malware scan can see it, and
+  gets patched when nixpkgs patches it rather than when someone remembers to
+  bump a transitive crate.
+- **The control socket cannot install a `jit=self` plugin.** `Authority` replaced
+  the `allow_unsigned: bool` threaded through `install`: one type carrying both
+  concessions only a registry-writer may request. "Which signed plugins may run"
+  and "which signed plugins may hold W+X pages" are different decisions, and a
+  signature says who wrote something, not that the operator wants it JITing.
+  Bundling them means the *next* concession is added in one place rather than as
+  a third bool some call site forgets.
+
 ### Kernel facts (verified, Framework 16 / `custom.kernel.variant = "zen"`)
 
 - Landlock ABI **v8** on Linux 7.0.10-zen1, with `landlock` in
@@ -401,25 +522,33 @@ Gate: `nix build .#plugins-signed-install`.
    load-bearing property of this design, not an inconvenience: it is why an
    installer cannot bring their own key.
 
-**Stage 3 (tier 1)**
+**Stage 3 leftovers**
 
-4. `security.unprivilegedUsernsClone` must be true; the module already sets it
-   with `mkDefault` when `native`/`lua` is in `allowedTiers`, and the assertion
-   catches the case where something else has forced it off.
-5. The `jit=none` vs `jit=self` distinction has been verified only in unit tests
-   and (for unit generation) in the VM test. It still needs a real-hardware
-   check that a `jit=none` plugin actually gets EPERM on `mprotect(PROT_EXEC)` —
-   `plugind`'s `#[cfg(debug_assertions)]` self-test forks and attempts exactly
-   that.
-6. `mlua` is pinned with the `vendored` feature, so it builds its own LuaJIT and
-   ignores the `LUA_LIB`/`LUA_INC` the package sets. Decide deliberately which
-   one tier 1 should ship.
-7. The control socket currently reaches only wasm-installable plugins in
-   practice, because that is all `allowedTiers` permits on the workstation. When
-   tier 1 opens, an installer can request a `native` plugin — signed, but native
-   code all the same. Decide whether `installGroup` should be allowed to install
-   at every permitted tier or only at tier 0; `minTrust` is the existing dial,
-   and it is currently `untrusted`.
+4. `security.unprivilegedUsernsClone` writes
+   `kernel.unprivileged_userns_clone`, which exists **only** on kernels carrying
+   the Debian patch — zen and xanmod do, vanilla does not. On vanilla the
+   governing knob is `user.max_user_namespaces`, so the build-time assertion can
+   pass while the option is a no-op. It is still the right assertion (it catches
+   someone forcing it off); `plugind doctor` now reports both knobs, and the
+   tier 1 test asserts the one that actually governs rather than the one the
+   option writes.
+5. Tier 1 is verified for `native`. The **`lua`** tier compiles and is allowed,
+   but nothing exercises `LuaPlugin::load` yet — the `wx-probe` fixture is C.
+   A LuaJIT fixture would also be the natural place to check that `jit=self`
+   actually buys compiled traces rather than the interpreter fallback.
+6. **Nothing tests that the two drop-in generators agree beyond the MDWE line.**
+   Both halves of the mirror gained directives during this stage and
+   `NotifyAccess` plus the `AF_NETLINK` branch reached the Rust one alone —
+   caught by reading, not by a test, because `checks.wx-enforcement` asserts only
+   `MemoryDenyWriteExecute` and no `declaredPlugins` entry exists anywhere in
+   this repo to exercise the Nix one. Both sides now route through a named
+   predicate (`Manifest::uses_bwrap` / `usesBwrap`), which makes the next drift
+   less likely but not impossible. The real fix is a check that renders both for
+   the same set of manifests and diffs them — a `plugind dropin <manifest.toml>`
+   verb plus a `runCommand` needs no KVM, so it would be the cheapest gate here.
+7. `process()` is never called by anything. Both tiers implement it and the
+   realtime contract is documented, but there is no audio graph yet, so the hot
+   path is untested and the `#[warn(dead_code)]` list is long for a real reason.
 
 **Before the ABI is public (any stage)**
 
