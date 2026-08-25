@@ -21,10 +21,15 @@
 //! That is a bypass if you wanted W^X, and an *escape hatch* if you wanted a
 //! JIT. We use it deliberately, in both directions:
 //!
-//!   jit = none | host  -> install the filter AND deny memfd_create AND
-//!                         require that every writable mount is noexec.
-//!                         (systemd#11473 argues MDWE should do the memfd
-//!                         part itself; it doesn't, so we do.)
+//!   jit = none | host  -> install the filter, deny memfd_create, deny
+//!                         anonymous PROT_EXEC, deny the two syscalls that can
+//!                         write a page regardless of its protection, AND mount
+//!                         every writable path noexec (NoExecPaths= in the
+//!                         drop-in — for a long time this file *said* that was
+//!                         required and nothing implemented it, which left the
+//!                         plain file dual-mapping wide open).
+//!                         (systemd#11473 argues MDWE should do the memfd part
+//!                         itself; it doesn't, so we do.)
 //!   jit = self         -> do not install the filter. Permit PROT_EXEC and
 //!                         memfd_create. Compensate by tightening everything
 //!                         else: Landlock down to the plugin's own dirs,
@@ -48,6 +53,7 @@ use crate::manifest::Manifest;
 
 const PROT_WRITE: u64 = 0x2;
 const PROT_EXEC: u64 = 0x4;
+const MAP_ANONYMOUS: u64 = 0x20;
 const SHM_EXEC: u64 = 0o100000;
 
 #[cfg(target_arch = "x86_64")]
@@ -95,18 +101,66 @@ pub fn build(m: &Manifest) -> Result<BpfProgram> {
             }
         );
     } else {
-        // mmap: deny only when BOTH write and exec are requested, matching
-        // systemd. A plain PROT_EXEC mmap of a file is how dlopen works and
-        // must keep working.
+        // mmap, two rules. Rules for one syscall are OR'd, conditions within
+        // a rule are AND'd.
         rules.insert(
             libc::SYS_mmap,
-            vec![SeccompRule::new(vec![SeccompCondition::new(
-                2,
-                ArgLen::Dword,
-                Op::MaskedEq(PROT_WRITE | PROT_EXEC),
-                PROT_WRITE | PROT_EXEC,
-            )?])?],
+            vec![
+                // 1. Both write and exec at once, matching systemd's MDWE.
+                SeccompRule::new(vec![SeccompCondition::new(
+                    2,
+                    ArgLen::Dword,
+                    Op::MaskedEq(PROT_WRITE | PROT_EXEC),
+                    PROT_WRITE | PROT_EXEC,
+                )?])?,
+                // 2. ANY anonymous executable mapping, write bit or not.
+                //
+                // Rule 1 alone is not W^X and this is where it leaked. An
+                // anonymous PROT_EXEC-only mapping never trips it, and there
+                // are at least two ways to get code into one without ever
+                // asking for PROT_WRITE:
+                //
+                //   ptrace(PTRACE_POKEDATA) from a sibling — ptrace writes with
+                //     FOLL_FORCE, so the page's protection is not consulted;
+                //   userfaultfd + UFFDIO_COPY — the fault handler populates the
+                //     page, and UFFD_USER_MODE_ONLY needs no privilege.
+                //
+                // Both were confirmed working on this kernel, including under a
+                // real MemoryDenyWriteExecute=yes unit. Denying anonymous
+                // PROT_EXEC closes the class at its root rather than chasing the
+                // writers one at a time, and it costs dlopen nothing: shared
+                // objects are file-backed, so MAP_ANONYMOUS is not set. A plugin
+                // that genuinely needs anonymous executable memory is a plugin
+                // declaring jit = "self", and this filter is not installed for
+                // those.
+                SeccompRule::new(vec![
+                    SeccompCondition::new(2, ArgLen::Dword, Op::MaskedEq(PROT_EXEC), PROT_EXEC)?,
+                    SeccompCondition::new(
+                        3,
+                        ArgLen::Dword,
+                        Op::MaskedEq(MAP_ANONYMOUS),
+                        MAP_ANONYMOUS,
+                    )?,
+                ])?,
+            ],
         );
+
+        // The two writers that reach a page regardless of its protection.
+        //
+        // ptrace writes with FOLL_FORCE, which is exactly the point of a
+        // debugger and exactly the hole here: a plugin forks, the child maps an
+        // anonymous PROT_EXEC page, the parent poked code into it. Denying
+        // anonymous PROT_EXEC above removes the target, and denying these
+        // removes the writers — belt and braces, because the target for a
+        // *private file-backed* executable mapping (which dlopen legitimately
+        // creates) is still copy-on-write and still pokeable.
+        //
+        // Neither has a legitimate use in a plugin. Nothing is lost by refusing
+        // them, and `process_vm_writev` is deliberately NOT in this list: it
+        // does not pass FOLL_FORCE, so it cannot write a non-writable page —
+        // verified rather than assumed.
+        rules.insert(libc::SYS_ptrace, vec![]);
+        rules.insert(libc::SYS_userfaultfd, vec![]);
 
         // mprotect / pkey_mprotect: deny any upgrade to executable. This is
         // the one that actually stops a JIT, and the one that breaks

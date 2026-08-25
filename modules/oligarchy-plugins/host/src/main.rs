@@ -8,6 +8,8 @@
 //!                           artifact. Never invoked by hand.
 
 mod control;
+mod declared;
+mod guest;
 mod manifest;
 mod plugin;
 mod policy;
@@ -23,8 +25,11 @@ use control::{Reply, Request};
 use policy::Policy;
 use registry::{Authority, Store};
 
-const DEFAULT_STATE: &str = "/var/lib/oligarchy/plugins";
+pub const DEFAULT_STATE: &str = "/var/lib/oligarchy/plugins";
 const DEFAULT_POLICY: &str = "/etc/oligarchy/plugins/policy.json";
+/// Read-only index of plugins pinned in the flake. Part of the system closure,
+/// so it rolls back with everything else; nothing at runtime writes it.
+const DEFAULT_DECLARED: &str = "/etc/oligarchy/plugins/declared.json";
 const DEFAULT_RUNTIME: &str = "/run/oligarchy/plugins";
 /// The supervisor's own runtime directory, deliberately NOT the one the plugin
 /// instances share.
@@ -45,6 +50,8 @@ struct Cli {
     state_dir: PathBuf,
     #[arg(long, default_value = DEFAULT_POLICY, env = "OLIGARCHY_POLICY")]
     policy: PathBuf,
+    #[arg(long, default_value = DEFAULT_DECLARED, env = "OLIGARCHY_DECLARED")]
+    declared: PathBuf,
     #[arg(long, default_value = DEFAULT_RUNTIME, env = "OLIGARCHY_RUNTIME_DIR")]
     runtime_dir: PathBuf,
     #[arg(long, default_value = DEFAULT_CONTROL, env = "OLIGARCHY_CONTROL_DIR")]
@@ -104,6 +111,23 @@ enum Cmd {
         /// plugin on the machine.
         #[arg(long)]
         store_path: PathBuf,
+        id: String,
+    },
+    /// Internal: runs INSIDE a tier 2 microVM, serving one plugin over vsock.
+    ///
+    /// Not the same as `shim`. `shim` confines a plugin on the host and loads it
+    /// in-process; this loads it inside a guest kernel and answers the host over
+    /// a socket. The manifest says tier=microvm, and in here it is loaded as
+    /// native — see guest.rs for why that is the inside of the decision rather
+    /// than a downgrade of it.
+    #[command(hide = true)]
+    Guest {
+        #[arg(long)]
+        store_path: PathBuf,
+        /// The guest's own policy. Not the host's: this one has to permit
+        /// `native`, because that is how the artifact is loaded in here.
+        #[arg(long, default_value = "/etc/oligarchy/plugins/guest-policy.json")]
+        guest_policy: PathBuf,
         id: String,
     },
     /// Prove, on this kernel, that the W^X filter does what the manifest says.
@@ -253,6 +277,12 @@ fn main() -> Result<()> {
             ref store_path,
             ref id,
         } => shim(&cli, store_path, id)?,
+
+        Cmd::Guest {
+            ref store_path,
+            ref guest_policy,
+            ref id,
+        } => guest::run(store_path, id, guest_policy)?,
 
         Cmd::Selftest => print!("{}", sandbox::selftest()?),
 
@@ -440,27 +470,43 @@ fn asked_for_unsigned(cmd: &Cmd) -> bool {
 /// Host side of one plugin instance. For wasm this loads in-process; for
 /// native/lua it spawns bwrap, which re-enters as `shim`.
 fn run_one(cli: &Cli, policy: &Policy, id: &str) -> Result<()> {
+    // Two sources, and both are legitimate. The registry holds what was
+    // installed at runtime; the declared index holds what is pinned in the
+    // flake. Tier 2 lives only in the second — a microVM guest needs a closure,
+    // so it cannot arrive imperatively — and before this existed a declared
+    // plugin's unit started, said "no such plugin", and died.
     let store = Store::open(&cli.state_dir)?;
-    let e = store.get(id).with_context(|| format!("no such plugin {id}"))?;
+    let index = declared::load(&cli.declared)?;
 
-    match e.manifest.tier {
+    let (manifest, store_path) = match store.get(id) {
+        Some(e) => (e.manifest.clone(), e.store_path.clone()),
+        None => declared::resolve(&index, id)?.with_context(|| {
+            format!(
+                "no such plugin {id}: not in the registry and not in {}",
+                cli.declared.display()
+            )
+        })?,
+    };
+    let config = registry::config_for(&cli.state_dir, id);
+
+    match manifest.tier {
         manifest::Tier::Wasm | manifest::Tier::Microvm => {
             // Only Tier 0 needs an Engine. Building one for a microvm plugin
             // was pure waste on a unit that runs with MDWE=yes.
-            let engine = if e.manifest.tier == manifest::Tier::Wasm {
+            let engine = if manifest.tier == manifest::Tier::Wasm {
                 Some(tiers::wasm::engine()?)
             } else {
                 None
             };
             let mut p = tiers::load(
-                e.manifest.clone(),
+                manifest,
                 tiers::Ctx {
                     engine: engine.as_ref(),
-                    store_path: &e.store_path,
+                    store_path: &store_path,
                     state_dir: &cli.state_dir,
                     runtime_dir: &cli.runtime_dir,
                     policy,
-                    config: store.config_for(id),
+                    config,
                 },
             )?;
             p.init()?;
@@ -473,9 +519,9 @@ fn run_one(cli: &Cli, policy: &Policy, id: &str) -> Result<()> {
         }
         manifest::Tier::Native | manifest::Tier::Lua => {
             let plan = sandbox::bwrap::plan(
-                &e.manifest,
+                &manifest,
                 sandbox::bwrap::Paths {
-                    store_path: &e.store_path,
+                    store_path: &store_path,
                     state_dir: &cli.state_dir,
                     policy_file: &cli.policy,
                 },

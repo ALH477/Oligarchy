@@ -360,12 +360,13 @@ impl Store {
     /// Write the drop-in, reload, record the plugin as enabled, and — unless
     /// `start` is false — start it.
     pub fn enable(&mut self, id: &str, start: bool) -> Result<()> {
+        let root = self.root.clone();
         let e = self
             .reg
             .entries
             .get_mut(id)
             .with_context(|| format!("no such plugin {id}"))?;
-        write_dropin(&e.manifest)?;
+        write_dropin(&e.manifest, &root)?;
         daemon_reload()?;
 
         // Persist BEFORE starting, not after. Once the drop-in is on disk and
@@ -420,7 +421,7 @@ impl Store {
                 disable.push(id.clone());
                 continue;
             }
-            write_dropin(&e.manifest)?;
+            write_dropin(&e.manifest, &self.root)?;
         }
         for id in disable {
             self.disable(&id)?;
@@ -450,7 +451,7 @@ fn dropin_dir(id: &str) -> PathBuf {
 /// the memory and CPU caps also have to be per-instance, and so does the
 /// device allowlist. Everything else stays in the template so there is one
 /// place to audit the common hardening.
-fn write_dropin(m: &Manifest) -> Result<()> {
+fn write_dropin(m: &Manifest, state_dir: &Path) -> Result<()> {
     let dir = dropin_dir(&m.id);
     std::fs::create_dir_all(&dir)?;
 
@@ -464,6 +465,37 @@ fn write_dropin(m: &Manifest) -> Result<()> {
         "MemoryDenyWriteExecute={}\n",
         if m.wx_enforced() { "yes" } else { "no" }
     ));
+
+    if m.wx_enforced() {
+        // Every writable path noexec, and the store the only exception.
+        //
+        // seccomp.rs claimed for a long time that jit=none "requires that every
+        // writable mount is noexec" and nothing implemented it. Without it the
+        // oldest dual-mapping trick works with a plain file instead of a memfd:
+        // create a file in $STATE, mmap it MAP_SHARED|PROT_WRITE, mmap the same
+        // fd MAP_SHARED|PROT_EXEC, write through the first and jump to the
+        // second. Neither mapping is ever W+X, so no filter fires. Confirmed
+        // working on this kernel, including under a real
+        // MemoryDenyWriteExecute=yes unit.
+        //
+        // NoExecPaths=/ plus ExecPaths=/nix/store is most of the fix: the
+        // plugin's artifact and every library it needs are in the store, and
+        // nothing it can write to is executable. Verified on this kernel that
+        // both the MAP_SHARED and the MAP_PRIVATE exec-mapping of a writable
+        // file are then refused, and that noexec survives bwrap re-binding the
+        // directory — an unprivileged bind cannot relax mount flags.
+        //
+        // The state directory is named EXPLICITLY as well, and it has to be:
+        // `StateDirectory=` sets up its own bind mount, and with only `/` listed
+        // the state tree came back executable — the gate caught it, reporting
+        // dualmap=allowed while the other five routes were closed. Relying on
+        // `/` to cover a path systemd mounts separately is the kind of thing
+        // that looks fine and is not.
+        s.push_str(&format!(
+            "NoExecPaths=/ {}\nExecPaths=/nix/store\n",
+            state_dir.display()
+        ));
+    }
     if m.uses_bwrap() {
         // bwrap mounts its own /proc inside the namespace it creates, and the
         // kernel refuses that in a user namespace if any submount of the outer

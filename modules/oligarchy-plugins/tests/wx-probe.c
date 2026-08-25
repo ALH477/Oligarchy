@@ -13,14 +13,24 @@
  * reports through the host log callback — which also exercises the C vtable,
  * the host-services struct, and the journal path in one go.
  *
+ * It probes SIX things, not one, and that is the lesson rather than a detail.
+ * The first version asked only whether mprotect(PROT_EXEC) and memfd_create
+ * were refused — the two routes the filter happened to cover — so it reported
+ * "denied" while three other routes to executable memory were wide open, and
+ * the gate passed. A probe that only tests what you already blocked tells you
+ * nothing.
+ *
  * Built with -DPLUGIN_ID="..." so one source file serves every fixture; the
  * host cross-checks the manifest id against the binary's, so they must agree.
  */
 
 #include "oligarchy_plugin.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <sys/mman.h>
+#include <sys/ptrace.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -54,15 +64,97 @@ static bool probe_memfd_allowed(void)
     return true;
 }
 
+/* Anonymous PROT_EXEC with no write bit. Rule 1 of the filter (deny W&X
+ * together, which is all systemd's MDWE does) never fires on this — and it is
+ * the target both writers below need. */
+static bool probe_anon_exec_allowed(void)
+{
+    void *p = mmap(NULL, 4096, PROT_READ | PROT_EXEC,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED)
+        return false;
+    munmap(p, 4096);
+    return true;
+}
+
+/* The oldest dual-mapping trick, with a plain file instead of a memfd: two
+ * mappings of one fd, one writable and one executable, neither ever W+X. This
+ * is what a writable mount that is not noexec buys an attacker, and it worked
+ * for the whole life of this design because the noexec half was documented and
+ * never implemented. */
+static bool probe_file_dualmap_allowed(void)
+{
+    char path[256];
+    snprintf(path, sizeof path, "/var/lib/oligarchy/plugins/state/%s/.wxprobe",
+             PLUGIN_ID);
+    int fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0)
+        return false;
+    bool ok = false;
+    if (ftruncate(fd, 4096) == 0) {
+        void *w = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        void *x = mmap(NULL, 4096, PROT_READ | PROT_EXEC, MAP_SHARED, fd, 0);
+        ok = (w != MAP_FAILED && x != MAP_FAILED);
+        if (w != MAP_FAILED) munmap(w, 4096);
+        if (x != MAP_FAILED) munmap(x, 4096);
+    }
+    close(fd);
+    unlink(path);
+    return ok;
+}
+
+/* ptrace writes with FOLL_FORCE, so a page's protection is not consulted.
+ * Probed by asking for the capability rather than by actually poking a child:
+ * if ptrace is refused outright there is nothing to chase. */
+static bool probe_ptrace_allowed(void)
+{
+    /* PTRACE_TRACEME on ourselves is the cheapest capability question; a
+     * denied seccomp rule returns EPERM before the kernel considers it. */
+    long rc = syscall(SYS_ptrace, PTRACE_TRACEME, 0, 0, 0);
+    if (rc == 0) {
+        /* We are now traced by our own parent, which we do not want. */
+        syscall(SYS_ptrace, PTRACE_DETACH, 0, 0, 0);
+        return true;
+    }
+    return errno != EPERM ? true : false;
+}
+
+/* UFFD_USER_MODE_ONLY, and the flag matters for the probe's honesty. Without it
+ * an unprivileged caller is refused by vm.unprivileged_userfaultfd=0 — so the
+ * probe reported "denied" for BOTH jit settings and could not distinguish the
+ * seccomp rule from the sysctl. A probe that cannot tell you which control
+ * fired is the failure this whole file exists to avoid. */
+#define UFFD_USER_MODE_ONLY_ 1
+static bool probe_userfaultfd_allowed(void)
+{
+    long fd = syscall(SYS_userfaultfd, O_CLOEXEC | UFFD_USER_MODE_ONLY_);
+    if (fd < 0)
+        return false;
+    close((int)fd);
+    return true;
+}
+
 static bool pl_init(const oligarchy_host *host)
 {
-    char msg[128];
+    char msg[256];
     bool exec_ok = probe_exec_allowed();
     bool memfd_ok = probe_memfd_allowed();
+    /* The four routes that made "jit=none means no executable memory" false.
+     * Reported separately so a regression names itself instead of flipping one
+     * aggregate bit. */
+    bool anon_ok = probe_anon_exec_allowed();
+    bool dual_ok = probe_file_dualmap_allowed();
+    bool ptrace_ok = probe_ptrace_allowed();
+    bool uffd_ok = probe_userfaultfd_allowed();
 
-    snprintf(msg, sizeof msg, "WXPROBE exec=%s memfd=%s",
+    snprintf(msg, sizeof msg,
+             "WXPROBE exec=%s memfd=%s anon=%s dualmap=%s ptrace=%s uffd=%s",
              exec_ok ? "allowed" : "denied",
-             memfd_ok ? "allowed" : "denied");
+             memfd_ok ? "allowed" : "denied",
+             anon_ok ? "allowed" : "denied",
+             dual_ok ? "allowed" : "denied",
+             ptrace_ok ? "allowed" : "denied",
+             uffd_ok ? "allowed" : "denied");
     host->log(host, OLIGARCHY_LOG_INFO, msg);
 
     /* Return true either way. The point is to report, not to refuse: a plugin

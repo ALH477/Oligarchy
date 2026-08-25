@@ -1,6 +1,8 @@
 # Tiered Plugin Runtime — Design & Living Roadmap
 
-> **Status:** LIVING DOCUMENT. Stages 1-3 are landed. Update the stage table and
+> **Status:** LIVING DOCUMENT. Stages 1-3 are landed; stage 4 is partly landed
+> (see its section). Stage 3's W^X claim was FALSE until this stage and the
+> correction is recorded under §4.1 — read that first. Update the stage table and
 > the changelog at the bottom as work proceeds. The design section above the
 > line is the locked contract; the roadmap below the line is the work tracker.
 >
@@ -80,6 +82,97 @@ This rule is written **twice**, on purpose:
 agree; `manifest::tests::wx_is_enforced_where_it_means_something` and
 `sandbox::seccomp::tests::wasm_tier_is_never_wx_filtered` guard the Rust half.
 
+### 4.1 The W^X claim was false, and how
+
+Stage 3 asserted that `jit = "none"` means no writable-executable memory, and
+shipped a real-hardware selftest plus an end-to-end probe that both said so. An
+adversarial review disproved it by running code on this kernel. **Three
+independent routes worked, one of them under a real
+`MemoryDenyWriteExecute=yes` unit:**
+
+| route | why the filter missed it |
+|---|---|
+| anonymous `PROT_EXEC` written via `ptrace(POKEDATA)` | `ptrace` writes with `FOLL_FORCE`, so page protection is not consulted — and the mmap rule required `PROT_WRITE|PROT_EXEC` *together*, so an exec-only mapping never tripped it |
+| the same, written via `userfaultfd` + `UFFDIO_COPY` | ditto; `UFFD_USER_MODE_ONLY` needs no privilege |
+| plain-file dual mapping in `$STATE` | `seccomp.rs` asserted jit=none "requires that every writable mount is noexec" and **nothing ever implemented it** |
+
+What made it invisible is the more useful lesson: both probes tested only the
+two routes the filter already covered, so both reported "denied" while three
+others were open. **A probe that only tests what you already blocked tells you
+nothing.** `plugind selftest` and `wx-probe.c` now probe six routes and report
+each by name; the tier 1 gate asserts all six.
+
+The fixes, in the order they matter:
+
+- **Deny any anonymous `PROT_EXEC` mapping**, write bit or not. This closes the
+  class at its root rather than chasing writers one at a time, and costs
+  `dlopen` nothing — shared objects are file-backed, so `MAP_ANONYMOUS` is not
+  set. A plugin that genuinely needs anonymous executable memory is one
+  declaring `jit = "self"`, and this filter is not installed for those.
+- **Deny `ptrace` and `userfaultfd`** when W^X is enforced. Belt and braces: the
+  target for a *private file-backed* executable mapping, which `dlopen`
+  legitimately creates, is still copy-on-write and still pokeable.
+  `process_vm_writev` is deliberately *not* denied — it does not pass
+  `FOLL_FORCE`, verified rather than assumed.
+- **`NoExecPaths=/ ${stateDir}` plus `ExecPaths=/nix/store`**, in both drop-in
+  mirrors. Verified on this kernel that both the `MAP_SHARED` and `MAP_PRIVATE`
+  exec-mappings of a writable file are then refused, and that noexec survives
+  bwrap re-binding the directory — an unprivileged bind cannot relax mount
+  flags. The state directory has to be named **explicitly**: with only `/`
+  listed, `StateDirectory=`'s own bind mount came back executable, and the
+  six-route probe is what caught it.
+
+Result, from inside the sandbox, on a booted kernel:
+
+```
+WXPROBE exec=denied  memfd=denied  anon=denied  dualmap=denied  ptrace=denied  uffd=denied   (jit=none)
+WXPROBE exec=allowed memfd=allowed anon=allowed dualmap=allowed ptrace=allowed uffd=allowed  (jit=self)
+```
+
+Still open from the same review, and not yet fixed:
+
+1. **`RestrictNamespaces = "user mnt pid ipc uts cgroup net"` lets a plugin
+   regain every capability.** `unshare(CLONE_NEWUSER|CLONE_NEWNET)` from an
+   empty capability set restores a full set inside the new namespace, and with
+   `AF_NETLINK` allowed that reaches the `nf_tables` parser — the surface
+   CVE-2022-32250 and CVE-2023-32233 live on. Verified. Landlock still denies
+   `mount` and `pivot_root` with all caps regained, so the classic userns
+   filesystem escape is closed; this is about kernel LPE surface. The fix is
+   cheap and has an obvious home: bwrap needs the namespaces only during setup,
+   so the *shim* can add `unshare`/`setns`/`clone(CLONE_NEWUSER)` to its own
+   filter after the namespaces exist.
+2. **The cgroup caps are opt-in by the plugin.** Both mirrors emit `MemoryMax=`
+   / `CPUQuota=` only when the *manifest* asks. `custom.plugins.limits.*` is a
+   ceiling on what a manifest may request, never a default that gets applied —
+   so a manifest that omits both runs with no memory cap and no CPU quota, and
+   `RestrictRealtime` is unset. On an audio box the failure mode is a
+   `SCHED_FIFO` spin loop. The compensating control quoted for `jit=self`
+   ("hard cgroup caps") is absent exactly when the author declines to ask.
+3. **`caps.devices` is dead.** bwrap `--dev-bind-try`s each device and the
+   drop-in emits `DeviceAllow=`, but `sandbox::prepare` never adds `/dev` to the
+   Landlock ruleset — so `open("/dev/snd/seq")` is `EACCES`. Any real DSP plugin
+   that touches an ALSA node or `/dev/urandom` fails. `wx-probe.c` opens no
+   devices, so no gate catches it. Same for `caps.fs_read_write` beyond
+   `$STATE`: those paths are never bind-mounted, so the Landlock build fails
+   with ENOENT and the unit will not start (fail-closed, but "whatever its
+   manifest named" is currently only true for read-only paths).
+4. **Landlock cannot gate unix-socket `connect()`**, so for sockets bwrap is the
+   only layer — and `forbidden_paths` does not list `/nix/var`, so
+   `fs_read = ["/nix/var/nix/daemon-socket"]` passes policy and hands the plugin
+   the nix-daemon. `/proc`, `/sys`, `/etc` and `/run/dbus` are equally unlisted.
+   Add them, and treat `fs_read` of a socket as read-write.
+5. **`network = true` with an empty `tcp_connect` denies all TCP** while
+   `plugind explain` prints "ALL TCP". Fail-closed, but the tool states the
+   opposite of what the kernel will do.
+6. **`NotifyAccess=all` lets a plugin send `EXTEND_TIMEOUT_USEC=`** repeatedly
+   during stop, hanging `systemctl stop`, `nixos-rebuild switch` and shutdown
+   indefinitely. `STOPPING=1` and `RESTART_RESET=1` are reachable too. The
+   earlier note that this is "self-harm at worst" is too generous.
+7. **The Lua tier's one diagnostic is inverted.** `jit.status()` reports the
+   *setting*, not the capability, so a correctly-filtered `jit=none` Lua plugin
+   logs "the W^X filter did not take" every time — training an operator to
+   ignore the exact message meant to catch a real failure.
+
 ## 5. Trust: caches, not users
 
 **Nobody is added to `nix.settings.trusted-users`.** Per the Nix manual that is
@@ -103,7 +196,7 @@ One stage per commit. Each stage's gate must be green before the next starts.
 | 1 | Tier 0 (`wasm`) only, no imperative install, workstation host only | `plugind doctor` reports a usable Landlock ABI; `nix build .#plugins-wx-enforcement` passes | **DONE** |
 | 2 | Signed registry + imperative install | an unprivileged user can install a *signed* plugin and cannot install an unsigned one, with nobody in `trusted-users` | **DONE** |
 | 3 | Tier 1 (`native`/`lua`) on the workstation only | `jit=none` vs `jit=self` verified on real hardware, not just in the VM test | **DONE** |
-| 4 | Tier 2 (`microvm`) | microvm.nix restored as an input; no collision with `vm-manager/` | not started |
+| 4 | Tier 2 (`microvm`) | microvm.nix restored as an input; no collision with `vm-manager/` | **PARTIAL** — see below |
 
 ### Current wiring (stage 1)
 
@@ -473,6 +566,79 @@ Two smaller corrections found on the way:
   signature says who wrote something, not that the operator wants it JITing.
   Bundling them means the *next* concession is added in one place rather than as
   a third bool some call site forgets.
+
+### Current wiring (stage 4) — PARTIAL
+
+**What the plan asked for is done.** microvm.nix is an input of the sub-flake,
+`nixosModules.default` (plugins + microvm host) is restored, and the workstation
+imports it with `allowedTiers` gaining `"microvm"` and
+`custom.plugins.microvm.enable = true`.
+
+**No collision with `vm-manager/`.** microvm.nix's host module writes
+`users.users.microvm`, `systemd.targets.microvms`,
+`systemd.tmpfiles.settings."10-microvm"`, `boot.kernelModules += [ "tap"
+"vhost_net" ]`, a `security.pam.loginLimits` entry and `/var/lib/microvms`.
+vm-manager writes `custom.vm.{quickemu,dsp}`, `systemd.services.{quickemu-vm,
+dsp-jack-bridge,dsp-netjack-bridge}` and `users.users.{asher,dsp}`. Nothing
+overlaps; the two list-valued options merge. Both want `/dev/kvm`, which is fine.
+`microvm.autostart` is deliberately left empty — a plugin's guest is started by
+its own unit's dependency, so autostarting would give one guest two owners.
+
+**But tier 2 was never implemented, and the plan did not know that.** Found and
+written during this stage:
+
+- **The guest half did not exist.** Nothing in the tree bound an AF_VSOCK socket
+  or deserialised a `Req`. The host would boot a guest, wait five seconds for a
+  socket nobody was going to open, and fail — tier 2 was a proxy talking to
+  itself. `host/src/guest.rs` is the missing peer: it serves the postcard
+  protocol over vsock and loads the artifact through `NativePlugin`, the same
+  path tier 1 uses, so there is no second implementation of the C ABI.
+- **The host half's VM launch was fabricated.** It exec'd
+  `current/bin/microvm-run --vsock <path>` — an argument that script does not
+  accept — and bypassed microvm.nix's orchestration entirely. Then a second
+  attempt called `systemctl start microvm@<id>` from the plugin's unit, which
+  fails with "Access denied" because that unit is unprivileged. The answer is
+  neither: the per-instance drop-in declares
+  `Requires=`/`After=`/`PropagatesStopTo=microvm@<id>.service`, so systemd
+  starts the guest before ExecStart runs and takes it away when the plugin
+  stops. Depending on a unit needs no privilege; starting one does.
+- **Every guest got `vsock.cid = 3`**, which works for exactly one plugin. Now
+  assigned by position in the sorted plugin list.
+- **The declared-plugins path had never been wired to the runtime.** `plugind
+  run <id>` resolved ids against the registry only, so a declared plugin's unit
+  started, said "no such plugin", and died — for *every* tier, since stage 1.
+  Tier 2 is what forced it: a guest needs a closure, so building one is a
+  rebuild, so `declaredPlugins` is the only way a tier 2 plugin can exist. There
+  is now a read-only `/etc/oligarchy/plugins/declared.json` index, and
+  `declared::resolve` cross-checks the module's `tier`/`jit` against the
+  artifact's own `plugin.toml` — because the sandbox drop-in was generated from
+  the former before the latter was ever opened, and a disagreement means the
+  plugin runs confined as something it is not.
+- **The guest module did not match the stage 3 shim contract** (no store path, no
+  policy, and it would have recursed by honouring `tier = "microvm"` inside the
+  guest). Rewritten, with its own `guest-policy.json` permitting `native` and
+  carrying the host's `minTrust`, `forbiddenPaths` and ceilings.
+
+**`nix build .#plugins-tier2-runtime` does not pass yet.** It is exposed as a
+gate so the work is visible, not because it is green. Where it gets to:
+
+- the declarative half is verified — microvm.nix materialises the guest, and the
+  drop-in generated by the **Nix** mirror is correct (this is the first test to
+  exercise that mirror at all, and `MemoryDenyWriteExecute=yes` on the host side
+  is right: tier 2's host half is a vsock proxy that never JITs);
+- the lifecycle is verified — `Requires=` boots the guest, `PropagatesStopTo=`
+  stops it;
+- the guest boots to `Reached target Multi-User System` in ~16 s under nesting;
+- **but `oligarchy-plugin-guest.service` never appears inside the guest**, so the
+  vsock is never bound and the host times out. The unit is `wantedBy
+  multi-user.target` and that target is reached, so this is a guest-configuration
+  problem in `modules/guest.nix` — most likely `custom.pluginGuest.enable` not
+  taking effect through `microvm.vms.<name>.config`. Next step is to evaluate
+  that guest config directly rather than through a 15-minute VM cycle.
+
+Note the test uses `microvm.hypervisor = "qemu"` while the workstation ships
+`cloud-hypervisor`; nested vsock and store delivery are best-tested under qemu.
+That difference is the one thing the gate would not cover even once it passes.
 
 ### Kernel facts (verified, Framework 16 / `custom.kernel.variant = "zen"`)
 

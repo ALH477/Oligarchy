@@ -70,24 +70,19 @@ pub fn load(m: Manifest, ctx: Ctx<'_>) -> Result<Box<dyn Plugin>> {
         #[cfg(not(feature = "lua-tier"))]
         Tier::Lua => bail!("this plugind was built without the lua tier"),
         Tier::Microvm => {
-            // microvm.nix installs a per-VM runner at this path for both
-            // declarative and imperative VMs.
-            let runner = Path::new("/var/lib/microvms")
-                .join(&m.id)
-                .join("current/bin/microvm-run");
-            if !runner.exists() {
+            // microvm.nix materialises a declarative VM here, and it is the
+            // working directory the runner needs — its vsock path is relative.
+            let vm_dir = Path::new("/var/lib/microvms").join(&m.id);
+            if !vm_dir.join("current/bin/microvm-run").exists() {
                 bail!(
-                    "no microvm runner at {}. Add this plugin to \
-                     custom.plugins.declaredPlugins with tier = \"microvm\" and \
-                     rebuild; microvm.nix generates the guest.",
-                    runner.display()
+                    "no microvm at {}. Tier 2 cannot be installed imperatively: \
+                     the guest needs a closure, and building one is a rebuild. \
+                     Add this plugin to custom.plugins.declaredPlugins with \
+                     tier = \"microvm\" and rebuild.",
+                    vm_dir.display()
                 );
             }
-            Ok(Box::new(microvm::MicrovmPlugin::boot(
-                m,
-                &runner,
-                ctx.runtime_dir,
-            )?))
+            Ok(Box::new(microvm::MicrovmPlugin::boot(m, &vm_dir)?))
         }
     }
 }

@@ -12,27 +12,15 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # ── Tier 2 (microvm.nix) is NOT an input yet ──────────────────────────
-    #
-    # It is staged in deliberately, after tiers 0 and 1 are known good on real
-    # hardware. An input that is locked but never imported is not free: it
-    # enters flake.lock, gets fetched on every `nix flake check`, and reads to
-    # the next person like tier 2 is wired when it is not.
-    #
-    # To land tier 2, restore:
-    #
-    #   microvm = {
-    #     url = "github:microvm-nix/microvm.nix";
-    #     inputs.nixpkgs.follows = "nixpkgs";
-    #   };
-    #
-    # add `microvm` to the outputs argument list, and restore
-    # nixosModules.default / nixosModules.microvmGuest below. Nothing in
-    # modules/plugins.nix needs changing — see the two-condition gate there for
-    # why its microvm section already costs a host without this input nothing.
+    # Tier 2. A normal input rather than an optional one, because a conditional
+    # flake input is a lie you tell yourself at 3am.
+    microvm = {
+      url = "github:microvm-nix/microvm.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, rust-overlay, ... }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay, microvm, ... }:
     let
       # The module itself is system-independent; only packages need the
       # per-system dance.
@@ -50,15 +38,30 @@
       #   imports = [ inputs.oligarchy-plugins.nixosModules.plugins ];
       #   custom.plugins.enable = true;
       #
-      # There is deliberately no `nixosModules.default` while tier 2 is
-      # unstaged: `default` used to mean "plugins + the microvm.nix host
-      # module", and quietly redefining it to mean "plugins alone" would give a
-      # consumer who sets custom.plugins.microvm.enable a silently missing host
-      # module instead of an error. Name the module you want. See the microvm
-      # note in `inputs` above.
       nixosModules.plugins = { pkgs, ... }: {
         imports = [ ./modules/plugins.nix ];
         nixpkgs.overlays = [ overlay ];
+      };
+
+      # Same, plus microvm.nix's host module, so tier 2 works without the
+      # consumer having to know it exists.
+      #
+      # `plugins` remains the module to name when you do not want tier 2: the
+      # host module brings a `microvm@` template, a state directory under
+      # /var/lib/microvms and a set of `microvm.*` options, none of which a
+      # wasm-only or tier-1 host has any use for. custom.plugins asserts on the
+      # difference rather than silently doing nothing.
+      nixosModules.default = {
+        imports = [
+          self.nixosModules.plugins
+          microvm.nixosModules.host
+        ];
+      };
+
+      # The guest side of tier 2. Consumed by modules/plugins.nix through
+      # microvm.vms.<name>.config, not imported directly by a consumer.
+      nixosModules.microvmGuest = {
+        imports = [ microvm.nixosModules.microvm ./modules/guest.nix ];
       };
     }
     // flake-utils.lib.eachDefaultSystem (system:
@@ -212,6 +215,41 @@
             };
 
             tier1Etc = etcOf tier1Fixtures;
+
+            # ── Tier 2 fixture: the same probe, declared into a microVM ─────
+            #
+            # tier=microvm + jit=self + trust=untrusted is the exact case tier 2
+            # exists for, and the one manifest validation refuses anywhere else:
+            # a plugin that ships its own code generator and has no provenance.
+            # The guest kernel is the only honest place to run it.
+            wxVmPlugin =
+              let
+                manifest = nodePkgs.writeText "plugin.toml" ''
+                  id      = "wxvm"
+                  version = "0.0.1"
+                  tier    = "microvm"
+                  jit     = "self"
+                  trust   = "untrusted"
+                  entry   = "lib/libwxprobe.so"
+                  abi     = "oligarchy:plugin@0.1.0"
+
+                  [caps]
+                  fs_read_write = ["$STATE"]
+                  network       = false
+                '';
+              in
+              nodePkgs.runCommand "plugin-wxvm"
+                {
+                  nativeBuildInputs = [ nodePkgs.stdenv.cc ];
+                } ''
+                mkdir -p $out/lib
+                cc -shared -fPIC -O1 -Wall -Wextra -Werror \
+                   -I${./host/include} -DPLUGIN_ID='"wxvm"' \
+                   -o $out/lib/libwxprobe.so ${./tests/wx-probe.c}
+                cp ${manifest} $out/plugin.toml
+              '';
+
+
 
             # A throwaway signing keypair, generated once with
             #   nix-store --generate-binary-cache-key oligarchy-plugins-test-1 …
@@ -379,16 +417,30 @@
                 # ── jit=none: the filter is installed, so the plugin's own
                 #    mprotect(PROT_EXEC) must fail — and so must memfd_create,
                 #    which is the half MemoryDenyWriteExecute leaves open.
+                # All six routes, named individually. The first version of this
+                # assertion checked only the two the filter happened to cover,
+                # and passed while three others were wide open — an anonymous
+                # PROT_EXEC mapping, a plain-file dual mapping, and the two
+                # syscalls that write a page regardless of its protection.
                 j = probe("wxnone")
-                assert "WXPROBE exec=denied memfd=denied" in j, j
+                assert (
+                    "WXPROBE exec=denied memfd=denied anon=denied "
+                    "dualmap=denied ptrace=denied uffd=denied"
+                ) in j, j
                 # ...and the unit says so where an auditor would look.
                 cat = machine.succeed("systemctl cat oligarchy-plugin@wxnone.service")
                 assert "MemoryDenyWriteExecute=yes" in cat, cat
 
                 # ── jit=self: the concession. Both must be allowed, or tier 1
                 #    cannot serve the LuaJIT/Faust case it exists for.
+                # jit=self: no filter, so everything is allowed. dualmap is the
+                # exception — NoExecPaths is keyed off wx_enforced, so it is
+                # absent here too and the file mapping succeeds.
                 j = probe("wxself")
-                assert "WXPROBE exec=allowed memfd=allowed" in j, j
+                assert (
+                    "WXPROBE exec=allowed memfd=allowed anon=allowed "
+                    "dualmap=allowed ptrace=allowed uffd=allowed"
+                ) in j, j
                 cat = machine.succeed("systemctl cat oligarchy-plugin@wxself.service")
                 assert "MemoryDenyWriteExecute=no" in cat, cat
                 assert "jit=self" in cat, cat
@@ -402,6 +454,93 @@
                 # unit is still hardened after the jit=self one was granted.
                 cat = machine.succeed("systemctl cat oligarchy-plugin@wxnone.service")
                 assert "MemoryDenyWriteExecute=yes" in cat, cat
+              '';
+            };
+
+            # Tier 2 end to end, on a booted kernel, with a second kernel inside
+            # it. Needs nested virtualisation on the builder.
+            #
+            # The claim under test is the one that justifies the tier existing at
+            # all: an untrusted, self-JIT plugin — which manifest validation
+            # refuses to load anywhere else — runs, gets the writable-executable
+            # memory it needs, and gets it inside a guest kernel rather than on
+            # the host.
+            tier2-runtime = nodePkgs.testers.runNixOSTest {
+              name = "oligarchy-plugins-tier2";
+              nodes.machine = { ... }: {
+                imports = [
+                  ./modules/plugins.nix
+                  microvm.nixosModules.host
+                ];
+                custom.plugins = {
+                  enable = true;
+                  allowedTiers = [ "wasm" "native" "lua" "microvm" ];
+                  allowSelfJit = true;
+                  requireSignature = false;
+                  minTrust = "untrusted";
+                  microvm.enable = true;
+                  # qemu rather than cloud-hypervisor: this guest is itself
+                  # inside a VM, and qemu's vsock and virtiofs paths are the
+                  # best-tested under nesting. The workstation ships
+                  # cloud-hypervisor; that difference is the one thing this test
+                  # does not cover.
+                  microvm.hypervisor = "qemu";
+                  microvm.mem = 512;
+                  declaredPlugins.wxvm = {
+                    artifact = wxVmPlugin;
+                    tier = "microvm";
+                    jit = "self";
+                    trust = "untrusted";
+                    # The host-side unit is started by `plugind enable`, not at
+                    # boot, so the test controls the ordering.
+                    autoStart = false;
+                  };
+                };
+                virtualisation = {
+                  memorySize = 4096;
+                  cores = 2;
+                  # Expose the host's KVM to this VM so the guest inside it can
+                  # use hardware virtualisation rather than TCG.
+                  qemu.options = [ "-cpu host" ];
+                };
+              };
+              testScript = ''
+                machine.wait_for_unit("oligarchy-plugind.service")
+
+                # Nested KVM has to be there, or the guest falls back to
+                # emulation and the fifteen-second boot budget is fiction.
+                machine.succeed("test -e /dev/kvm")
+
+                # The declarative half: microvm.nix materialised a guest for the
+                # declared plugin, and the drop-in generated by the NIX mirror
+                # (not the Rust one — this is the first test to exercise that
+                # path at all) says what it should.
+                machine.succeed("test -e /var/lib/microvms/wxvm/current/bin/microvm-run")
+                cat = machine.succeed("systemctl cat oligarchy-plugin@wxvm.service")
+                # tier=microvm is W^X-enforced on the HOST side: the host half is
+                # a vsock proxy that never JITs. The concession is inside.
+                assert "MemoryDenyWriteExecute=yes" in cat, cat
+
+                # Bring it up. This starts microvm@wxvm.service, waits for the
+                # guest to bind vsock, does the CONNECT handshake and the ABI
+                # Hello, then calls init() over the wire.
+                # No `plugind install`: a declared plugin is not in the
+                # registry and never will be. It is resolved through the
+                # declared index in /etc, which is the whole point of that file.
+                machine.succeed("systemctl start oligarchy-plugin@wxvm.service")
+                machine.wait_for_unit("microvm@wxvm.service")
+                machine.wait_for_unit("oligarchy-plugin@wxvm.service")
+
+                host = machine.succeed(
+                    "journalctl -u oligarchy-plugin@wxvm.service --no-pager"
+                )
+                assert "microvm up" in host, host
+
+                # And the payoff, from inside the guest: a self-JIT plugin gets
+                # the executable memory it asked for, because the boundary here
+                # is a kernel and not a filter.
+                guest = machine.succeed("journalctl -u microvm@wxvm.service --no-pager")
+                assert "WXPROBE exec=allowed memfd=allowed" in guest, guest
               '';
             };
 

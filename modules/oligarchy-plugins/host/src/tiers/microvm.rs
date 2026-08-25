@@ -24,8 +24,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::path::Path;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::manifest::Manifest;
@@ -34,7 +34,7 @@ use crate::plugin::{AudioConfig, ParamInfo, Plugin, Processor};
 /// Wire protocol. Deliberately tiny and versioned; anything that needs to
 /// grow becomes a new variant, never a changed one.
 #[derive(Debug, Serialize, Deserialize)]
-enum Req {
+pub enum Req {
     Hello { abi: String },
     Init,
     CreateProcessor { sample_rate: u32, block_size: u32, channels: u8 },
@@ -50,7 +50,7 @@ enum Req {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-enum Resp {
+pub enum Resp {
     Hello { abi: String },
     Ok,
     Handle(u32),
@@ -64,9 +64,9 @@ enum Resp {
 
 pub struct MicrovmPlugin {
     manifest: Manifest,
-    vm: Child,
     conn: Conn,
-    runtime_dir: PathBuf,
+    /// Unit we started and are therefore responsible for stopping.
+    unit: String,
 }
 
 struct Conn {
@@ -99,25 +99,47 @@ impl MicrovmPlugin {
     /// Boot the VM and handshake. `runner` is the wrapper script that
     /// microvm.nix generated for this plugin's declarative microVM, or the
     /// imperative `microvm -r <name>` path.
-    pub fn boot(m: Manifest, runner: &Path, runtime_dir: &Path) -> Result<Self> {
-        let sock = runtime_dir.join(format!("{}.vsock", m.id));
-        let _ = std::fs::remove_file(&sock);
-
+    /// Bring up the guest and connect to the plugin inside it.
+    ///
+    /// systemd owns the VM, and the dependency is declared rather than issued.
+    ///
+    /// Two wrong turns preceded this. The first spawned
+    /// `current/bin/microvm-run` directly with a fabricated `--vsock` argument
+    /// that the script does not accept, and in doing so skipped microvm.nix's
+    /// whole orchestration: `virtiofsd-run` (without which the /nix/store share
+    /// never mounts and the guest cannot boot), `tap-up`, `pci-setup`, and the
+    /// working directory the runner needs because its vsock path is *relative*.
+    ///
+    /// The second called `systemctl start microvm@<id>` from here — which fails
+    /// with "Access denied", because this process is the plugin's unit and that
+    /// unit runs as an unprivileged user. Asking systemd to start something is a
+    /// privileged operation; *depending* on it is not. So the per-instance
+    /// drop-in carries `Requires=`/`After=microvm@<id>.service` and a matching
+    /// `PartOf=` on the VM, and by the time this runs the guest is already
+    /// booting. All this has to do is wait for it.
+    pub fn boot(m: Manifest, vm_dir: &Path) -> Result<Self> {
+        let unit = format!("microvm@{}.service", m.id);
+        let sock = vm_dir.join("notify.vsock");
         let t0 = Instant::now();
-        let vm = Command::new(runner)
-            .arg("--vsock")
-            .arg(&sock)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .with_context(|| format!("spawning microvm runner {}", runner.display()))?;
 
-        // Firecracker's own number is <=125ms to init; the guest then has to
-        // start plugind and open the socket. 5s is generous and still catches
-        // a VM that failed to boot rather than hanging the whole daemon.
-        let stream = wait_for_socket(&sock, Duration::from_secs(5))
-            .context("guest never opened the vsock; check `journalctl -u microvm@`")?;
+        // Firecracker's own <=125 ms to init is a bare-metal number for a
+        // minimal guest, and it is not the budget to size this on. A NixOS
+        // guest still has to run its own systemd through local-fs and
+        // sysinit before plugind binds the vsock, and under nesting — a
+        // microVM inside a test VM, which is how the gate runs — that is an
+        // order of magnitude slower again. 15 s looked generous and cut the
+        // guest off mid-boot while it was still mounting filesystems.
+        //
+        // Two minutes, then. Long enough that a slow first boot is not a
+        // failure, short enough that a guest which never comes up is still a
+        // failed unit rather than a hung supervisor — and `PropagatesStopTo`
+        // means the VM goes away with it either way.
+        let stream = wait_for_socket(&sock, Duration::from_secs(120)).with_context(|| {
+            format!(
+                "guest never opened {}; check `journalctl -u {unit}`",
+                sock.display()
+            )
+        })?;
         vsock_connect(&stream, GUEST_PORT).context("vsock CONNECT handshake")?;
 
         tracing::info!(
@@ -144,15 +166,16 @@ impl MicrovmPlugin {
 
         Ok(Self {
             manifest: m,
-            vm,
             conn,
-            runtime_dir: runtime_dir.to_path_buf(),
+            unit,
         })
     }
 }
 
-/// Port the guest's plugind listens on inside the VM.
-const GUEST_PORT: u32 = 5005;
+/// Port the guest's plugind listens on inside the VM. Mirrored by
+/// `guest::GUEST_PORT`, which static-asserts they agree — a mismatch here is a
+/// five-second timeout with no explanation.
+pub const GUEST_PORT: u32 = 5005;
 
 /// Firecracker and cloud-hypervisor both multiplex guest vsock ports over one
 /// host unix socket, and expect a textual handshake before the stream carries
@@ -250,21 +273,22 @@ impl Plugin for MicrovmPlugin {
     }
 
     fn shutdown(&mut self) {
+        // Ask the plugin to stop. Stopping the VM is systemd's business —
+        // `PartOf=` ties the guest to this unit — and unlike tier 1 we do not
+        // have to be gentle past that point: nothing in the guest is ours and
+        // nothing in it persists.
         let _ = self.conn.call(&Req::Shutdown);
-        // Give the guest a moment to halt cleanly, then take the hammer.
-        // Unlike Tier 1, we do not have to be gentle: nothing in the VM is
-        // ours and nothing in it persists.
-        std::thread::sleep(Duration::from_millis(200));
-        let _ = self.vm.kill();
-        let _ = self.vm.wait();
-        let _ = std::fs::remove_file(self.runtime_dir.join(format!("{}.vsock", self.manifest.id)));
     }
 }
 
 impl Drop for MicrovmPlugin {
     fn drop(&mut self) {
-        let _ = self.vm.kill();
-        let _ = self.vm.wait();
+        // Nothing to do. The VM's lifetime is systemd's: `PartOf=` on
+        // microvm@<id> means stopping this plugin's unit stops the guest, which
+        // is both more robust than doing it here (it survives a SIGKILL of this
+        // process) and the only option available, since this unit is
+        // unprivileged and cannot stop anything.
+        tracing::debug!(plugin = %self.manifest.id, unit = %self.unit, "releasing guest");
     }
 }
 

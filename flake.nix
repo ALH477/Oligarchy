@@ -362,7 +362,11 @@
         # here: the runtime is present, the registry is shut.
         #
         # Staging plan, per-stage gates and known gaps: docs/plugins-roadmap.md
-        oligarchy-plugins.nixosModules.plugins
+        # nixosModules.default rather than .plugins: it adds microvm.nix's host
+        # module, which tier 2 needs and which the other three hosts have no use
+        # for. custom.plugins asserts on the difference rather than silently
+        # doing nothing if you get it wrong.
+        oligarchy-plugins.nixosModules.default
         ({ config, ... }: {
           custom.plugins = {
             enable = true;
@@ -373,7 +377,7 @@
             # is measurable. This is the WORKSTATION only — a stage rig or a
             # shipped instrument keeps [ "wasm" ] and allowSelfJit = false,
             # because there it is running plugins somebody else wrote.
-            allowedTiers = [ "wasm" "native" "lua" ];
+            allowedTiers = [ "wasm" "native" "lua" "microvm" ];
 
             # The concession, and it is a real one: a plugin declaring
             # jit = "self" runs with MemoryDenyWriteExecute=no. It emits a build
@@ -394,6 +398,19 @@
             # than a boundary — see the option docs — but combined with
             # requireSignature it means an author put their name to it.
             minTrust = "trusted";
+
+            # Stage 4: tier 2. A microVM guest is the only honest place for a
+            # plugin that is BOTH untrusted and ships its own code generator —
+            # manifest validation refuses that combination outside tier 2
+            # precisely because no host-side mitigation of W+X memory you did
+            # not write is truthful.
+            #
+            # Note the asymmetry with the other tiers: a tier 2 plugin cannot be
+            # installed imperatively. The guest needs a closure and building one
+            # is a rebuild, so tier 2 plugins arrive through declaredPlugins.
+            # That is a real limitation of the tier, not an oversight.
+            microvm.enable = true;
+            microvm.hypervisor = "cloud-hypervisor";
 
             requireSignature = true;
 
@@ -600,6 +617,11 @@
         plugins-policy-refusal = oligarchy-plugins.checks.${system}.policy-refusal;
         plugins-signed-install = oligarchy-plugins.checks.${system}.signed-install;
         plugins-tier1-runtime = oligarchy-plugins.checks.${system}.tier1-runtime;
+        # Needs nested virtualisation on the builder: a microVM inside the test
+        # VM. `cat /sys/module/kvm_amd/parameters/nested` must be 1 (or the Intel
+        # equivalent), otherwise the inner guest falls back to emulation and the
+        # boot budget stops meaning anything.
+        plugins-tier2-runtime = oligarchy-plugins.checks.${system}.tier2-runtime;
 
         # ════════════════════════════════════════════════════════════════════
         # Malware Shield build gate — scans the FULL system closure with pinned,

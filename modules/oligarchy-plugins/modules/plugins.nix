@@ -4,7 +4,7 @@ let
   cfg = config.custom.plugins;
 
   inherit (lib) mkOption mkEnableOption mkIf mkMerge types optional optionals
-    optionalString concatStringsSep mapAttrsToList filterAttrs
+    optionalString optionalAttrs concatStringsSep mapAttrsToList filterAttrs
     literalExpression;
 
   # ── the shape of a declaratively-pinned plugin ──────────────────────────
@@ -184,6 +184,26 @@ let
     allow_network = cfg.allowNetwork;
   });
 
+  # The guest's policy.json. The host's answer, with exactly one thing changed:
+  # `native` is permitted, because that is how the artifact is loaded inside the
+  # VM. Everything else — minTrust, forbiddenPaths, the ceilings — is carried
+  # over, so a plugin the host would have refused for any reason other than its
+  # tier is refused in the guest too. allow_self_jit is true because a guest is
+  # the place W^X is *supposed* to be conceded; that is the tier's entire point.
+  guestPolicyFile = pkgs.writeText "oligarchy-plugin-guest-policy.json"
+    (builtins.toJSON {
+      allow_self_jit = true;
+      allow_microvm = false;
+      min_trust = cfg.minTrust;
+      allowed_tiers = [ "native" ];
+      require_signature = false;
+      trusted_public_keys = cfg.trustedPublicKeys;
+      max_memory = cfg.limits.memoryMax;
+      max_cpu_quota = cfg.limits.cpuQuota;
+      forbidden_paths = cfg.forbiddenPaths;
+      allow_network = cfg.allowNetwork;
+    });
+
   # The manifest a declared plugin gets, so declarative and imperative
   # plugins are described by exactly the same schema and go through exactly
   # the same authorize() path. No second code path, no second set of bugs.
@@ -226,6 +246,7 @@ let
       # The three tiers do not want the same directives, and "the bwrap tiers"
       # is the distinction that keeps coming up.
       bwrapTier = usesBwrap p.tier;
+      vmUnit = "microvm@${name}.service";
     in
     {
       "oligarchy-plugin@${name}.service" = {
@@ -240,8 +261,41 @@ let
           # each reached the Rust side alone, which nothing would have caught
           # because checks.wx-enforcement only asserts the MDWE line and no
           # declared plugin exists anywhere in this repo to exercise the rest.
+          ${optionalString (p.tier == "microvm") ''
+            [Unit]
+            # Declared, not issued. The plugin's unit runs as an unprivileged
+            # user, so `systemctl start microvm@…` from inside it fails with
+            # "Access denied" — but *depending* on a unit needs no privilege at
+            # all, and systemd starts the guest before this unit's ExecStart
+            # runs. By the time MicrovmPlugin::boot looks for the vsock, the
+            # guest is already booting.
+            #
+            # PropagatesStopTo is the stop half, and it goes here rather than as
+            # a `PartOf=` drop-in on the VM because microvm.nix already defines
+            # that instance unit — a second definition collides. Same effect,
+            # declared from the side that owns the relationship.
+            Requires=${vmUnit}
+            After=${vmUnit}
+            PropagatesStopTo=${vmUnit}
+          ''}
           [Service]
           MemoryDenyWriteExecute=${if wxEnforced p then "yes" else "no"}
+          ${optionalString (wxEnforced p) ''
+            # Every writable path noexec, the store the only exception. Without
+            # this, jit=none is defeated by the oldest dual-mapping trick with a
+            # plain file instead of a memfd: two mappings of one fd in $STATE,
+            # one PROT_WRITE and one PROT_EXEC, neither ever W+X so no filter
+            # fires. seccomp.rs asserted this was required and nothing
+            # implemented it. Mount flags are locked for an unprivileged bind,
+            # so bwrap cannot clear them when it re-binds $STATE.
+            #
+            # ${cfg.stateDir} is named explicitly as well as `/`, because
+            # StateDirectory= sets up its own bind mount and with only `/` listed
+            # the state tree came back executable — the six-route probe caught
+            # exactly that.
+            NoExecPaths=/ ${cfg.stateDir}
+            ExecPaths=/nix/store
+          ''}
           ${optionalString (p.tier == "wasm") ''
             # tier=wasm: MDWE is off because THIS process runs Cranelift. The
             # guest is confined by wasmtime, not by seccomp; setting MDWE here
@@ -542,400 +596,453 @@ in
   # `config` from a value inside `config` is an infinite recursion.
   # `mkIf cfg.microvm.enable` then gates whether this host wants tier 2.
   config = mkIf cfg.enable
-    (mkMerge ([
-      {
-        # ── assertions: catch at build time what would be a runtime refusal ──
-        assertions = [
-          {
-            assertion = cfg.allowSelfJit -> (cfg.microvm.enable
-              || !(lib.any (p: p.jit == "self" && p.trust == "untrusted")
-              (lib.attrValues cfg.declaredPlugins)));
-            message = ''
-              custom.plugins: an untrusted plugin declares jit = "self" but
-              microvm is not enabled. Granting writable-executable memory to
-              unreviewed code on the host is the one thing this design refuses
-              to do. Either set custom.plugins.microvm.enable = true, or raise
-              the plugin's trust level after actually reviewing it.
-            '';
-          }
-          {
-            assertion = lib.all (p: builtins.elem p.tier cfg.allowedTiers)
-              (lib.attrValues cfg.declaredPlugins);
-            message = ''
-              custom.plugins: a declared plugin uses a tier not in
-              allowedTiers (${concatStringsSep ", " cfg.allowedTiers}).
-            '';
-          }
-          {
-            assertion = lib.all (p: p.tier != "microvm" || cfg.microvm.enable)
-              (lib.attrValues cfg.declaredPlugins);
-            message = ''
-              custom.plugins: a declared plugin uses tier = "microvm" but
-              custom.plugins.microvm.enable is false, so no guest would be
-              generated and the plugin would fail to load at runtime.
-            '';
-          }
-          {
-            assertion = !(lib.any (p: p.tier == "wasm" && p.jit == "self")
-              (lib.attrValues cfg.declaredPlugins));
-            message = ''
-              custom.plugins: tier = "wasm" with jit = "self" is incoherent.
-              A Wasm guest has no way to obtain executable pages; Cranelift in
-              the host does the compiling. Use jit = "host", or move the plugin
-              to tier = "native".
-            '';
-          }
-          {
-            assertion = anyBwrapTier
-              -> (config.security.unprivilegedUsernsClone or true);
-            message = ''
-              custom.plugins: tiers native/lua need bubblewrap, which needs
-              unprivileged user namespaces since its setuid mode was removed.
-              Set security.unprivilegedUsernsClone = true, or restrict
-              allowedTiers to [ "wasm" ].
-
-              Note that option only writes kernel.unprivileged_userns_clone,
-              which exists solely on kernels carrying the Debian patch (zen and
-              xanmod do). Elsewhere the governing knob is
-              user.max_user_namespaces; `plugind doctor` reports both.
-            '';
-          }
-          {
-            assertion = cfg.microvm.enable -> options ? microvm;
-            message = ''
-              custom.plugins.microvm.enable is true but the microvm.nix host
-              module is not imported, so no guest could ever be built. Add
-              microvm.nix as a flake input and import its nixosModules.host
-              alongside oligarchy-plugins.nixosModules.plugins — see the tier 2
-              note in modules/oligarchy-plugins/flake.nix.
-            '';
-          }
-          {
-            assertion = cfg.requireSignature
-              -> (cfg.substituters == [ ] || cfg.trustedPublicKeys != [ ]);
-            message = ''
-              custom.plugins: substituters are configured and requireSignature is
-              true, but trustedPublicKeys is empty — so the cache can serve paths
-              that nothing on this host can verify. Add the cache's public key.
-            '';
-          }
-        ];
-
-        warnings =
-          optional (cfg.allowSelfJit) ''
-            custom.plugins.allowSelfJit is enabled, so a plugin declaring
-            jit = "self" will run without MemoryDenyWriteExecute. Note that this
-            concedes the category rather than merely relaxing a check: MDWE is
-            bypassable via memfd_create plus two mappings of the same fd, which
-            is exactly what a JIT does. Audit with `plugind lint`.
-          ''
-          ++ optional
-            (lib.any (u: u != "root" && u != "@wheel")
-              (config.nix.settings.trusted-users or [ ]))
-            ''
-              custom.plugins: nix.settings.trusted-users lists someone other than
-              root. Per the Nix manual that is equivalent to giving those
-              accounts root, so signature checking here is decorative for them —
-              they can add their own substituters and keys and rebuild nothing.
-              Use custom.plugins.installers instead: it grants only the ability
-              to ask the supervisor for a signature-checked install.
-            ''
-          ++ optional (cfg.minTrust == "untrusted" && cfg.allowedTiers != [ "wasm" ])
-            ''
-              custom.plugins: minTrust = "untrusted" together with a non-wasm
-              tier means unreviewed native code can load. That is a defensible
-              choice on a workstation and a bad one on a stage rig.
-            '';
-
-        environment.systemPackages = [ cfg.package ];
-
-        users.users.${cfg.user} = {
-          isSystemUser = true;
-          group = cfg.group;
-          home = cfg.stateDir;
-          description = "Oligarchy plugin runtime";
-        };
-
-        users.groups.${cfg.group} = { };
-        # The install group exists whether or not anyone is in it: plugind
-        # chowns the control socket to it at startup, so it has to resolve.
-        #
-        # `members` rather than writing extraGroups into each installer's
-        # users.users entry: this module has no business defining accounts it
-        # does not own, and a partial submodule per installer is a merge-conflict
-        # surface with wherever those accounts are really declared.
-        users.groups.${cfg.installGroup}.members = cfg.installers;
-
-        environment.etc."oligarchy/plugins/policy.json".source = policyFile;
-
-        # One sandbox drop-in per declared plugin. See mkDropin.
-        systemd.units = lib.foldl' (acc: x: acc // x) { }
-          (mapAttrsToList mkDropin cfg.declaredPlugins);
-
-        systemd.tmpfiles.rules = [
-          "d ${cfg.stateDir}            0750 ${cfg.user} ${cfg.group} -"
-          # root-owned, group-readable. The registry is the INPUT to
-          # write_dropin(), which root interpolates into a systemd drop-in — so
-          # a plugin user who could write it could inject `User=root` into its
-          # own unit and have the next reconcile apply it. Instances still need
-          # to read it (`plugind run %i`), hence 0750 root:${cfg.group}.
-          "d ${cfg.stateDir}/registry   0750 root ${cfg.group} -"
-          "d ${cfg.stateDir}/state      0750 ${cfg.user} ${cfg.group} -"
-          "d ${cfg.stateDir}/config     0750 ${cfg.user} ${cfg.group} -"
-          "d ${cfg.stateDir}/gcroots    0750 ${cfg.user} ${cfg.group} -"
-        ] ++ lib.concatLists (mapAttrsToList
-          (name: p: [
-            # The directory has to exist before the symlink rule runs; tmpfiles
-            # applies rules in order within a file but will not create parents.
-            "d ${cfg.stateDir}/state/${name}   0750 ${cfg.user} ${cfg.group} -"
-            "d ${cfg.stateDir}/config/${name}  0750 ${cfg.user} ${cfg.group} -"
-            "L+ ${cfg.stateDir}/config/${name}/manifest.toml - - - - ${mkManifest name p}"
-          ])
-          cfg.declaredPlugins);
-
-        # Trusted caches, NOT trusted users. See the substituters option docs.
-        #
-        # Both substituter lists, and they are not redundant. `substituters` is
-        # what Nix consults by default, so without it `plugind install` would
-        # never fetch from the plugin cache at all. `trusted-substituters` is
-        # the separate list an *untrusted* user is permitted to select
-        # explicitly, which keeps a hand-run `nix build --substituters ...`
-        # working for an installer. Neither grants anything by itself: a path is
-        # accepted only if signed by a key in trusted-public-keys.
-        #
-        # These are definitions, not defaults, so they merge with nixpkgs' own
-        # (cache.nixos.org and its key) rather than replacing them.
-        nix.settings = {
-          substituters = cfg.substituters;
-          trusted-substituters = cfg.substituters;
-          trusted-public-keys = cfg.trustedPublicKeys;
-        };
-
-        # ── the supervisor ──────────────────────────────────────────────────
-        systemd.services.oligarchy-plugind = {
-          description = "Oligarchy plugin supervisor";
-          wantedBy = [ "multi-user.target" ];
-          after = [ "network.target" "nix-daemon.service" ];
-          path = [ pkgs.nix pkgs.systemd ]
-            ++ optional
-            anyBwrapTier
-            pkgs.bubblewrap;
-
-          serviceConfig = {
-            Type = "notify";
-            ExecStart = "${cfg.package}/bin/plugind --control-group ${cfg.installGroup} daemon";
-            ExecReload = "${cfg.package}/bin/plugind reconcile";
-
-            # Deliberately root, and deliberately narrow about why. The
-            # supervisor's privileged job is precisely two things: write the
-            # per-instance sandbox drop-in into /run/systemd/system and reload
-            # the manager. Neither is available to an unprivileged user, and
-            # reconcile() does both on every boot — regenerating the drop-ins
-            # from the registry is what makes a W^X grant unable to outlive the
-            # decision to make it. Group is ${cfg.group} so the plugin instances,
-            # which are NOT root, can reach the runtime directory.
-            #
-            # Two things follow from that being the *whole* list. The plugins
-            # themselves run as ${cfg.user} under the oligarchy-plugin@ template
-            # below, so nothing plugin-supplied executes in this unit. And the
-            # install path — `nix build` of a caller-supplied installable, plus
-            # `nix store verify` and the registry write — deliberately does NOT
-            # run with this unit's privilege: plugind drops those subprocesses
-            # to the state directory's owner, because evaluating an
-            # attacker-chosen flake as root would be root code execution however
-            # narrow the request format is. See nix_cmd() in
-            # host/src/registry.rs.
-            Group = cfg.group;
-            Restart = "on-failure";
-            RestartSec = 2;
-
-            # The supervisor's OWN runtime directory, not the one the plugin
-            # instances share. systemd chowns a RuntimeDirectory to the unit's
-            # User and deletes it when the unit stops, so a socket living in the
-            # instances' directory would (a) be unlinked whenever any plugin was
-            # disabled — letting any installer break the install path with one
-            # legitimate request — and (b) end up owned by the unprivileged
-            # plugin user, who could then replace it with their own listener.
-            #
-            # 0755 so a member of installGroup, deliberately not in
-            # ${cfg.group}, can traverse to the socket. The directory mode is
-            # not the boundary; the socket's own 0660 and its group are, and
-            # plugind sets both at bind time.
-            RuntimeDirectory = "oligarchy/plugind";
-            RuntimeDirectoryMode = "0755";
-
-            # The supervisor is reachable from an unprivileged socket, so it
-            # gets the bounds a network-facing service would. Without them a
-            # group member can spend the machine on concurrent `nix build`s.
-            MemoryMax = "2G";
-            TasksMax = 128;
-            # Files land 0640 — registry.json stays readable by ${cfg.group},
-            # which the instances need — and the control socket's mode before
-            # plugind chmods it is 0750, so there is no window in which anyone
-            # else could connect.
-            UMask = "0027";
-
-            NoNewPrivileges = true;
-            ProtectSystem = "strict";
-            # ProtectSystem=strict makes the whole hierarchy read-only, /run
-            # included, so the two writable paths have to be named. This list is
-            # the supervisor's entire write authority over the system; keep it
-            # that short. StateDirectory is deliberately not used here: tmpfiles
-            # owns the state layout below and creates it as ${cfg.user}, which
-            # systemd would chown back to root.
-            ReadWritePaths = [ cfg.stateDir "/run/systemd/system" ];
-            ProtectHome = true;
-            ProtectKernelTunables = true;
-            ProtectKernelModules = true;
-            ProtectControlGroups = true;
-            RestrictSUIDSGID = true;
-            RestrictRealtime = false; # the audio graph needs SCHED_FIFO
-            LockPersonality = true;
-            # The supervisor itself never JITs. Its children may; that is
-            # decided per-instance in the drop-ins.
-            MemoryDenyWriteExecute = true;
-            SystemCallArchitectures = "native";
-          };
-        };
-
-        # ── the per-plugin template ─────────────────────────────────────────
-        #
-        # Everything common lives here so there is one place to audit. The only
-        # things that vary per instance are in the drop-in: MemoryDenyWriteExecute,
-        # the cgroup caps, the device allowlist, and PrivateNetwork.
-        systemd.services."oligarchy-plugin@" = {
-          description = "Oligarchy plugin %i";
-          after = [ "oligarchy-plugind.service" ];
-          bindsTo = [ "oligarchy-plugind.service" ];
-
-          # A plugin that crashloops is a plugin that gets to stop.
-          #
-          # These live in [Unit], not [Service]. In serviceConfig they produced
-          # "Unknown key 'StartLimitIntervalSec' in section [Service], ignoring"
-          # on every start — systemd said so out loud and the rate limit simply
-          # did not exist.
-          startLimitBurst = 3;
-          startLimitIntervalSec = 60;
-
-          # Same gate as the supervisor's path above: an unconditional
-          # bubblewrap here would put it and its closure on a wasm-only host,
-          # which is exactly what deriving `package` from allowedTiers exists
-          # to avoid.
-          path = optionals
-            anyBwrapTier [ pkgs.bubblewrap ];
-
-          serviceConfig = {
-            Type = "notify";
-            # Explicit because the bwrap tiers need NotifyAccess=all (see the
-            # drop-in generator), which lets any process in the unit's cgroup —
-            # i.e. the plugin — speak the notify protocol. Most of that protocol
-            # is self-harm at worst: READY and STATUS are cosmetic, MAINPID is
-            # validated against the unit's own cgroup, and there is no watchdog.
-            # FDSTORE is the exception worth pinning, because "systemd holds
-            # file descriptors this plugin handed it across a restart" is a
-            # different shape of thing entirely. The default is already 0;
-            # saying so keeps it 0 when someone later adds a fd store for an
-            # unrelated reason.
-            FileDescriptorStoreMax = 0;
-            ExecStart = "${cfg.package}/bin/plugind run %i";
-            User = cfg.user;
-            Group = cfg.group;
-            Restart = "on-failure";
-            RestartSec = 5;
-
-            StateDirectory = "oligarchy/plugins";
-            # Match the tmpfiles rules below; systemd's default is 0755, which
-            # would widen the state directory on first start of any instance.
-            StateDirectoryMode = "0750";
-            RuntimeDirectory = "oligarchy/plugins";
-
-            NoNewPrivileges = true;
-            ProtectSystem = "strict";
-            ProtectHome = true;
-            ProtectKernelTunables = true;
-            ProtectKernelModules = true;
-            ProtectClock = true;
-            RestrictSUIDSGID = true;
-            # bwrap does NOT need "userns and nothing else", which is what this
-            # used to say and what broke tier 1 outright: it creates the user
-            # namespace and the mount, pid, ipc, uts, cgroup and net namespaces
-            # in ONE clone() call, so denying any of them fails the whole call —
-            # and bwrap then reports the badly misleading "no permissions to
-            # creating new namespace ... enable kernel.unprivileged_userns_clone",
-            # which sends you after a sysctl that was never the problem.
-            #
-            # Listing them is still better than dropping the directive: `time`
-            # stays denied, and the list documents exactly what the sandbox asks
-            # the kernel for. The plugin gains nothing from it either way — it
-            # runs inside those namespaces with every capability dropped.
-            RestrictNamespaces = "user mnt pid ipc uts cgroup net";
-            LockPersonality = true;
-            SystemCallArchitectures = "native";
-            UMask = "0077";
-            TasksMax = 64;
-            IOWeight = 50;
-
-            # NOTE: MemoryDenyWriteExecute is deliberately absent here. Setting
-            # it in the template would apply it to every instance including
-            # jit=self ones, and a template cannot express the exception. It is
-            # set per-instance by the drop-in — at build time for declared
-            # plugins, and by plugind into /run for imperative ones.
-          };
-        };
-
-        systemd.targets.oligarchy-plugins = {
-          description = "Oligarchy plugins";
-          wantedBy = [ "multi-user.target" ];
-          wants = mapAttrsToList (name: _: "oligarchy-plugin@${name}.service")
-            enabledPlugins;
-        };
-      }
-
-      (mkIf anyBwrapTier
+    (mkMerge
+      ([
         {
-          # bubblewrap dropped setuid mode, so the namespaces have to come from
-          # somewhere. This is the price of tier 1.
-          security.unprivilegedUsernsClone = lib.mkDefault true;
-          environment.systemPackages = [ pkgs.bubblewrap ];
-        })
+          # ── assertions: catch at build time what would be a runtime refusal ──
+          assertions = [
+            {
+              assertion = cfg.allowSelfJit -> (cfg.microvm.enable
+                || !(lib.any (p: p.jit == "self" && p.trust == "untrusted")
+                (lib.attrValues cfg.declaredPlugins)));
+              message = ''
+                custom.plugins: an untrusted plugin declares jit = "self" but
+                microvm is not enabled. Granting writable-executable memory to
+                unreviewed code on the host is the one thing this design refuses
+                to do. Either set custom.plugins.microvm.enable = true, or raise
+                the plugin's trust level after actually reviewing it.
+              '';
+            }
+            {
+              assertion = lib.all (p: builtins.elem p.tier cfg.allowedTiers)
+                (lib.attrValues cfg.declaredPlugins);
+              message = ''
+                custom.plugins: a declared plugin uses a tier not in
+                allowedTiers (${concatStringsSep ", " cfg.allowedTiers}).
+              '';
+            }
+            {
+              assertion = lib.all (p: p.tier != "microvm" || cfg.microvm.enable)
+                (lib.attrValues cfg.declaredPlugins);
+              message = ''
+                custom.plugins: a declared plugin uses tier = "microvm" but
+                custom.plugins.microvm.enable is false, so no guest would be
+                generated and the plugin would fail to load at runtime.
+              '';
+            }
+            {
+              assertion = !(lib.any (p: p.tier == "wasm" && p.jit == "self")
+                (lib.attrValues cfg.declaredPlugins));
+              message = ''
+                custom.plugins: tier = "wasm" with jit = "self" is incoherent.
+                A Wasm guest has no way to obtain executable pages; Cranelift in
+                the host does the compiling. Use jit = "host", or move the plugin
+                to tier = "native".
+              '';
+            }
+            {
+              assertion = anyBwrapTier
+                -> (config.security.unprivilegedUsernsClone or true);
+              message = ''
+                custom.plugins: tiers native/lua need bubblewrap, which needs
+                unprivileged user namespaces since its setuid mode was removed.
+                Set security.unprivilegedUsernsClone = true, or restrict
+                allowedTiers to [ "wasm" ].
 
-    ] ++ optional (options ? microvm) (mkIf cfg.microvm.enable {
-      # Tier 2 hosts. Guests are generated from declaredPlugins with
-      # tier = "microvm". Unlike the other tiers, microvm plugins cannot be
-      # installed purely imperatively: the guest needs a closure, and building
-      # one is a rebuild. That is a real limitation of this tier, not an
-      # oversight — imperative install works for wasm/native/lua.
-      microvm.host.enable = true;
-      microvm.vms = lib.mapAttrs
-        (name: p: {
-          config = {
-            imports = [ ./guest.nix ];
-            nixpkgs.overlays = [ (_: _: { inherit (pkgs) oligarchy-plugind; }) ];
+                Note that option only writes kernel.unprivileged_userns_clone,
+                which exists solely on kernels carrying the Debian patch (zen and
+                xanmod do). Elsewhere the governing knob is
+                user.max_user_namespaces; `plugind doctor` reports both.
+              '';
+            }
+            {
+              assertion = cfg.microvm.enable -> options ? microvm;
+              message = ''
+                custom.plugins.microvm.enable is true but the microvm.nix host
+                module is not imported, so no guest could ever be built. Add
+                microvm.nix as a flake input and import its nixosModules.host
+                alongside oligarchy-plugins.nixosModules.plugins — see the tier 2
+                note in modules/oligarchy-plugins/flake.nix.
+              '';
+            }
+            {
+              assertion = cfg.requireSignature
+                -> (cfg.substituters == [ ] || cfg.trustedPublicKeys != [ ]);
+              message = ''
+                custom.plugins: substituters are configured and requireSignature is
+                true, but trustedPublicKeys is empty — so the cache can serve paths
+                that nothing on this host can verify. Add the cache's public key.
+              '';
+            }
+          ];
 
-            custom.pluginGuest = {
-              enable = true;
-              pluginId = name;
-              port = 5005; # must match GUEST_PORT in tiers/microvm.rs
-            };
+          warnings =
+            optional (cfg.allowSelfJit) ''
+              custom.plugins.allowSelfJit is enabled, so a plugin declaring
+              jit = "self" will run without MemoryDenyWriteExecute. Note that this
+              concedes the category rather than merely relaxing a check: MDWE is
+              bypassable via memfd_create plus two mappings of the same fd, which
+              is exactly what a JIT does. Audit with `plugind lint`.
+            ''
+            ++ optional
+              (lib.any (u: u != "root" && u != "@wheel")
+                (config.nix.settings.trusted-users or [ ]))
+              ''
+                custom.plugins: nix.settings.trusted-users lists someone other than
+                root. Per the Nix manual that is equivalent to giving those
+                accounts root, so signature checking here is decorative for them —
+                they can add their own substituters and keys and rebuild nothing.
+                Use custom.plugins.installers instead: it grants only the ability
+                to ask the supervisor for a signature-checked install.
+              ''
+            ++ optional (cfg.minTrust == "untrusted" && cfg.allowedTiers != [ "wasm" ])
+              ''
+                custom.plugins: minTrust = "untrusted" together with a non-wasm
+                tier means unreviewed native code can load. That is a defensible
+                choice on a workstation and a bad one on a stage rig.
+              '';
 
-            microvm = {
-              inherit (cfg.microvm) hypervisor vcpu mem;
-              interfaces = [ ]; # no network unless the manifest asked
-              shares = [{
-                source = "/nix/store";
-                mountPoint = "/nix/.ro-store";
-                tag = "ro-store";
-                proto = "virtiofs";
-              }];
-              # cid is assigned per-VM by microvm.nix; the host reaches the guest
-              # through the unix socket it exposes, not by picking a cid here.
-              vsock.cid = 3;
-            };
-            system.stateVersion = config.system.stateVersion;
+          environment.systemPackages = [ cfg.package ];
+
+          users.users.${cfg.user} = {
+            isSystemUser = true;
+            group = cfg.group;
+            home = cfg.stateDir;
+            description = "Oligarchy plugin runtime";
           };
-        })
-        (filterAttrs (_: p: p.tier == "microvm") cfg.declaredPlugins);
-    })));
+
+          users.groups.${cfg.group} = { };
+          # The install group exists whether or not anyone is in it: plugind
+          # chowns the control socket to it at startup, so it has to resolve.
+          #
+          # `members` rather than writing extraGroups into each installer's
+          # users.users entry: this module has no business defining accounts it
+          # does not own, and a partial submodule per installer is a merge-conflict
+          # surface with wherever those accounts are really declared.
+          users.groups.${cfg.installGroup}.members = cfg.installers;
+
+          environment.etc."oligarchy/plugins/policy.json".source = policyFile;
+
+          # The declared-plugin index: how `plugind run <id>` finds a plugin that
+          # was pinned in the flake rather than installed at runtime.
+          #
+          # Without it the declarative half did not work for ANY tier — the unit
+          # started, plugind resolved the id against the registry, found nothing
+          # and exited. Tier 2 is what forced the issue: a microVM guest needs a
+          # closure, so building one is a rebuild, so declaredPlugins is the only
+          # way a tier 2 plugin can exist.
+          #
+          # Only the fields this module is authoritative about, because it
+          # generated a sandbox drop-in from them before the artifact was ever
+          # opened. plugind cross-checks them against the artifact's own
+          # plugin.toml and refuses on disagreement: a plugin declared jit="none"
+          # that ships an artifact saying jit="self" would otherwise run under a
+          # drop-in computed for a different plugin.
+          environment.etc."oligarchy/plugins/declared.json".text = builtins.toJSON
+            (lib.mapAttrs
+              (_: p: {
+                store_path = "${p.artifact}";
+                inherit (p) tier jit;
+                autostart = p.autoStart;
+              })
+              cfg.declaredPlugins);
+
+          # One sandbox drop-in per declared plugin. See mkDropin.
+          systemd.units = lib.foldl' (acc: x: acc // x) { }
+            (mapAttrsToList mkDropin cfg.declaredPlugins);
+
+          systemd.tmpfiles.rules = [
+            "d ${cfg.stateDir}            0750 ${cfg.user} ${cfg.group} -"
+            # root-owned, group-readable. The registry is the INPUT to
+            # write_dropin(), which root interpolates into a systemd drop-in — so
+            # a plugin user who could write it could inject `User=root` into its
+            # own unit and have the next reconcile apply it. Instances still need
+            # to read it (`plugind run %i`), hence 0750 root:${cfg.group}.
+            "d ${cfg.stateDir}/registry   0750 root ${cfg.group} -"
+            "d ${cfg.stateDir}/state      0750 ${cfg.user} ${cfg.group} -"
+            "d ${cfg.stateDir}/config     0750 ${cfg.user} ${cfg.group} -"
+            "d ${cfg.stateDir}/gcroots    0750 ${cfg.user} ${cfg.group} -"
+          ] ++ lib.concatLists (mapAttrsToList
+            (name: p: [
+              # The directory has to exist before the symlink rule runs; tmpfiles
+              # applies rules in order within a file but will not create parents.
+              "d ${cfg.stateDir}/state/${name}   0750 ${cfg.user} ${cfg.group} -"
+              "d ${cfg.stateDir}/config/${name}  0750 ${cfg.user} ${cfg.group} -"
+              "L+ ${cfg.stateDir}/config/${name}/manifest.toml - - - - ${mkManifest name p}"
+            ])
+            cfg.declaredPlugins);
+
+          # Trusted caches, NOT trusted users. See the substituters option docs.
+          #
+          # Both substituter lists, and they are not redundant. `substituters` is
+          # what Nix consults by default, so without it `plugind install` would
+          # never fetch from the plugin cache at all. `trusted-substituters` is
+          # the separate list an *untrusted* user is permitted to select
+          # explicitly, which keeps a hand-run `nix build --substituters ...`
+          # working for an installer. Neither grants anything by itself: a path is
+          # accepted only if signed by a key in trusted-public-keys.
+          #
+          # These are definitions, not defaults, so they merge with nixpkgs' own
+          # (cache.nixos.org and its key) rather than replacing them.
+          nix.settings = {
+            substituters = cfg.substituters;
+            trusted-substituters = cfg.substituters;
+            trusted-public-keys = cfg.trustedPublicKeys;
+          };
+
+          # ── the supervisor ──────────────────────────────────────────────────
+          systemd.services.oligarchy-plugind = {
+            description = "Oligarchy plugin supervisor";
+            wantedBy = [ "multi-user.target" ];
+            after = [ "network.target" "nix-daemon.service" ];
+            path = [ pkgs.nix pkgs.systemd ]
+              ++ optional
+              anyBwrapTier
+              pkgs.bubblewrap;
+
+            serviceConfig = {
+              Type = "notify";
+              ExecStart = "${cfg.package}/bin/plugind --control-group ${cfg.installGroup} daemon";
+              ExecReload = "${cfg.package}/bin/plugind reconcile";
+
+              # Deliberately root, and deliberately narrow about why. The
+              # supervisor's privileged job is precisely two things: write the
+              # per-instance sandbox drop-in into /run/systemd/system and reload
+              # the manager. Neither is available to an unprivileged user, and
+              # reconcile() does both on every boot — regenerating the drop-ins
+              # from the registry is what makes a W^X grant unable to outlive the
+              # decision to make it. Group is ${cfg.group} so the plugin instances,
+              # which are NOT root, can reach the runtime directory.
+              #
+              # Two things follow from that being the *whole* list. The plugins
+              # themselves run as ${cfg.user} under the oligarchy-plugin@ template
+              # below, so nothing plugin-supplied executes in this unit. And the
+              # install path — `nix build` of a caller-supplied installable, plus
+              # `nix store verify` and the registry write — deliberately does NOT
+              # run with this unit's privilege: plugind drops those subprocesses
+              # to the state directory's owner, because evaluating an
+              # attacker-chosen flake as root would be root code execution however
+              # narrow the request format is. See nix_cmd() in
+              # host/src/registry.rs.
+              Group = cfg.group;
+              Restart = "on-failure";
+              RestartSec = 2;
+
+              # The supervisor's OWN runtime directory, not the one the plugin
+              # instances share. systemd chowns a RuntimeDirectory to the unit's
+              # User and deletes it when the unit stops, so a socket living in the
+              # instances' directory would (a) be unlinked whenever any plugin was
+              # disabled — letting any installer break the install path with one
+              # legitimate request — and (b) end up owned by the unprivileged
+              # plugin user, who could then replace it with their own listener.
+              #
+              # 0755 so a member of installGroup, deliberately not in
+              # ${cfg.group}, can traverse to the socket. The directory mode is
+              # not the boundary; the socket's own 0660 and its group are, and
+              # plugind sets both at bind time.
+              RuntimeDirectory = "oligarchy/plugind";
+              RuntimeDirectoryMode = "0755";
+
+              # The supervisor is reachable from an unprivileged socket, so it
+              # gets the bounds a network-facing service would. Without them a
+              # group member can spend the machine on concurrent `nix build`s.
+              MemoryMax = "2G";
+              TasksMax = 128;
+              # Files land 0640 — registry.json stays readable by ${cfg.group},
+              # which the instances need — and the control socket's mode before
+              # plugind chmods it is 0750, so there is no window in which anyone
+              # else could connect.
+              UMask = "0027";
+
+              NoNewPrivileges = true;
+              ProtectSystem = "strict";
+              # ProtectSystem=strict makes the whole hierarchy read-only, /run
+              # included, so the two writable paths have to be named. This list is
+              # the supervisor's entire write authority over the system; keep it
+              # that short. StateDirectory is deliberately not used here: tmpfiles
+              # owns the state layout below and creates it as ${cfg.user}, which
+              # systemd would chown back to root.
+              ReadWritePaths = [ cfg.stateDir "/run/systemd/system" ];
+              ProtectHome = true;
+              ProtectKernelTunables = true;
+              ProtectKernelModules = true;
+              ProtectControlGroups = true;
+              RestrictSUIDSGID = true;
+              RestrictRealtime = false; # the audio graph needs SCHED_FIFO
+              LockPersonality = true;
+              # The supervisor itself never JITs. Its children may; that is
+              # decided per-instance in the drop-ins.
+              MemoryDenyWriteExecute = true;
+              SystemCallArchitectures = "native";
+            };
+          };
+
+          # ── the per-plugin template ─────────────────────────────────────────
+          #
+          # Everything common lives here so there is one place to audit. The only
+          # things that vary per instance are in the drop-in: MemoryDenyWriteExecute,
+          # the cgroup caps, the device allowlist, and PrivateNetwork.
+          systemd.services."oligarchy-plugin@" = {
+            description = "Oligarchy plugin %i";
+            after = [ "oligarchy-plugind.service" ];
+            bindsTo = [ "oligarchy-plugind.service" ];
+
+            # A plugin that crashloops is a plugin that gets to stop.
+            #
+            # These live in [Unit], not [Service]. In serviceConfig they produced
+            # "Unknown key 'StartLimitIntervalSec' in section [Service], ignoring"
+            # on every start — systemd said so out loud and the rate limit simply
+            # did not exist.
+            startLimitBurst = 3;
+            startLimitIntervalSec = 60;
+
+            # Same gate as the supervisor's path above: an unconditional
+            # bubblewrap here would put it and its closure on a wasm-only host,
+            # which is exactly what deriving `package` from allowedTiers exists
+            # to avoid.
+            path = optionals
+              anyBwrapTier [ pkgs.bubblewrap ];
+
+            serviceConfig = {
+              Type = "notify";
+              # Explicit because the bwrap tiers need NotifyAccess=all (see the
+              # drop-in generator), which lets any process in the unit's cgroup —
+              # i.e. the plugin — speak the notify protocol. Most of that protocol
+              # is self-harm at worst: READY and STATUS are cosmetic, MAINPID is
+              # validated against the unit's own cgroup, and there is no watchdog.
+              # FDSTORE is the exception worth pinning, because "systemd holds
+              # file descriptors this plugin handed it across a restart" is a
+              # different shape of thing entirely. The default is already 0;
+              # saying so keeps it 0 when someone later adds a fd store for an
+              # unrelated reason.
+              FileDescriptorStoreMax = 0;
+              ExecStart = "${cfg.package}/bin/plugind run %i";
+              User = cfg.user;
+              Group = cfg.group;
+              Restart = "on-failure";
+              RestartSec = 5;
+
+              StateDirectory = "oligarchy/plugins";
+              # Match the tmpfiles rules below; systemd's default is 0755, which
+              # would widen the state directory on first start of any instance.
+              StateDirectoryMode = "0750";
+              RuntimeDirectory = "oligarchy/plugins";
+
+              NoNewPrivileges = true;
+              ProtectSystem = "strict";
+              ProtectHome = true;
+              ProtectKernelTunables = true;
+              ProtectKernelModules = true;
+              ProtectClock = true;
+              RestrictSUIDSGID = true;
+              # bwrap does NOT need "userns and nothing else", which is what this
+              # used to say and what broke tier 1 outright: it creates the user
+              # namespace and the mount, pid, ipc, uts, cgroup and net namespaces
+              # in ONE clone() call, so denying any of them fails the whole call —
+              # and bwrap then reports the badly misleading "no permissions to
+              # creating new namespace ... enable kernel.unprivileged_userns_clone",
+              # which sends you after a sysctl that was never the problem.
+              #
+              # Listing them is still better than dropping the directive: `time`
+              # stays denied, and the list documents exactly what the sandbox asks
+              # the kernel for. The plugin gains nothing from it either way — it
+              # runs inside those namespaces with every capability dropped.
+              RestrictNamespaces = "user mnt pid ipc uts cgroup net";
+              LockPersonality = true;
+              SystemCallArchitectures = "native";
+              UMask = "0077";
+              TasksMax = 64;
+              IOWeight = 50;
+
+              # NOTE: MemoryDenyWriteExecute is deliberately absent here. Setting
+              # it in the template would apply it to every instance including
+              # jit=self ones, and a template cannot express the exception. It is
+              # set per-instance by the drop-in — at build time for declared
+              # plugins, and by plugind into /run for imperative ones.
+            };
+          };
+
+          systemd.targets.oligarchy-plugins = {
+            description = "Oligarchy plugins";
+            wantedBy = [ "multi-user.target" ];
+            wants = mapAttrsToList (name: _: "oligarchy-plugin@${name}.service")
+              enabledPlugins;
+          };
+        }
+
+        (mkIf anyBwrapTier
+          {
+            # bubblewrap dropped setuid mode, so the namespaces have to come from
+            # somewhere. This is the price of tier 1.
+            security.unprivilegedUsernsClone = lib.mkDefault true;
+            environment.systemPackages = [ pkgs.bubblewrap ];
+          })
+
+      ] ++ optional (options ? microvm) (mkIf cfg.microvm.enable (
+        let
+          microvmPlugins = filterAttrs (_: p: p.tier == "microvm") cfg.declaredPlugins;
+          # Context IDs must be unique per guest, and 0/1/2 are reserved
+          # (hypervisor, loopback, host). The first version hardcoded 3 for every
+          # VM, which works for exactly one plugin and then silently gives two
+          # guests the same address. Assigned by position in the sorted name list
+          # so it is deterministic across rebuilds rather than dependent on attrset
+          # iteration order.
+          cidOf = name:
+            3 + lib.lists.findFirstIndex (n: n == name)
+              (throw "unreachable: ${name} is not a microvm plugin")
+              (lib.attrNames microvmPlugins);
+        in
+        {
+          # Tier 2 hosts. Guests are generated from declaredPlugins with
+          # tier = "microvm". Unlike the other tiers, microvm plugins cannot be
+          # installed purely imperatively: the guest needs a closure, and building
+          # one is a rebuild. That is a real limitation of this tier, not an
+          # oversight — imperative install works for wasm/native/lua.
+          microvm.host.enable = true;
+
+          # Deliberately NOT microvm.autostart. The plugin's own systemd instance
+          # starts `microvm@<id>.service` when the plugin is enabled and stops it
+          # when the plugin stops (MicrovmPlugin::boot / Drop), so autostarting
+          # would give the same guest two owners.
+          microvm.vms = lib.mapAttrs
+            (name: p: {
+              config = {
+                imports = [ ./guest.nix ];
+                nixpkgs.overlays = [ (_: _: { inherit (pkgs) oligarchy-plugind; }) ];
+
+                custom.pluginGuest = {
+                  enable = true;
+                  pluginId = name;
+                  storePath = p.artifact;
+                  policy = guestPolicyFile;
+                  port = 5005; # must match GUEST_PORT in tiers/microvm.rs
+                };
+
+                microvm = {
+                  inherit (cfg.microvm) hypervisor vcpu mem;
+                  interfaces = [ ]; # no network unless the manifest asked
+                  # No `shares` override, deliberately. Hand-writing the
+                  # /nix/store virtiofs share looked right and produced a guest
+                  # whose own systemd could not find sysinit.target: the share
+                  # never mounted, because virtiofs needs microvm.nix's
+                  # `virtiofsd@` unit alongside the VM and wiring that chain from
+                  # the outside is not our business. Left alone, microvm.nix
+                  # delivers the store itself — a per-guest image build in
+                  # exchange for no external dependency at boot, which for a
+                  # plugin guest is the better trade.
+                  # Setting a cid is what enables AF_VSOCK at all, and the runner
+                  # puts the host-side socket at `notify.vsock` in the VM's state
+                  # directory — which is why MicrovmPlugin::boot starts the unit
+                  # (whose WorkingDirectory that is) instead of exec'ing the
+                  # runner itself.
+                  vsock.cid = cidOf name;
+                };
+                system.stateVersion = config.system.stateVersion;
+              };
+            })
+            microvmPlugins;
+        }
+      ))));
 
   meta.maintainers = [ "ALH477" ];
 }
