@@ -1,0 +1,103 @@
+// The single source of truth for the Oligarchy plugin ABI.
+//
+// Every tier speaks this world:
+//   Tier 0 (wasm)    - natively, as a component
+//   Tier 1 (native)  - via the C vtable in host/include/oligarchy_plugin.h,
+//                      which is a hand-maintained 1:1 projection of this file
+//   Tier 1 (lua)     - via the mlua adapter, which registers `host` as a table
+//                      and expects the module to return an `dsp`-shaped table
+//   Tier 2 (microvm) - serialised over vsock; same shapes, same order
+//
+// ABI STABILITY RULE (CLAP-style): the `plugin` world is frozen at 1.0.
+// New functionality arrives as *new interfaces* discovered through
+// `host.query-extension`, never as changes to an existing interface.
+// Bump the package minor for additive interfaces, major only for breakage.
+
+package oligarchy:plugin@0.1.0;
+
+interface host {
+    enum log-level { trace, debug, info, warn, error }
+
+    /// Structured logging. Routed to the journal, tagged with the plugin id.
+    log: func(level: log-level, msg: string);
+
+    /// Monotonic nanoseconds. Not wall-clock: plugins do not get a clock
+    /// capability unless their manifest asks for wasi:clocks.
+    now-ns: func() -> u64;
+
+    /// Read a key from the plugin's own config namespace. The host resolves
+    /// this against /etc/oligarchy/plugins/<id>.toml; a plugin can never
+    /// read another plugin's config.
+    read-config: func(key: string) -> option<string>;
+
+    /// Capability probe. Returns false rather than trapping so a plugin can
+    /// degrade gracefully instead of dying on a locked-down install.
+    has-capability: func(name: string) -> bool;
+
+    /// Extension discovery. Returns the highest supported version of a named
+    /// extension interface, or none. This is the forward-compat seam.
+    query-extension: func(name: string) -> option<u32>;
+}
+
+interface dsp {
+    record audio-config {
+        sample-rate: u32,
+        block-size:  u32,
+        channels:    u8,
+    }
+
+    record param-info {
+        id:      u32,
+        name:    string,
+        min:     f32,
+        max:     f32,
+        default: f32,
+    }
+
+    /// A processor is a resource so the host owns its lifetime and can drop
+    /// the whole thing on unload without trusting the guest to clean up.
+    resource processor {
+        constructor(cfg: audio-config);
+
+        /// Interleaved f32, `channels * block-size` samples in and out.
+        /// Must be realtime-safe: no allocation, no syscalls, no locks.
+        process: func(input: list<f32>) -> list<f32>;
+
+        set-param: func(id: u32, value: f32);
+        get-param: func(id: u32) -> f32;
+        params:    func() -> list<param-info>;
+
+        /// Called when transport stops. Clear delay lines here.
+        reset: func();
+    }
+}
+
+/// Non-realtime control surface. Optional: a plugin may export a no-op.
+interface control {
+    variant command-result {
+        ok(string),
+        err(string),
+    }
+
+    handle-command: func(verb: string, args: list<string>) -> command-result;
+
+    /// Serialise plugin state for session save. Opaque to the host.
+    save-state: func() -> list<u8>;
+    load-state: func(blob: list<u8>) -> result<_, string>;
+}
+
+world plugin {
+    import host;
+
+    export dsp;
+    export control;
+
+    /// Called once after instantiation, before any processor is constructed.
+    /// Returning an error unloads the plugin without ever entering the
+    /// audio graph.
+    export init: func() -> result<_, string>;
+
+    /// Called before teardown. Best-effort: the host will kill the tier
+    /// sandbox regardless of whether this returns.
+    export shutdown: func();
+}

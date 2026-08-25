@@ -76,6 +76,24 @@
     # docs/oligarchy-forge-roadmap.md for the full design + living roadmap.
     oligarchy-forge.url = "path:./modules/oligarchy-forge";
 
+    # oligarchy-plugins — the tiered sandboxed plugin runtime (custom.plugins.*)
+    # and the foundation the FX Bazaar is meant to sit on: one WIT ABI across
+    # three tiers, with W^X decided per plugin instead of per machine. STAGED —
+    # only tier 0 is wired, on the workstation host below. Staging plan and
+    # per-stage gates: docs/plugins-roadmap.md.
+    #
+    # A *read-write* runtime, same category as oligarchy-forge and dsp-ctl, so
+    # like them it must stay out of the read-only MCP surface (.#mcp-self-audit
+    # fails the build if it lands in .mcp.json).
+    oligarchy-plugins = {
+      url = "path:./modules/oligarchy-plugins";
+      inputs.nixpkgs.follows = "nixpkgs";
+      # Only the sub-flake's devShell uses rust-overlay, and nothing here
+      # evaluates that; following an existing pin keeps it out of the lock's
+      # fetch set rather than adding a sixth distinct rust-overlay rev.
+      inputs.rust-overlay.follows = "mcp-servers/rust-overlay";
+    };
+
     # DCF-Talk — decentralized voice + text over the 17-byte DeModFrame.
     # Off by default (services.demod-talk.enable); see modules/demod-talk/README.md.
     # Plaintext by design, so the module REQUIRES a WireGuard interface.
@@ -123,6 +141,7 @@
     , vm-manager
     , dsp-ctl
     , oligarchy-forge
+    , oligarchy-plugins
     , demod-voice
     , mcp-servers
     , hydramesh
@@ -329,6 +348,29 @@
         nixos-hardware.nixosModules.framework-16-7040-amd
         ./modules/hardware-configuration.nix
         { custom.platform = { gpu = "amd"; cpu = "amd"; framework = true; }; }
+
+        # Tiered plugin runtime — STAGE 1 (tier 0 only), and this is the only
+        # host that gets it. The other three and the ISO are untouched;
+        # `custom.plugins.enable` defaults to false, so nothing to force off.
+        #
+        # These settings are the shipped-instrument posture, not a development
+        # relaxation, and a stage rig keeps them permanently. allowedTiers is
+        # not merely a runtime refusal either: the module derives the plugind
+        # package from it, so on a wasm-only host libloading, mlua and the
+        # vendored LuaJIT are not in the closure at all. requireSignature with
+        # no keys yet means nothing can be registered — which is the intent
+        # here: the runtime is present, the registry is shut.
+        #
+        # Staging plan, per-stage gates and known gaps: docs/plugins-roadmap.md
+        oligarchy-plugins.nixosModules.plugins
+        {
+          custom.plugins = {
+            enable = true;
+            allowedTiers = [ "wasm" ];
+            allowSelfJit = false;
+            requireSignature = true;
+          };
+        }
       ];
 
       # Framework 13 AMD 7040 — iGPU only, no expansion-bay dGPU. Unverified
@@ -507,6 +549,17 @@
             }
             cat $out/report.txt
           '';
+
+        # ════════════════════════════════════════════════════════════════════
+        # Plugin runtime gates. Kept out of `checks` for the same reason as
+        # malwareScan — they are slow and need KVM — and re-exported here
+        # rather than left in the sub-flake so `nix build .#plugins-*` is the
+        # one place the distro's build gates are listed. The tests themselves,
+        # and the argument for why only a booted kernel can prove the W^X split
+        # is enforced, live beside them in modules/oligarchy-plugins/flake.nix.
+        # ════════════════════════════════════════════════════════════════════
+        plugins-wx-enforcement = oligarchy-plugins.checks.${system}.wx-enforcement;
+        plugins-policy-refusal = oligarchy-plugins.checks.${system}.policy-refusal;
 
         # ════════════════════════════════════════════════════════════════════
         # Malware Shield build gate — scans the FULL system closure with pinned,

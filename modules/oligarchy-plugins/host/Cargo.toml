@@ -1,0 +1,71 @@
+[package]
+name = "oligarchy-plugind"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+license = "MPL-2.0"
+description = "Tiered sandboxed plugin runtime for Oligarchy"
+
+[[bin]]
+name = "plugind"
+path = "src/main.rs"
+
+[features]
+default = ["native-tier", "lua-tier"]
+# Tiers are optional so a locked-down build can drop the code entirely rather
+# than relying on custom.plugins.allowedTiers to keep it unreachable. A stage
+# rig should ship --no-default-features.
+native-tier = ["dep:libloading"]
+lua-tier = ["dep:mlua"]
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive", "env"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+postcard = { version = "1.0", features = ["use-std"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+libc = "0.2"
+
+# Tier 0. Pin the MINOR, not just the major: the component-model host API has
+# moved between releases and wit-bindgen output must match the host crate.
+# 43+ is the first line with WASI 0.3 support; 46 makes it the default.
+wasmtime = { version = "43.0", features = [
+    "component-model",
+    "pooling-allocator",
+    "cranelift",
+] }
+wasmtime-wasi = "43.0"
+
+# Tier 1 native.
+libloading = { version = "0.8", optional = true }
+
+# Tier 1 lua. `luajit` (not `lua54`) is deliberate: LuaJIT is the tier's
+# reason for existing and the thing that exercises the jit=self path.
+mlua = { version = "0.10", features = ["luajit", "vendored", "send"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# rust-landlock. 0.4 covers ABI v5; check ABI::new_current() at runtime rather
+# than assuming, and see sandbox/landlock.rs for the BestEffort policy.
+landlock = "0.4"
+# seccompiler comes out of the Firecracker project, which is the right
+# provenance for a filter that has to be correct.
+seccompiler = "0.4"
+nix = { version = "0.29", features = ["process", "sched", "signal", "fs"] }
+sd-notify = "0.4"
+caps = "0.5"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+# Plugins run in separate units; a panic in the host side of one instance
+# should end that instance, not unwind through a C ABI boundary (which is UB).
+
+[profile.release.package.wasmtime]
+opt-level = 3

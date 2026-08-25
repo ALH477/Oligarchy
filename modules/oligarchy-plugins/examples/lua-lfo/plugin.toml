@@ -1,0 +1,19 @@
+# Tier 1 Lua. jit = "none" deliberately: this is control-rate modulation, the
+# trace compiler buys nothing, and running with W^X enforced means one fewer
+# thing to reason about. Compare examples/tape-saturator, which genuinely
+# needs it.
+
+id      = "demod-lfo"
+version = "0.1.0"
+tier    = "lua"
+jit     = "none"
+trust   = "first-party"
+entry   = "lfo.lua"
+abi     = "oligarchy:plugin@0.1.0"
+
+[caps]
+fs_read_write = ["$STATE"]
+network       = false
+host_services = ["log", "now_ns"]
+memory_max    = 8388608
+cpu_quota     = 10

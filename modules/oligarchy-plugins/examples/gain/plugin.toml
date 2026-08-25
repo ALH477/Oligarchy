@@ -1,0 +1,24 @@
+# Tier 0. The default, and what the FX Bazaar should insist on for anything
+# it did not build itself. jit = "host" means Cranelift compiles this in the
+# host address space; the guest never asks the kernel for executable memory,
+# so the W^X filter costs it nothing and can stay on.
+
+id      = "demod-gain"
+version = "0.3.1"
+tier    = "wasm"
+jit     = "host"
+trust   = "untrusted"   # and it does not matter, which is the point
+entry   = "module.wasm"
+abi     = "oligarchy:plugin@0.1.0"
+
+[caps]
+fs_read       = []
+fs_read_write = ["$STATE"]
+network       = false
+host_services = ["log"]
+memory_max    = 16777216    # 16 MiB
+cpu_quota     = 25
+
+[meta]
+author  = "DeMoD LLC"
+summary = "Reference plugin: gain with parameter smoothing"

@@ -1,0 +1,28 @@
+# Tier 1 native, self-JIT. This is the interesting manifest: it is the one
+# that turns MemoryDenyWriteExecute off for its own systemd instance and
+# nothing else on the machine.
+#
+# It only loads if custom.plugins.allowSelfJit = true AND "native" is in
+# allowedTiers AND minTrust admits "trusted". Three independent gates, all
+# declarative, none of them the plugin's decision.
+
+id      = "demod-tape-saturator"
+version = "1.2.0"
+tier    = "native"
+jit     = "self"        # runtime code generation for the oversampling kernel
+trust   = "trusted"
+entry   = "lib/libtape.so"
+abi     = "oligarchy:plugin@0.1.0"
+
+[caps]
+fs_read       = ["$STORE", "/etc/demod/presets"]
+fs_read_write = ["$STATE"]
+network       = false
+devices       = []
+host_services = ["log", "read_config"]
+memory_max    = 134217728   # 128 MiB
+cpu_quota     = 80
+
+[meta]
+author  = "DeMoD LLC"
+summary = "Tape saturation with runtime-specialised oversampling"

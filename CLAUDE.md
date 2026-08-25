@@ -48,11 +48,13 @@ nix flake update
 ### Build gates (run on demand)
 
 ```bash
-nix build .#malwareScan       # YARA-scan the full system closure
-nix build .#mcp-self-audit    # verify no MCP crate opens sockets / escapes its allowlist
+nix build .#malwareScan             # YARA-scan the full system closure
+nix build .#mcp-self-audit          # verify no MCP crate opens sockets / escapes its allowlist
+nix build .#plugins-wx-enforcement  # boot a real kernel; assert the plugin tier/jit W^X split holds
+nix build .#plugins-policy-refusal  # assert plugin policy refuses at install time, not at load time
 ```
 
-Both are deliberately NOT in `checks` (they are slow and `nix flake check` already builds the toplevel). They are separate `packages` outputs.
+All are deliberately NOT in `checks` (they are slow — the last two need KVM — and `nix flake check` already builds the toplevel). They are separate `packages` outputs.
 
 ### Tests
 
@@ -97,6 +99,9 @@ Each `.nix` file declares the options + config for one subsystem (kernel, audio,
 - `modules/dsp-ctl/` — Rust TUI/CLI for the ArchibaldOS DSP VM (status, bench, start/stop).
 - `modules/mcp-servers/` — dedicated, read-only MCP servers (one Rust process per OS aspect + the `ports-sec` auditor). Exposes `nixosModules.default`. See `docs/mcp-servers-roadmap.md` for the full design + living roadmap. Adding an aspect means editing seven hardcoded lists — the README's checklist enumerates them; `crates/hydramesh` is the worked example.
 - `modules/oligarchy-forge/` — sandboxed coding-agent runner: a TOML schema (`oligarchy-forge.toml`) compiles to a generated `flake.nix` building a `dockerTools.streamLayeredImage`, then runs it via rootless Podman (or Docker). CLI verbs `oligarchy-forge build/run/shell`; bare `oligarchy-forge` (or `oligarchy-forge tui`) launches a Ratatui session-list + live-build-log dashboard (`forge-tui` crate). `custom.oligarchyForge.enable`. Unlike `mcp-servers`, this is **not** part of the MCP surface — it's a normal read-write dev tool, same category as `dsp-ctl`. See `docs/oligarchy-forge-roadmap.md` for the full design + living roadmap (Phases 0-1 built; Phase 2 conflict resolution and Phase 3 skill browser/security tiers are specced but not started).
+- `modules/oligarchy-plugins/` — tiered sandboxed plugin runtime (`custom.plugins.*`), the foundation for the FX Bazaar. One WIT ABI (`oligarchy:plugin@0.1.0`) across three tiers: wasm (wasmtime + WASI), native/lua (bwrap + Landlock + seccomp) and microvm. Its point is **per-instance W^X**: `MemoryDenyWriteExecute` is decided per plugin from a `jit = none|host|self` manifest field, written into a systemd drop-in, not set once for the machine. Like `oligarchy-forge` and `dsp-ctl` this is a **read-write** tool and must stay out of the MCP surface. Exposes `nixosModules.plugins`. **Staged:** only tier 0 is wired, and only on `nixosConfigurations.nixos`; microvm.nix is deliberately not yet an input. See `docs/plugins-roadmap.md` for the staging plan and the known gaps per stage.
+  - The W^X rule lives in **two** places on purpose — `Manifest::wx_enforced()` in `host/src/manifest.rs` and `wxEnforced` in `modules/plugins.nix`. They are a mirror; change one and you must change the other. `nix build .#plugins-wx-enforcement` boots a real kernel and asserts they agree.
+  - Nobody goes in `nix.settings.trusted-users`. Per the Nix manual that is root-equivalent; the trust anchor is a signed cache in `trusted-substituters` plus its key, with every path `nix store verify`'d before registration.
 - `modules/ArchibaldOS/` — the RT DSP guest OS, its own flake under `modules/ArchibaldOS/modules/`.
 
 When changing one of these, build/iterate inside that sub-flake; the top-level flake consumes it as a pinned `path:` input.
