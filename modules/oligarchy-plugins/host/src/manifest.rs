@@ -122,6 +122,20 @@ impl Manifest {
                 SUPPORTED_ABI
             );
         }
+        // Non-empty is not pedantry: `id = ""` makes unit_name() produce
+        // "oligarchy-plugin@.service" and dropin_dir() produce that unit's .d
+        // directory — a drop-in on the TEMPLATE, i.e. MemoryDenyWriteExecute=no
+        // for every instance on the machine, and /run beats /etc so it would
+        // also outrank a declared plugin's. Today the install happens to abort
+        // later when nix-store cannot unlink a directory; that is luck, not a
+        // control.
+        if self.id.is_empty() || self.id.len() > 64 {
+            bail!(
+                "plugin id {:?} must be 1..=64 characters (it becomes a systemd \
+                 instance name, and an empty one would target the template)",
+                self.id
+            );
+        }
         if !self
             .id
             .chars()
@@ -131,6 +145,32 @@ impl Manifest {
         }
         if self.entry.starts_with('/') || self.entry.contains("..") {
             bail!("entry {:?} must be relative and must not escape the store path", self.entry);
+        }
+
+        // Device capabilities are interpolated into a systemd drop-in
+        // (`DeviceAllow=<dev> rw`) that root writes and systemd parses, so an
+        // unconstrained string here is unit-directive injection: a newline
+        // followed by `User=root` in the drop-in would override the template's
+        // unprivileged User= and start the plugin as root. Validated HERE
+        // rather than only in bwrap.rs, because bwrap runs at launch — long
+        // after the drop-in was written — and only for tier 1, while the
+        // drop-in is written for every tier.
+        for dev in &self.caps.devices {
+            if !dev.starts_with("/dev/") {
+                bail!("device capability {dev:?} must be under /dev");
+            }
+            if !dev
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'))
+            {
+                bail!(
+                    "device capability {dev:?} may contain only [A-Za-z0-9/._-]; \
+                     it is written into a systemd unit drop-in"
+                );
+            }
+            if dev.contains("..") {
+                bail!("device capability {dev:?} must not contain ..");
+            }
         }
 
         // The core invariant of the whole design.
@@ -318,6 +358,51 @@ mod tests {
         .unwrap();
         assert!(!jitty.wx_enforced());
         assert!(jitty.grants_wx_to_plugin());
+    }
+
+    #[test]
+    fn rejects_empty_and_overlong_id() {
+        let with_id = |id: &str| {
+            parse(&format!(
+                r#"
+                id = "{id}"
+                version = "1.0.0"
+                tier = "wasm"
+                entry = "module.wasm"
+                abi = "oligarchy:plugin@0.1.0"
+            "#
+            ))
+        };
+        // An empty id addresses the template unit, not an instance.
+        assert!(with_id("").is_err());
+        assert!(with_id(&"a".repeat(65)).is_err());
+        assert!(with_id(&"a".repeat(64)).is_ok());
+    }
+
+    #[test]
+    fn rejects_device_injection() {
+        // The drop-in writer interpolates devices into a file systemd parses as
+        // root, so a newline here would be a unit-directive injection. The
+        // nastiest form is the one that wins outright: User=root.
+        let evil = |dev: &str| {
+            parse(&format!(
+                r#"
+                id = "dev"
+                version = "1.0.0"
+                tier = "native"
+                entry = "lib/x.so"
+                abi = "oligarchy:plugin@0.1.0"
+                [caps]
+                devices = ["{dev}"]
+            "#
+            ))
+        };
+        assert!(evil("/dev/snd/seq").is_ok());
+        assert!(evil("/dev/null rw\nUser=root").is_err());
+        assert!(evil("/dev/null\nExecStartPre=/bin/sh").is_err());
+        assert!(evil("/etc/shadow").is_err());
+        assert!(evil("/dev/../etc/shadow").is_err());
+        assert!(evil("/dev/$(id)").is_err());
     }
 
     #[test]

@@ -363,14 +363,25 @@
         #
         # Staging plan, per-stage gates and known gaps: docs/plugins-roadmap.md
         oligarchy-plugins.nixosModules.plugins
-        {
+        ({ config, ... }: {
           custom.plugins = {
             enable = true;
             allowedTiers = [ "wasm" ];
             allowSelfJit = false;
             requireSignature = true;
+
+            # Stage 2: this account can ask the supervisor for a
+            # signature-checked install without being root and — the point —
+            # without being in nix.settings.trusted-users, which per the Nix
+            # manual is root-equivalent and would make the checking moot.
+            #
+            # `substituters`/`trustedPublicKeys` stay empty until a signed
+            # cache actually exists (see docs/plugins-roadmap.md § stage 2).
+            # Until then the only installable thing is a locally signed store
+            # path, which is exactly as verified.
+            installers = [ config.custom.user.name ];
           };
-        }
+        })
       ];
 
       # Framework 13 AMD 7040 — iGPU only, no expansion-bay dGPU. Unverified
@@ -560,6 +571,7 @@
         # ════════════════════════════════════════════════════════════════════
         plugins-wx-enforcement = oligarchy-plugins.checks.${system}.wx-enforcement;
         plugins-policy-refusal = oligarchy-plugins.checks.${system}.policy-refusal;
+        plugins-signed-install = oligarchy-plugins.checks.${system}.signed-install;
 
         # ════════════════════════════════════════════════════════════════════
         # Malware Shield build gate — scans the FULL system closure with pinned,

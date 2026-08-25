@@ -27,6 +27,11 @@ let
   # ── Mandatory allowlist ─────────────────────────────────────────────────────
   # Hostnames only (the old list carried path-suffixed entries that can never
   # resolve). Always resolved and allowed — critical for nixos-rebuild.
+  #
+  # Some of these (cache.nixos.org, api.flakehub.com) would also be produced by
+  # autoDetect.nixSubstituters below. That overlap is deliberate: this list is
+  # the floor that keeps `nixos-rebuild` working even with every autoDetect
+  # switch off, so it must not depend on them.
   mandatoryDomains = [
     "cache.nixos.org"
     "channels.nixos.org"
@@ -98,7 +103,35 @@ let
     ++ optionals (cfg.autoDetect.firmware && config.services.fwupd.enable) [
       "cdn.fwupd.org"
       "fwupd.org"
-    ];
+    ]
+    ++ optionals cfg.autoDetect.nixSubstituters substituterHosts;
+
+  # Hostnames of every binary cache this system is configured to use.
+  #
+  # mandatoryDomains hardcodes the ones every Oligarchy host needs
+  # (cache.nixos.org, flakehub, github). This clause is for the ones a *module*
+  # adds — custom.plugins.substituters is the current case — so that adding a
+  # cache does not silently produce a firewall-blocked fetch with no build-time
+  # signal. Deriving it from nix.settings rather than from any one module's
+  # options keeps it general and avoids referencing options that may not be
+  # declared on a given host.
+  substituterHosts =
+    let
+      settings = config.nix.settings;
+      urls = (settings.substituters or [ ]) ++ (settings.trusted-substituters or [ ]);
+      hostOf = url:
+        let
+          afterScheme = last (splitString "//" url);
+          hostPort = head (splitString "/" afterScheme);
+          # Strip any user:pass@ prefix, then the port.
+          host = head (splitString ":" (last (splitString "@" hostPort)));
+        in
+        host;
+    in
+    # A local or daemon substituter ("daemon", "auto", "file:///…") has no host
+    # to allow, and hostOf would produce nonsense for it.
+    unique (filter (h: h != "") (map hostOf
+      (filter (u: hasInfix "://" u && !(hasPrefix "file://" u)) urls)));
 
   allDomains = unique (mandatoryDomains ++ presets.${cfg.preset}.domains ++ cfg.allow.domains ++ autoDetectDomains);
 
@@ -410,6 +443,17 @@ in
       acme = mkOption { type = types.bool; default = true; description = "Auto-allow Let's Encrypt when ACME certs are configured."; };
       docker = mkOption { type = types.bool; default = true; description = "Auto-allow Docker Hub when docker (rootful or rootless) is enabled."; };
       firmware = mkOption { type = types.bool; default = true; description = "Auto-allow fwupd metadata/firmware downloads when fwupd is enabled."; };
+      nixSubstituters = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Auto-allow the hostname of every binary cache in
+          `nix.settings.substituters` / `.trusted-substituters`. Without this, a
+          module that adds a cache (e.g. `custom.plugins.substituters`) produces
+          a fetch that this firewall blocks, with nothing to say so at build
+          time. Local and daemon substituters are ignored — they have no host.
+        '';
+      };
       tailscale = mkOption {
         type = types.bool;
         default = config.services.tailscale.enable;

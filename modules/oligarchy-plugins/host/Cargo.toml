@@ -53,7 +53,14 @@ landlock = "0.4"
 # seccompiler comes out of the Firecracker project, which is the right
 # provenance for a filter that has to be correct.
 seccompiler = "0.4"
-nix = { version = "0.29", features = ["process", "sched", "signal", "fs"] }
+nix = { version = "0.29", features = [
+    "process", "sched", "signal", "fs",
+    # "socket" for SO_PEERCRED on the control socket (the audit line);
+    # "user" for the geteuid/chown that give a per-plugin state dir the
+    # owner the plugin instance runs as, and for resolving the control
+    # group by name.
+    "socket", "user",
+] }
 sd-notify = "0.4"
 caps = "0.5"
 

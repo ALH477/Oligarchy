@@ -156,12 +156,24 @@
                 jit = "none";
                 entry = "lib/libplain.so";
               };
+              # Identical to `plain` in everything policy looks at, so in the
+              # signed-install test the signature is the only variable.
+              unsigned = fixture { id = "unsigned"; tier = "wasm"; jit = "host"; };
             };
 
             fixtureEtc = lib.mapAttrs'
               (n: drv:
                 lib.nameValuePair "oligarchy/test/${n}" { source = drv; })
               fixtures;
+
+            # A throwaway signing keypair, generated once with
+            #   nix-store --generate-binary-cache-key oligarchy-plugins-test-1 …
+            # and committed on purpose. It is PUBLICLY KNOWN and exists only so
+            # a VM can produce a genuinely-signed store path without reaching a
+            # real cache. Never put this public key on a real host, and never
+            # sign anything you care about with the secret half.
+            testPublicKey = "oligarchy-plugins-test-1:kyd+Rn9HlxiVTU7UqIVXhUdGYITdgPjdOTHjrvz6w3w=";
+            testSecretKey = "oligarchy-plugins-test-1:LrnxTIW3tSa8PvzTWhOy7duAFPXC/7YPuRb4J1Vt32WTJ35Gf0eXGJVNTtSohVeFR0ZghN2A+N05MeOu/PrDfA==";
 
             # runNixOSTest pins each node's nixpkgs read-only — it derives
             # node.pkgs from the pkgs the runner was taken from — so a node can
@@ -264,6 +276,168 @@
                 machine.fail("plugind install /etc/oligarchy/test/nativeplain --allow-unsigned")
                 # self-JIT with allowSelfJit=false: refused by policy.
                 machine.fail("plugind install /etc/oligarchy/test/jitty --allow-unsigned")
+              '';
+            };
+
+            # Stage 2's acceptance criterion, stated as a test: an unprivileged
+            # user can install a SIGNED plugin and cannot install an unsigned
+            # one, and nobody is in nix.settings.trusted-users.
+            #
+            # Worth saying why this needs a VM. Every interesting claim here is
+            # about something no unit test can see: a unix socket's mode, a real
+            # `nix store verify` against the keys in the running nix.conf, a real
+            # uid failing to write a 0750 directory, and a GC root that Nix
+            # itself agrees is a root.
+            signed-install = nodePkgs.testers.runNixOSTest {
+              name = "oligarchy-plugins-signed-install";
+              nodes.machine = { ... }: {
+                imports = [ ./modules/plugins.nix ];
+                environment.etc = fixtureEtc // {
+                  "oligarchy/test-key.sec" = {
+                    text = testSecretKey;
+                    mode = "0400";
+                  };
+                };
+                users.users.alice = { isNormalUser = true; };
+                # Deliberately not an installer: proves the socket is a closed
+                # door rather than a formality.
+                users.users.bob = { isNormalUser = true; };
+                custom.plugins = {
+                  enable = true;
+                  allowedTiers = [ "wasm" ];
+                  allowSelfJit = false;
+                  requireSignature = true;
+                  trustedPublicKeys = [ testPublicKey ];
+                  installers = [ "alice" ];
+                };
+                virtualisation.memorySize = 2048;
+              };
+              testScript = ''
+                machine.wait_for_unit("oligarchy-plugind.service")
+
+                # `su` without -l keeps root's environment but resets PATH from
+                # login.defs, so set it explicitly rather than depend on that.
+                def as_user(user, cmd):
+                    return f"su {user} -s /bin/sh -c 'PATH=/run/current-system/sw/bin {cmd}'"
+
+                # ── the trust model, in one assertion ───────────────────────
+                # If this ever fails, nothing below it means anything: a user
+                # trusted to Nix can add their own keys and substituters.
+                #
+                # Read the generated nix.conf rather than `nix config show`:
+                # that is the declarative surface this module writes to, and it
+                # does not require the node to have opted into the new CLI.
+                cfg = machine.succeed("cat /etc/nix/nix.conf")
+                assert "trusted-users = root\n" in cfg, cfg
+                # The plugin cache key did reach it...
+                assert "oligarchy-plugins-test-1:kyd+Rn9HlxiVTU7UqIVXhUdGYITdgPjdOTHjrvz6w3w=" in cfg, cfg
+                # ...merged with, not in place of, what nixpkgs already trusted.
+                assert "cache.nixos.org-1:" in cfg, cfg
+
+                # ── the socket is the only mutation path, and it is a door ──
+                machine.succeed("test -S /run/oligarchy/plugind/control.sock")
+                perms = machine.succeed(
+                    "stat -c '%A %U:%G' /run/oligarchy/plugind/control.sock"
+                ).strip()
+                assert perms == "srw-rw---- root:oligarchy-plugins", perms
+                # An installer cannot write the registry directly.
+                machine.fail(as_user("alice", "test -w /var/lib/oligarchy/plugins/registry"))
+
+                signed = machine.succeed("readlink -f /etc/oligarchy/test/plain").strip()
+                unsigned = machine.succeed("readlink -f /etc/oligarchy/test/unsigned").strip()
+
+                # A CONTENT-ADDRESSED unsigned path, which is the case that made
+                # the first version of this test worthless. `nix store verify
+                # --sigs-needed 1` short-circuits for content-addressed paths —
+                # it sets the signature count to max before consulting a key —
+                # and `nix store add-path` needs no privilege whatsoever. So an
+                # installer could author arbitrary content, add it to the store,
+                # and have it register as signature_verified. The two fixtures
+                # above are runCommand outputs, i.e. INPUT-addressed, so they
+                # failed verification for the wrong reason and the hole was
+                # invisible. This one closes that.
+                machine.succeed(
+                    "mkdir -p /tmp/ca && printf '%s\n' "
+                    "'id = \"cabypass\"' 'version = \"1.0.0\"' 'tier = \"wasm\"' "
+                    "'jit = \"host\"' 'entry = \"module.wasm\"' "
+                    "'abi = \"oligarchy:plugin@0.1.0\"' > /tmp/ca/plugin.toml "
+                    "&& : > /tmp/ca/module.wasm"
+                )
+                ca = machine.succeed(
+                    as_user(
+                        "alice",
+                        "nix --extra-experimental-features nix-command "
+                        "store add-path /tmp/ca --name cabypass",
+                    )
+                ).strip()
+                # It really is content-addressed with no signatures — if this
+                # ever stops being true the test below stops testing anything.
+                info = machine.succeed(
+                    "nix --extra-experimental-features nix-command path-info "
+                    f"--json {ca}"
+                )
+                assert '"signatures":[]' in info.replace(" ", ""), info
+                assert '"ca":"fixed' in info.replace(" ", ""), info
+                # plugind passes --extra-experimental-features itself (see
+                # registry.rs); this test node has not enabled the new CLI, so
+                # signing has to ask for it too.
+                machine.succeed(
+                    "nix --extra-experimental-features nix-command store sign "
+                    f"--key-file /etc/oligarchy/test-key.sec {signed}"
+                )
+
+                # ── 1. an unprivileged user installs a SIGNED plugin ────────
+                out = machine.succeed(as_user("alice", f"plugind install {signed}"))
+                assert "installed plain" in out, out
+                # The sandbox explanation comes back too, so an install done for
+                # you reads like one you did yourself.
+                assert "tier" in out.lower(), out
+
+                # ── 2. ...and cannot install an unsigned one ────────────────
+                err = machine.fail(as_user("alice", f"plugind install {unsigned}") + " 2>&1")
+                assert "no valid signature" in err, err
+
+                # ── 3. ...and cannot ask for the check to be skipped. The wire
+                #       format has no field for it, so this is refused before
+                #       anything is even fetched.
+                err = machine.fail(
+                    as_user("alice", f"plugind install --allow-unsigned {unsigned}") + " 2>&1"
+                )
+                assert "no field for it" in err, err
+
+                # ── 4. neither can root: requireSignature is declarative, and a
+                #       CLI flag does not get to overrule it.
+                err = machine.fail(f"plugind install --allow-unsigned {unsigned} 2>&1")
+                assert "requireSignature is true" in err, err
+
+                # ── 5. a content-addressed unsigned path is refused ─────────
+                err = machine.fail(as_user("alice", f"plugind install {ca}") + " 2>&1")
+                assert "no valid signature" in err, err
+                # ...and root cannot force it either.
+                err = machine.fail(f"plugind install --allow-unsigned {ca} 2>&1")
+                assert "requireSignature is true" in err, err
+
+                # ── 6. a non-installer gets neither path ────────────────────
+                err = machine.fail(as_user("bob", f"plugind install {signed}") + " 2>&1")
+                assert "install group" in err or "Permission denied" in err, err
+
+                # ── 7. the GC root is one Nix agrees with ───────────────────
+                # A bare symlink into the store is not a root; only a path
+                # registered under /nix/var/nix/gcroots is. Ask Nix, not ls.
+                roots = machine.succeed(f"nix-store -q --roots {signed}")
+                assert "gcroots/plain" in roots, roots
+
+                # ── 8. reads work over the socket as well as writes ─────────
+                out = machine.succeed(as_user("alice", "plugind list"))
+                assert "plain" in out, out
+                assert "ok" in out, out   # the signature column
+
+                # ── 9. and the privileged action left an audit trail ────────
+                alice_uid = machine.succeed("id -u alice").strip()
+                # Not `log`: the test driver already binds that name.
+                journal = machine.succeed("journalctl -u oligarchy-plugind --no-pager")
+                assert "control request" in journal, journal
+                assert alice_uid in journal, journal
               '';
             };
 

@@ -7,6 +7,7 @@
 //!                           landlock+seccomp to itself and then loads the
 //!                           artifact. Never invoked by hand.
 
+mod control;
 mod manifest;
 mod plugin;
 mod policy;
@@ -16,14 +17,26 @@ mod tiers;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use control::{Reply, Request};
 use policy::Policy;
 use registry::Store;
 
 const DEFAULT_STATE: &str = "/var/lib/oligarchy/plugins";
 const DEFAULT_POLICY: &str = "/etc/oligarchy/plugins/policy.json";
 const DEFAULT_RUNTIME: &str = "/run/oligarchy/plugins";
+/// The supervisor's own runtime directory, deliberately NOT the one the plugin
+/// instances share.
+///
+/// systemd chowns a RuntimeDirectory to the owning unit's User, and removes it
+/// when that unit stops. With the control socket in the instances' directory,
+/// `disable`-ing any plugin would stop an instance and take the socket with it
+/// — a member of the install group could permanently break the install path
+/// with one legitimate request — and once an instance had run, the directory
+/// would be owned by the unprivileged plugin user, who could then unlink the
+/// socket and bind their own in its place.
+const DEFAULT_CONTROL: &str = "/run/oligarchy/plugind";
 
 #[derive(Parser)]
 #[command(name = "plugind", version, about = "Oligarchy plugin runtime")]
@@ -34,6 +47,13 @@ struct Cli {
     policy: PathBuf,
     #[arg(long, default_value = DEFAULT_RUNTIME, env = "OLIGARCHY_RUNTIME_DIR")]
     runtime_dir: PathBuf,
+    #[arg(long, default_value = DEFAULT_CONTROL, env = "OLIGARCHY_CONTROL_DIR")]
+    control_dir: PathBuf,
+    /// Group allowed to reach the control socket, i.e. allowed to ask the
+    /// supervisor to install a *signed* plugin. Daemon only. Absent means
+    /// root only, which is the safe default: handing this out is opt-in.
+    #[arg(long, env = "OLIGARCHY_CONTROL_GROUP")]
+    control_group: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -97,40 +117,38 @@ fn main() -> Result<()> {
 
     let policy = Policy::load(&cli.policy)?;
 
+    // The registry-mutating verbs go through one dispatcher, `apply`, whether
+    // they execute here or in the supervisor. An account that cannot write the
+    // registry is not locked out: the same request is forwarded over the control
+    // socket and the supervisor — which holds the policy — applies it. See
+    // control.rs for why that is the seam, rather than loosening the registry or
+    // trusting the user to Nix.
+    if let Some(req) = wire_request(&cli.cmd) {
+        let reply = if registry_writable(&cli.state_dir) {
+            apply(
+                &mut Store::open(&cli.state_dir)?,
+                &req,
+                &policy,
+                asked_for_unsigned(&cli.cmd),
+            )
+        } else {
+            anyhow::ensure!(
+                !asked_for_unsigned(&cli.cmd),
+                "--allow-unsigned needs write access to the registry, which this \
+                 account does not have. It is not available over the control \
+                 socket at all: the request format has no field for it, so an \
+                 unprivileged install is always signature-checked."
+            );
+            control::request(&cli.control_dir, &req)
+        }?;
+        print!("{}", render(reply));
+        return Ok(());
+    }
+
     match cli.cmd {
-        Cmd::Install {
-            source,
-            allow_unsigned,
-        } => {
-            let mut store = Store::open(&cli.state_dir)?;
-            let id = store.install(&source, &policy, allow_unsigned)?;
-            println!("installed {id}");
-            let entry = store
-                .get(&id)
-                .context("plugin vanished from the registry immediately after install")?;
-            println!("{}", tiers::explain(&entry.manifest, &policy));
-            println!("run `plugind enable {id}` to start it");
-        }
-
-        Cmd::Remove { id } => {
-            Store::open(&cli.state_dir)?.remove(&id)?;
-            println!("removed {id} (state and config kept; `purge` to delete them)");
-        }
-
         Cmd::Purge { id } => {
             Store::open(&cli.state_dir)?.purge(&id)?;
             println!("purged {id}");
-        }
-
-        Cmd::Enable { id, no_start } => {
-            let mut store = Store::open(&cli.state_dir)?;
-            store.enable(&id, !no_start)?;
-            println!("enabled {id}");
-        }
-
-        Cmd::Disable { id } => {
-            Store::open(&cli.state_dir)?.disable(&id)?;
-            println!("disabled {id}");
         }
 
         Cmd::Reload { id } => {
@@ -140,24 +158,6 @@ fn main() -> Result<()> {
             println!("reloaded {id}");
         }
 
-        Cmd::List => {
-            let store = Store::open(&cli.state_dir)?;
-            println!(
-                "{:<28} {:<9} {:<8} {:<7} {:<6} {}",
-                "ID", "TIER", "JIT", "W^X", "SIG", "STATE"
-            );
-            for e in store.entries() {
-                println!(
-                    "{:<28} {:<9} {:<8} {:<7} {:<6} {}",
-                    e.manifest.id,
-                    format!("{:?}", e.manifest.tier).to_lowercase(),
-                    format!("{:?}", e.manifest.jit).to_lowercase(),
-                    if e.manifest.wx_enforced() { "on" } else { "OFF" },
-                    if e.signature_verified { "ok" } else { "NONE" },
-                    if e.enabled { "enabled" } else { "installed" },
-                );
-            }
-        }
 
         Cmd::Explain { id } => {
             let store = Store::open(&cli.state_dir)?;
@@ -232,6 +232,15 @@ fn main() -> Result<()> {
         Cmd::Run { ref id } => run_one(&cli, &policy, id)?,
 
         Cmd::Shim { ref id } => shim(&cli, id)?,
+
+        // Handled above by `apply`, locally or over the socket. Listed rather
+        // than caught by `_` so adding a verb is a compile error here until it
+        // has been decided which side it belongs on.
+        Cmd::Install { .. }
+        | Cmd::Remove { .. }
+        | Cmd::Enable { .. }
+        | Cmd::Disable { .. }
+        | Cmd::List => unreachable!("dispatched by wire_request/apply"),
     }
 
     Ok(())
@@ -241,30 +250,171 @@ fn main() -> Result<()> {
 /// control socket open; individual plugins live in their own units so a
 /// crashing plugin cannot take the supervisor with it.
 fn daemon(cli: &Cli, policy: &Policy) -> Result<()> {
-    let mut store = Store::open(&cli.state_dir)?;
     std::fs::create_dir_all(&cli.runtime_dir)?;
-
     tracing::info!("{}", sandbox::doctor().trim());
-    store
-        .reconcile(policy)
-        .context("reconciling registry against policy")?;
 
-    let enabled: Vec<String> = store
-        .entries()
-        .filter(|e| e.enabled)
-        .map(|e| e.manifest.id.clone())
-        .collect();
+    // SCOPED, and it has to be. A Store holds the registry lock for its whole
+    // lifetime, and the serve loop below opens one per request — so a Store
+    // that outlived this block would make the supervisor deadlock against
+    // itself on the first request, which is exactly what happened the first
+    // time the lock was introduced. It presents as a client timing out.
+    let enabled: Vec<String> = {
+        let mut store = Store::open(&cli.state_dir)?;
+        store
+            .reconcile(policy)
+            .context("reconciling registry against policy")?;
+        store
+            .entries()
+            .filter(|e| e.enabled)
+            .map(|e| e.manifest.id.clone())
+            .collect()
+    };
     tracing::info!(count = enabled.len(), "plugins enabled: {enabled:?}");
+
+    // Bind before signalling readiness, so `systemctl start` returning means
+    // the socket is there and a script can use it on the next line.
+    let listener = control::bind(&cli.control_dir, cli.control_group.as_deref())?;
 
     #[cfg(target_os = "linux")]
     let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
 
-    // The control socket handler is omitted here; it accepts the same verbs
-    // as the CLI over a unix socket at $RUNTIME_DIR/control.sock so the
-    // desktop and the FX Bazaar UI do not have to shell out.
-    loop {
-        std::thread::park();
+    let state_dir = cli.state_dir.clone();
+    let policy = policy.clone();
+    control::serve(listener, move |req| {
+        // Re-open per request rather than holding one Store for the daemon's
+        // lifetime: root can still run `plugind install` directly, and a
+        // long-lived in-memory copy would silently overwrite whatever that did.
+        // The registry is one small JSON file; re-reading it is cheaper than the
+        // class of bug it removes.
+        let mut store = Store::open(&state_dir)?;
+        // The `false` is not a check that could be forgotten in a refactor: the
+        // wire type has no field that could make it true. See control.rs.
+        apply(&mut store, &req, &policy, false)
+    })
+}
+
+/// The registry-mutating verbs, dispatched in exactly one place.
+///
+/// Shared by the CLI and the supervisor deliberately. An earlier version had
+/// three parallel matches over the same five verbs — the CLI's arms, the
+/// CLI-to-wire mapping, and the daemon's arms — and they had already drifted
+/// into printing two different messages for `remove`.
+///
+/// `allow_unsigned` is the one input the two callers do not agree on, which is
+/// the point: `control::Request` cannot express it, so a request that arrived
+/// over the socket can only ever pass false.
+fn apply(
+    store: &mut Store,
+    req: &Request,
+    policy: &Policy,
+    allow_unsigned: bool,
+) -> Result<Reply> {
+    Ok(match req {
+        Request::Install { source } => {
+            let id = store.install(source, policy, allow_unsigned)?;
+            let e = store
+                .get(&id)
+                .context("plugin vanished from the registry immediately after install")?;
+            // The sandbox explanation travels with it, so an install done for
+            // you reads exactly like an install you did yourself.
+            Reply::text(format!(
+                "installed {id}\n{}run `plugind enable {id}` to start it\n",
+                tiers::explain(&e.manifest, policy)
+            ))
+        }
+        Request::Remove { id } => {
+            store.remove(id)?;
+            Reply::text(format!(
+                "removed {id} (state and config kept; `purge` deletes them)\n"
+            ))
+        }
+        Request::Enable { id, no_start } => {
+            store.enable(id, !no_start)?;
+            Reply::text(format!("enabled {id}\n"))
+        }
+        Request::Disable { id } => {
+            store.disable(id)?;
+            Reply::text(format!("disabled {id}\n"))
+        }
+        Request::List => Reply::Entries {
+            entries: store.entries().cloned().collect(),
+        },
+    })
+}
+
+/// Turn a reply into terminal output. Formatting is the client's job: the
+/// daemon returns the registry, not a table. See control::Reply.
+fn render(reply: Reply) -> String {
+    match reply {
+        Reply::Text { text } => text,
+        Reply::Entries { entries } => render_list(&entries),
     }
+}
+
+fn render_list(entries: &[registry::Entry]) -> String {
+    let mut out = format!(
+        "{:<28} {:<9} {:<8} {:<7} {:<6} {}\n",
+        "ID", "TIER", "JIT", "W^X", "SIG", "STATE"
+    );
+    for e in entries {
+        out.push_str(&format!(
+            "{:<28} {:<9} {:<8} {:<7} {:<6} {}\n",
+            e.manifest.id,
+            format!("{:?}", e.manifest.tier).to_lowercase(),
+            format!("{:?}", e.manifest.jit).to_lowercase(),
+            if e.manifest.wx_enforced() { "on" } else { "OFF" },
+            if e.signature_verified { "ok" } else { "NONE" },
+            if e.enabled { "enabled" } else { "installed" },
+        ));
+    }
+    out
+}
+
+/// Can this process mutate the registry in place?
+///
+/// Probed rather than discovered by failing: `Store::open` succeeds for a
+/// reader, so an unprivileged install would otherwise do all its work — a
+/// substitution included — and only then hit EACCES in `flush()`.
+fn registry_writable(state_dir: &Path) -> bool {
+    nix::unistd::access(
+        &state_dir.join("registry"),
+        nix::unistd::AccessFlags::W_OK,
+    )
+    .is_ok()
+}
+
+/// The request a CLI verb corresponds to, or None for verbs that are not
+/// registry mutations and never travel.
+///
+/// `purge` is deliberately absent: it destroys presets, and doing that on
+/// someone else's plugin is not something membership of the install group
+/// should buy. `reconcile`, `daemon` and `shim` are the supervisor's own
+/// business, and `doctor`/`explain`/`lint` need no write access.
+fn wire_request(cmd: &Cmd) -> Option<Request> {
+    Some(match cmd {
+        Cmd::Install { source, .. } => Request::Install {
+            source: source.clone(),
+        },
+        Cmd::Remove { id } => Request::Remove { id: id.clone() },
+        Cmd::Enable { id, no_start } => Request::Enable {
+            id: id.clone(),
+            no_start: *no_start,
+        },
+        Cmd::Disable { id } => Request::Disable { id: id.clone() },
+        Cmd::List => Request::List,
+        _ => return None,
+    })
+}
+
+/// Did the caller ask to skip signature enforcement? Only `install` can.
+fn asked_for_unsigned(cmd: &Cmd) -> bool {
+    matches!(
+        cmd,
+        Cmd::Install {
+            allow_unsigned: true,
+            ..
+        }
+    )
 }
 
 /// Host side of one plugin instance. For wasm this loads in-process; for

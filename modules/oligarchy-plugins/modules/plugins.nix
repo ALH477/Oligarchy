@@ -109,9 +109,19 @@ let
           '';
         };
         devices = mkOption {
-          type = types.listOf types.str;
+          # Mirrors the device check in Manifest::validate(). Constrained at the
+          # type level because these strings are interpolated into a systemd
+          # drop-in (`DeviceAllow=<dev> rw`) that root writes and systemd
+          # parses: a newline followed by `User=root` would override the
+          # template's unprivileged User= and start the plugin as root.
+          type = types.listOf (types.strMatching "^/dev/[A-Za-z0-9._/-]+$");
           default = [ ];
           example = literalExpression ''[ "/dev/snd/seq" ]'';
+          description = ''
+            Device nodes the plugin may open, as absolute paths under /dev.
+            Each becomes a DeviceAllow= line in the instance's sandbox drop-in
+            and a --dev-bind-try in its bwrap namespace.
+          '';
         };
         hostServices = mkOption {
           type = types.listOf types.str;
@@ -155,6 +165,11 @@ let
     min_trust = cfg.minTrust;
     allowed_tiers = cfg.allowedTiers;
     require_signature = cfg.requireSignature;
+    # The ONLY keys plugind will accept a signature from. Not the same list as
+    # nix.settings.trusted-public-keys, which legitimately also carries
+    # cache.nixos.org: a plugin signed by cache.nixos.org is not a plugin this
+    # host approved.
+    trusted_public_keys = cfg.trustedPublicKeys;
     max_memory = cfg.limits.memoryMax;
     max_cpu_quota = cfg.limits.cpuQuota;
     forbidden_paths = cfg.forbiddenPaths;
@@ -308,6 +323,15 @@ in
         Least-trusted provenance this host will load. Set to "trusted" to
         refuse anything unsigned by a known author, or "first-party" to
         refuse everything not built in your own flake.
+
+        Read this as a filter on a *claim*, not a boundary: `trust` is a field
+        in the plugin's own plugin.toml, so an author who wants past
+        minTrust = "first-party" writes trust = "first-party". What makes the
+        claim mean anything is that the manifest sits inside a store path
+        somebody signed — so the real statement is "the key that signed this
+        asserted first-party". Deriving trust from the signing key's identity
+        rather than from the payload is the correct fix and is not done yet; see
+        docs/plugins-roadmap.md.
       '';
     };
 
@@ -365,7 +389,7 @@ in
       example = literalExpression ''[ "https://cache.demod.ltd" ]'';
       description = ''
         Binary caches plugins may be fetched from. These go into
-        nix.settings.trusted-substituters, NOT trusted-users.
+        nix.settings.substituters and .trusted-substituters, NOT trusted-users.
 
         This distinction is the whole trust model. Per the Nix manual, adding
         a user to trusted-users is equivalent to giving that user root. So an
@@ -379,6 +403,52 @@ in
       type = types.listOf types.str;
       default = [ ];
       example = literalExpression ''[ "cache.demod.ltd-1:AAAA..." ]'';
+      description = ''
+        Keys whose signatures make a store path installable. They go into
+        nix.settings.trusted-public-keys, merging with — rather than replacing —
+        whatever else the system already trusts.
+
+        This is the trust anchor for the entire imperative half: plugind
+        `nix store verify`s every path against these before registering it, and
+        with requireSignature set no CLI flag can talk it out of that.
+      '';
+    };
+
+    installGroup = mkOption {
+      type = types.str;
+      default = "oligarchy-plugins";
+      description = ''
+        Group owning the control socket, and therefore the set of accounts that
+        may ask the supervisor to install a signed plugin.
+
+        Deliberately NOT custom.plugins.group: that is the group the runtime
+        runs as, and its members can read every plugin's state directory.
+        Membership conveys the install-time verbs and nothing else: install,
+        remove, enable, disable, list. The request format has no way to ask for
+        signature checking to be skipped, so it is not a route to running
+        arbitrary code — but it is not scoped per-account either. A member can
+        remove or disable another member's plugin, and installing a same-id
+        artifact replaces the existing entry. That is consistent with a
+        single-operator machine and worth knowing before handing it out on one
+        that is not. `purge`, which deletes a plugin's presets, is deliberately
+        not reachable over the socket at all.
+      '';
+    };
+
+    installers = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = literalExpression ''[ config.custom.user.name ]'';
+      description = ''
+        Accounts added to installGroup, i.e. accounts that can run
+        `plugind install` without being root.
+
+        This is the option that exists so that nix.settings.trusted-users does
+        not have to be — see the `substituters` description for why that
+        distinction is the whole trust model. If you find yourself reaching for
+        trusted-users to make a plugin install work, this is the option you
+        actually wanted.
+      '';
     };
 
     microvm = {
@@ -504,6 +574,17 @@ in
             bypassable via memfd_create plus two mappings of the same fd, which
             is exactly what a JIT does. Audit with `plugind lint`.
           ''
+          ++ optional
+            (lib.any (u: u != "root" && u != "@wheel")
+              (config.nix.settings.trusted-users or [ ]))
+            ''
+              custom.plugins: nix.settings.trusted-users lists someone other than
+              root. Per the Nix manual that is equivalent to giving those
+              accounts root, so signature checking here is decorative for them —
+              they can add their own substituters and keys and rebuild nothing.
+              Use custom.plugins.installers instead: it grants only the ability
+              to ask the supervisor for a signature-checked install.
+            ''
           ++ optional (cfg.minTrust == "untrusted" && cfg.allowedTiers != [ "wasm" ])
             ''
               custom.plugins: minTrust = "untrusted" together with a non-wasm
@@ -519,7 +600,16 @@ in
           home = cfg.stateDir;
           description = "Oligarchy plugin runtime";
         };
+
         users.groups.${cfg.group} = { };
+        # The install group exists whether or not anyone is in it: plugind
+        # chowns the control socket to it at startup, so it has to resolve.
+        #
+        # `members` rather than writing extraGroups into each installer's
+        # users.users entry: this module has no business defining accounts it
+        # does not own, and a partial submodule per installer is a merge-conflict
+        # surface with wherever those accounts are really declared.
+        users.groups.${cfg.installGroup}.members = cfg.installers;
 
         environment.etc."oligarchy/plugins/policy.json".source = policyFile;
 
@@ -529,7 +619,12 @@ in
 
         systemd.tmpfiles.rules = [
           "d ${cfg.stateDir}            0750 ${cfg.user} ${cfg.group} -"
-          "d ${cfg.stateDir}/registry   0750 ${cfg.user} ${cfg.group} -"
+          # root-owned, group-readable. The registry is the INPUT to
+          # write_dropin(), which root interpolates into a systemd drop-in — so
+          # a plugin user who could write it could inject `User=root` into its
+          # own unit and have the next reconcile apply it. Instances still need
+          # to read it (`plugind run %i`), hence 0750 root:${cfg.group}.
+          "d ${cfg.stateDir}/registry   0750 root ${cfg.group} -"
           "d ${cfg.stateDir}/state      0750 ${cfg.user} ${cfg.group} -"
           "d ${cfg.stateDir}/config     0750 ${cfg.user} ${cfg.group} -"
           "d ${cfg.stateDir}/gcroots    0750 ${cfg.user} ${cfg.group} -"
@@ -544,7 +639,19 @@ in
           cfg.declaredPlugins);
 
         # Trusted caches, NOT trusted users. See the substituters option docs.
+        #
+        # Both substituter lists, and they are not redundant. `substituters` is
+        # what Nix consults by default, so without it `plugind install` would
+        # never fetch from the plugin cache at all. `trusted-substituters` is
+        # the separate list an *untrusted* user is permitted to select
+        # explicitly, which keeps a hand-run `nix build --substituters ...`
+        # working for an installer. Neither grants anything by itself: a path is
+        # accepted only if signed by a key in trusted-public-keys.
+        #
+        # These are definitions, not defaults, so they merge with nixpkgs' own
+        # (cache.nixos.org and its key) rather than replacing them.
         nix.settings = {
+          substituters = cfg.substituters;
           trusted-substituters = cfg.substituters;
           trusted-public-keys = cfg.trustedPublicKeys;
         };
@@ -562,7 +669,7 @@ in
 
           serviceConfig = {
             Type = "notify";
-            ExecStart = "${cfg.package}/bin/plugind daemon";
+            ExecStart = "${cfg.package}/bin/plugind --control-group ${cfg.installGroup} daemon";
             ExecReload = "${cfg.package}/bin/plugind reconcile";
 
             # Deliberately root, and deliberately narrow about why. The
@@ -574,15 +681,45 @@ in
             # decision to make it. Group is ${cfg.group} so the plugin instances,
             # which are NOT root, can reach the runtime directory.
             #
-            # The plugins themselves run as ${cfg.user} under the
-            # oligarchy-plugin@ template below. Nothing plugin-supplied ever
-            # executes in this unit.
+            # Two things follow from that being the *whole* list. The plugins
+            # themselves run as ${cfg.user} under the oligarchy-plugin@ template
+            # below, so nothing plugin-supplied executes in this unit. And the
+            # install path — `nix build` of a caller-supplied installable, plus
+            # `nix store verify` and the registry write — deliberately does NOT
+            # run with this unit's privilege: plugind drops those subprocesses
+            # to the state directory's owner, because evaluating an
+            # attacker-chosen flake as root would be root code execution however
+            # narrow the request format is. See nix_cmd() in
+            # host/src/registry.rs.
             Group = cfg.group;
             Restart = "on-failure";
             RestartSec = 2;
 
-            RuntimeDirectory = "oligarchy/plugins";
-            RuntimeDirectoryMode = "0750";
+            # The supervisor's OWN runtime directory, not the one the plugin
+            # instances share. systemd chowns a RuntimeDirectory to the unit's
+            # User and deletes it when the unit stops, so a socket living in the
+            # instances' directory would (a) be unlinked whenever any plugin was
+            # disabled — letting any installer break the install path with one
+            # legitimate request — and (b) end up owned by the unprivileged
+            # plugin user, who could then replace it with their own listener.
+            #
+            # 0755 so a member of installGroup, deliberately not in
+            # ${cfg.group}, can traverse to the socket. The directory mode is
+            # not the boundary; the socket's own 0660 and its group are, and
+            # plugind sets both at bind time.
+            RuntimeDirectory = "oligarchy/plugind";
+            RuntimeDirectoryMode = "0755";
+
+            # The supervisor is reachable from an unprivileged socket, so it
+            # gets the bounds a network-facing service would. Without them a
+            # group member can spend the machine on concurrent `nix build`s.
+            MemoryMax = "2G";
+            TasksMax = 128;
+            # Files land 0640 — registry.json stays readable by ${cfg.group},
+            # which the instances need — and the control socket's mode before
+            # plugind chmods it is 0750, so there is no window in which anyone
+            # else could connect.
+            UMask = "0027";
 
             NoNewPrivileges = true;
             ProtectSystem = "strict";
