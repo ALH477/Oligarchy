@@ -174,20 +174,41 @@ host/src/
   sandbox/landlock.rs         FS/net allowlist, ABI v1–v8 with BestEffort degradation
   sandbox/bwrap.rs            namespace setup for tier 1
   tiers/{wasm,native,lua,microvm}.rs
-examples/                     one manifest per tier, including the self-JIT case
+  control.rs                  the group-owned unix socket: the only mutation path
+  declared.rs                 /etc/oligarchy/plugins/declared.json — the declarative half
+  guest.rs                    the tier 2 peer: same binary, vsock side, inside the VM
+modules/guest.nix             the microVM guest's NixOS config
+tests/wx-probe.c              a real plugin that asks the kernel what it is allowed
+examples/                     wasm/native/lua manifests, incl. the self-JIT case
+                              (no microvm example: tier 2 needs a closure, so it
+                              only exists as a declaredPlugins entry)
 ```
 
 ## Verify it actually works
 
-`nix flake check` runs two VM tests. The first is the one that matters: a unit
-test can only prove we *built* the right BPF program, so `checks.wx-enforcement`
-boots a real kernel and asserts that a `jit=none` plugin gets
-`MemoryDenyWriteExecute=yes`, that a `jit=self` plugin gets `no` *with the
-reason recorded in the unit where an auditor will see it*, and that the grant
-does not survive a reboot. `plugind doctor` reports what the running kernel can
-actually enforce; there's a `#[cfg(debug_assertions)]` self-test that forks and
-attempts `mprotect(PROT_EXEC)` to confirm the filter took, because a silently
-un-installed seccomp filter is the worst possible failure mode here.
+Five VM tests, all needing KVM. A unit test can only prove we *built* the right
+BPF program, so every claim that matters is asserted against a booted kernel:
+
+| Check | Asserts |
+|---|---|
+| `wx-enforcement` | `jit=none` gets `MemoryDenyWriteExecute=yes`, `jit=self` gets `no` *with the reason recorded in the unit where an auditor will see it*, and the grant does not survive a reboot |
+| `policy-refusal` | policy refuses at install time, not at load time |
+| `signed-install` | an unprivileged user installs a signed plugin and cannot install an unsigned one — including a *content-addressed* unsigned one, which is the case that made an earlier version of this test worthless |
+| `tier1-runtime` | a real `.so`, dlopen'd inside bwrap after Landlock and seccomp are applied, reports what the kernel actually permits — across **six** routes to executable memory |
+| `tier2-runtime` | a self-JIT plugin gets W+X inside a real microVM and only inside it (needs *nested* KVM) |
+
+`tier1-runtime` probes six routes rather than one for a reason worth stating:
+the first version asked only about `mprotect(PROT_EXEC)` and `memfd_create` —
+the two the filter happened to cover — so it reported "denied" while anonymous
+`PROT_EXEC`, `ptrace`, `userfaultfd` and plain-file dual mapping were all wide
+open, and the gate passed. A probe that only tests what you already blocked
+tells you nothing.
+
+`plugind doctor` reports what the running kernel can enforce, and `plugind
+selftest` forks a child, installs the filter and attempts `mprotect(PROT_EXEC)`
+and `memfd_create`. That one is available in **release** builds deliberately: a
+filter that silently failed to install is invisible from inside the process that
+installed it, which is the worst possible failure mode here.
 
 ## Review pass
 
@@ -237,24 +258,33 @@ three would have shipped broken and the reasons are worth knowing:
     `--option extra-substituters ""` didn't do what its comment claimed
     (`accept-flake-config false` does).
 
-## Still not compile-verified
+## Build status
 
-There's no Rust or Nix toolchain in the environment this was written in, so
-treat it as a reviewed design with plausible syntax rather than a build that's
-known green. The places most likely to need adjusting:
+This was originally written without a Rust or Nix toolchain to hand, and the
+section here used to say so. That is no longer the case — it is built,
+integrated, and gated. What the original caveats turned into:
 
-- **`seccompiler` 0.4 and `landlock` 0.4 API surfaces.** Both have moved
-  between minor versions. The `SeccompFilter::new` arity and the
-  `Ruleset` builder chain are the two spots to check first.
-- **`wasmtime` 43 vs 46.** `bindgen!` output and the `WasiView` split have
-  changed across recent releases; the version is pinned to the minor in
-  `Cargo.toml` for exactly this reason. WASI 0.3 landed June 2026 and is
-  default-on in 46, which will move the `wasmtime-wasi` imports.
-- **`microvm.nix`'s `vsock.cid` handling**, which I've stubbed as `null` for
-  host assignment.
-- `Cargo.lock` doesn't exist yet, so `pkgs/plugind/default.nix` won't evaluate
-  until you `cargo generate-lockfile`.
+- **`seccompiler` 0.4 and `landlock` 0.4 API surfaces.** Both had moved, as
+  predicted. `SeccompFilter::new` is 4-arg; `landlock`'s `ABI::new_current()`
+  does not exist at all (the crate keeps the status query private), so
+  `landlock.rs` asks the kernel with a raw `landlock_create_ruleset` version
+  probe, and `Access::from_*` returns a `BitFlags<AccessFs>` rather than a bare
+  right.
+- **`wasmtime` 43 vs 46.** Five separate breaks, all in the predicted places:
+  `bindgen!`'s `trappable_imports` became `imports: { default: trappable }`,
+  `IoView` was folded into `WasiView::ctx -> WasiCtxView`, the p2 modules moved,
+  the linker needs an explicit `HasSelf<T>` projection, and `wasmtime::Error` is
+  no longer a `std::error::Error`.
+- **`microvm.nix`'s `vsock.cid`**, stubbed as `null` for host assignment, turned
+  out to need real assignment: the module allocates one per guest by position in
+  the sorted plugin list and publishes it in `declared.json`, because the host
+  needs it to dial a qemu guest over kernel vhost-vsock — the userspace-vsock
+  unix socket the original assumed is a cloud-hypervisor/firecracker detail.
+- **`Cargo.lock`** exists.
 
-`cargo test` covers the parts that don't need a toolchain to reason about: the
-manifest invariants, the policy refusals, and the shape of the two seccomp
-programs.
+`cargo test` still covers what does not need a kernel — the manifest invariants,
+the policy refusals as a table, and the shape of the seccomp programs — and runs
+in the derivation's `checkPhase`, so a failing unit test is a failing build.
+
+For the integration record, the staging history and the known gaps that remain,
+see `docs/plugins-roadmap.md` in the Oligarchy tree.

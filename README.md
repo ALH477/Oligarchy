@@ -87,7 +87,7 @@ The Oligarchy endures.
 
 ## What you’re actually commanding right now
 
-| Component                        | Reality (February 2026)                                                                  |
+| Component                        | Reality (August 2026)                                                                  |
 |----------------------------------|----------------------------------------------------------------------------------------|
 | Host OS                          | Oligarchy NixOS (CachyOS/Zen/XanMod/BORE kernel, Hyprland primary, Plasma 6 optional)  |
 | Boot Experience                  | CRT boot cinematic — FFmpeg-forged scanlines/chromatic-aberration/grain, mpv on tty1 (StreamDB/TUI/API pretenders executed) |
@@ -103,6 +103,7 @@ The Oligarchy endures.
 | Recovery time                    | 180–350 ms via kexec (laughs at $80 000 proprietary failures)                          |
 | Host impact                      | Zero. Crush Doom Eternal at 300+ FPS while the DSP resurrects 40× per second            |
 | AI Stack                         | Ollama + ROCm / CUDA / CPU (whichever silicon you conscript), `ai-stack` CLI, presets  |
+| Plugin Runtime                   | Tiered sandboxed plugins — wasm / native+lua / microVM, one ABI, **per-plugin** W^X. The FX Bazaar's foundation, and it is built |
 | Agent Surface                    | Local **read-only** MCP (the insecure OpenClaw gateway was executed); Blipply voice assistant consumes it over stdio |
 | Networking Fabric                | DeMoD Compute Fabric (DCF) — community node, identity service, tray controller        |
 | Distribution                     | Everything forged from pinned flakes — no GitHub chaos, only victory                    |
@@ -264,6 +265,7 @@ Every control is a declarative NixOS option, default-off unless noted. See [`doc
 | Rootless Docker | `virtualisation.docker.rootless` | **on** | Daemon runs as the user; no root-equivalent `docker` group |
 | Secure Boot | `custom.secureBoot.enable` | off | lanzaboote signed chain + optional TPM2 LUKS |
 | Secrets | `custom.secrets` (sops-nix) | **on** | Age key lives at `/var/lib/sops-nix/key.txt` (never in-store); encrypted `*.enc.env` only |
+| Plugin runtime W^X | `custom.plugins` | off | Every plugin is confined by a tier it declares, and `MemoryDenyWriteExecute` is decided **per plugin** rather than once for the machine — so the one effect that genuinely needs a JIT gets W+X and nothing else inherits it. `jit = "self"` outside a microVM is refused six ways (anonymous `PROT_EXEC`, `memfd`, `ptrace`, `userfaultfd`, plain-file dual mapping, `mprotect`). Install is signed-only and **nobody is in `nix.settings.trusted-users`** — that is root-equivalent, and the whole point was not to need it. Five KVM-backed build gates prove it on a booted kernel, not on paper |
 | Steam/game sandbox | `steam-noswap.slice` + `systemd-run` launch wrapper | **on** | `MemorySwapMax=0` isolates games from swap/zram; `NoNewPrivileges`, `ProtectHome`/`Hostname`/`Clock`/`Kernel*`/`ControlGroups`, `RestrictSUIDSGID`, `LockPersonality` shrink blast radius. Excludes anything that breaks Proton/Wine (namespaces, W+X memory) or GameMode's realtime scheduling — see `docs/security-hardening.md` Phase 7 |
 
 `oligarchy-security status` (also `oligarchy-ctl status`, the DCF tray, and the MCP `security_status` tool) reports live posture.
@@ -292,9 +294,20 @@ Every control is a declarative NixOS option, default-off unless noted. See [`doc
    ```bash
    cd /etc/nixos
    sudo git pull
-   sudo nixos-rebuild switch --flake .#nixos          # AMD 7040 Framework
+   sudo nixos-rebuild switch --flake .#nixos          # AMD 7040 Framework 16
+   # or:  --flake .#nixos-fw13      (AMD 7040 Framework 13, iGPU only)
    # or:  --flake .#nixos-intel     (pure Intel)
    # or:  --flake .#nixos-optimus   (Intel + Nvidia Optimus; fill in PCI bus ids first)
+   ```
+
+6. **Verify the iron curtain** (optional, slow, all need KVM):
+   ```bash
+   nix build .#malwareScan            # YARA-sweep the entire system closure
+   nix build .#mcp-self-audit         # prove the agent surface cannot open a socket
+   nix build .#plugins-wx-enforcement # boot a kernel; prove the W^X split holds
+   nix build .#plugins-signed-install # prove an unsigned plugin cannot be installed
+   nix build .#plugins-tier1-runtime  # run a real plugin; ask the kernel, not the docs
+   nix build .#plugins-tier2-runtime  # needs *nested* KVM
    ```
 
 ## State Sanctioned Usage – Rule Your Domain
@@ -358,7 +371,7 @@ sudo nix-collect-garbage -d   # or let weekly timer handle it
 The Oligarchy does not rest on conquered territory. Now on the anvil, to be unleashed upon a future you are not ready for:
 
 - **Embedded DCF Client** — the DeMoD Compute Fabric, no longer summoned through terminal incantations but welded straight into the OS. A native client that joins the mesh on boot and answers to no `dmenu`.
-- **The DeMoD FX Bazaar** — a marketplace of audio effects, DSP weaponry traded in the open. Acquire, deploy, and dominate the signal chain without leaving the throne room.
+- **The DeMoD FX Bazaar** — a marketplace of audio effects, DSP weaponry traded in the open. Acquire, deploy, and dominate the signal chain without leaving the throne room. **The foundation has landed**: `custom.plugins` is a tiered sandboxed runtime — one ABI, three isolation tiers, signed-only install, and W^X decided per plugin instead of per machine. The storefront is what remains.
 - **Terminus** — a bespoke UI framework forged in-house by **ALH477**, riding **Tauri** runtimes. Not Electron bloat, not yet-another-web-clone — a custom frame built for the war room. Both the embedded DCF client and the FX Bazaar will wear Terminus.
 
 Status: **in the forge.** Vaporware is for those who don't ship. The Oligarchy ships.

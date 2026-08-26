@@ -25,9 +25,9 @@ nothing to "run" beyond `nixos-rebuild switch`.
 
 ## 2. Flake composition
 
-`flake.nix` defines three NixOS configurations
-(`nixosConfigurations.nixos`, `nixos-intel`, `nixos-optimus`) plus the
-installer ISO (`packages.x86_64-linux.iso`).
+`flake.nix` defines four NixOS configurations
+(`nixosConfigurations.nixos`, `nixos-fw13`, `nixos-intel`,
+`nixos-optimus`) plus the installer ISO (`packages.x86_64-linux.iso`).
 
 ### Input layers (order matters)
 
@@ -41,10 +41,12 @@ installer ISO (`packages.x86_64-linux.iso`).
    `users.asher = import ./home/home.nix`.
 3. **Local modules + sub-flakes** — pinned `path:` inputs for `boot-intro`,
    `greeting`, `blipply-assistant`, `vm-manager`, `demod-voice`, `dsp-ctl`,
-   `mcp-servers` — plus the `./modules/*.nix` files and `./configuration.nix`.
+   `mcp-servers`, `oligarchy-forge`, `oligarchy-plugins`, `demod-talk`,
+   `minecraft` — plus the `./modules/*.nix` files and `./configuration.nix`.
 
 `specialArgs` threads `inputs`, `nixpkgs-unstable`, `vm-manager`,
-`dsp-ctl`, and `mcp-servers` into every module. The commented-out
+`dsp-ctl`, `oligarchy-forge`, `mcp-servers`, `hydramesh` and `demod-talk`
+into every module. The commented-out
 `archibaldos` input is the template for adding the external DSP
 coprocessor when available.
 
@@ -53,12 +55,15 @@ coprocessor when available.
 | Output | Purpose |
 |---|---|
 | `nixosConfigurations.nixos` | Framework 16 AMD (primary) |
+| `nixosConfigurations.nixos-fw13` | Framework 13 AMD (iGPU only) |
 | `nixosConfigurations.nixos-intel` | pure Intel iGPU |
 | `nixosConfigurations.nixos-optimus` | Intel iGPU + NVIDIA dGPU (PRIME offload) |
 | `packages.x86_64-linux.iso` | install ISO (Calamares-Plasma6 + a reduced module set) |
 | `packages.x86_64-linux.default` | alias to `iso` |
 | `packages.x86_64-linux.malwareScan` | build gate — YARA-scan the system closure |
 | `packages.x86_64-linux.mcp-self-audit` | build gate — verify MCP workspace stays socket-free outside `ports-sec` |
+| `packages.x86_64-linux.plugins-*` | five build gates for the plugin runtime — see §5b |
+| `packages.x86_64-linux.oligarchy-hw-detect` | installer-only helper: picks the matching `nixosConfigurations.*` from DMI |
 | `checks.x86_64-linux.system` | minimal check (eval the toplevel) |
 | `devShells.default` | `nil` LSP, `nixpkgs-fmt`, qemu, virt-manager, debug tools |
 
@@ -146,6 +151,9 @@ input.
 | `modules/demod-voice/` | local TTS / voice cloning (Coqui XTTS-v2, Piper) | `nixos-module.nix` |
 | `modules/dsp-ctl/` | Rust TUI/CLI for the ArchibaldOS DSP VM | its own `nixosModule` |
 | `modules/mcp-servers/` | 11-crate Rust workspace: 9 dedicated read-only aspect MCP servers + umbrella `oligarchy-mcp` + ports-sec auditor | `nixosModules.default` |
+| `modules/oligarchy-forge/` | sandboxed coding-agent runner — a TOML schema compiles to a generated flake building a `dockerTools.streamLayeredImage`, run via rootless Podman; Ratatui dashboard. **Read-write**, so deliberately outside the MCP surface | its own `nixosModule` (`custom.oligarchyForge`) |
+| `modules/oligarchy-plugins/` | tiered sandboxed plugin runtime — one WIT ABI across three sandbox tiers, with per-instance W^X. The FX Bazaar's foundation. **Read-write**, so also outside the MCP surface. See §5b | `nixosModules.plugins` / `.default` |
+| `modules/demod-talk/` | pure-Lua DCF chat stack (certified text + voice L3, SuperPack/Reed-Solomon transport, StreamDB history). Plaintext by design, so `interface` is mandatory and asserted to be WireGuard | `services.demod-talk` |
 | `modules/ArchibaldOS/` | the RT DSP guest OS, its own flake under `modules/ArchibaldOS/modules/` | its own modules |
 
 ### 5a. Boot → login ordering
@@ -174,6 +182,58 @@ without it, `nixos-rebuild switch` restarts greetd on nearly every rebuild
 (its `ExecStart` embeds the store path + `$PATH`, which change every
 generation), which kills the live Hyprland session it spawned.
 
+### 5b. Plugin runtime (`modules/oligarchy-plugins/`)
+
+`custom.plugins.*`. One WIT ABI (`oligarchy:plugin@0.1.0`) across three
+sandbox tiers, selected per plugin from its `plugin.toml` manifest. The
+point is **per-instance W^X**: `MemoryDenyWriteExecute` is decided per
+plugin from a `jit = none|host|self` manifest field and written into a
+systemd drop-in, rather than being set once for the whole machine. A plugin
+that genuinely needs a JIT can have one without every other plugin
+inheriting the concession.
+
+| Tier | Isolation | `jit = "self"` gets W+X | Install path |
+|---|---|---|---|
+| `wasm` | wasmtime + WASI, in-process | no — the guest is a wasm sandbox | imperative or declared |
+| `native` / `lua` | bwrap + Landlock + seccomp | no — the seccomp filter denies it | imperative or declared |
+| `microvm` | a separate kernel (microvm.nix) | **yes**, inside the guest only | **declared only** |
+
+Two structural rules hold the design up:
+
+- **Nobody is in `nix.settings.trusted-users`.** Per the Nix manual that is
+  root-equivalent. The trust anchor is instead a signed cache plus its
+  pinned key, with every path verified before registration:
+  `verify_signature` requires *both* a signature naming a key from
+  `trustedPublicKeys` *and* `nix store verify` accepting it — because
+  `nix store verify --sigs-needed 1` alone short-circuits for
+  content-addressed paths, and `nix store add-path` needs no privilege.
+  `custom.plugins.installers` is the option that exists so `trusted-users`
+  does not have to be; it grants membership of the group owning the control
+  socket, which is the only registry-mutating path.
+- **The W^X rule lives in two mirrored places on purpose** —
+  `Manifest::wx_enforced()` in `host/src/manifest.rs` and `wxEnforced` in
+  `modules/plugins.nix`. Change one and you must change the other;
+  `nix build .#plugins-wx-enforcement` boots a real kernel and asserts they
+  agree.
+
+Five build gates cover it, all needing KVM and therefore all deliberately
+outside `nix flake check`:
+
+| Gate | Proves |
+|---|---|
+| `plugins-wx-enforcement` | the tier/jit W^X split reaches the systemd unit |
+| `plugins-policy-refusal` | policy refuses at *install* time, not at load time |
+| `plugins-signed-install` | an unprivileged user can install a signed plugin and only a signed one |
+| `plugins-tier1-runtime` | a real `.so` observes the W^X its manifest declared — probing six routes to executable memory, not one |
+| `plugins-tier2-runtime` | a self-JIT plugin gets W+X inside a real microVM **and only inside it** (needs *nested* KVM) |
+
+`docs/plugins-roadmap.md` is the integration record, including the known
+gaps per stage and a falsification write-up (§4.1) of three W^X bypasses
+that made an earlier version of the tier-1 claim false.
+
+Like `oligarchy-forge` and `dsp-ctl` this is a **read-write** tool, so it
+stays out of the MCP surface.
+
 ## 6. `vm-manager/` — VMs
 
 A sub-flake providing two NixOS modules — `quickemu-vm` and `dsp-vm` —
@@ -184,6 +244,16 @@ plus per-VM definitions in `vm-manager/config/`:
 - **Coding sandbox** — development isolation
 - **Kali** — penetration-testing guest
 - **OpenWRT** — router simulation
+
+Tier 2 of the plugin runtime (§5b) brings microvm.nix's host module onto
+the same machine. There is no option collision — microvm.nix writes
+`users.users.microvm`, `systemd.targets.microvms`, `/var/lib/microvms` and
+`boot.kernelModules += [ "tap" "vhost_net" ]` (plus `vhost_vsock`, which
+the plugin module adds), while vm-manager writes `custom.vm.*` and its own
+services — but both want `/dev/kvm`, and that interaction is unexercised.
+`microvm.autostart` is deliberately left empty: a plugin's guest is started
+by its own unit's `Requires=`, so autostarting would give one guest two
+owners.
 
 ## 7. `home/` — Home Manager
 
@@ -287,6 +357,7 @@ rollout runbook.
 | Rootless Docker | `virtualisation.docker.rootless` | **on** | Daemon runs as the user; no root-equivalent `docker` group |
 | Secure Boot | `custom.secureBoot.enable` | off | lanzaboote signed chain + optional TPM2 LUKS |
 | Secrets | `custom.secrets` (sops-nix) | **on** | Age key lives at `/var/lib/sops-nix/key.txt` (never in-store); encrypted `*.enc.env` only |
+| Plugin runtime W^X | `custom.plugins` (`allowedTiers`, `allowSelfJit`, `requireSignature`) | off | Per-*instance* `MemoryDenyWriteExecute` from the plugin's own manifest, plus a seccomp filter that also denies anonymous `PROT_EXEC`, `ptrace` and `userfaultfd`, and `NoExecPaths=/ <stateDir>` against plain-file dual mapping. Signed-only install with nobody in `trusted-users`. See §5b |
 | Steam/game sandbox | `steam-noswap.slice` + `systemd-run` launch wrapper (icewm menu + `home/apps/desktop-entries.nix`) | **on** | `MemorySwapMax=0` (isolates games from swap/zram — a memory ceiling OOM-kills the game instead of thrashing) plus `NoNewPrivileges`, `ProtectHome`/`Hostname`/`Clock`/`Kernel{Tunables,Logs,Modules}`/`ControlGroups`, `RestrictSUIDSGID`, `LockPersonality`. Deliberately excludes `RestrictNamespaces`/`SystemCallFilter` (breaks Proton's pressure-vessel sandbox), `MemoryDenyWriteExecute` (breaks Wine/Mono JIT), `RestrictRealtime` (GameMode may want RT scheduling) |
 
 `oligarchy-security status` (also `oligarchy-ctl status`, the DCF tray,
@@ -465,6 +536,10 @@ secrets management. The tray auto-starts on login.
 | `CLAUDE.md` | operational guidance for Claude Code working on this repo |
 | `docs/architecture.md` | this file — the straight technical reference |
 | `docs/mcp-servers-roadmap.md` | the MCP server design + living roadmap |
+| `docs/plugins-roadmap.md` | the plugin runtime design + integration record (§5b) |
+| `docs/oligarchy-forge-roadmap.md` | the sandboxed coding-agent runner's design + roadmap |
+| `docs/dgpu-steam-forcing.md` | why the compositor never renders on the dGPU |
+| `docs/bios-uma-unlock.md` | the iGPU UMA carve-out procedure (out-of-band, not Nix) |
 | `docs/security-hardening.md` | security rollout runbook (presets, soak steps) |
 | `docs/secure-boot-enrollment.md` | secure-boot enrollment procedure |
 | `docs/dcf-mesh-agent.md` | DCF mesh agent design |
@@ -484,6 +559,13 @@ nix build .#malwareScan
 
 # MCP source audit (fails if any crate opens a socket outside ports-sec, or escapes its allowlist)
 nix build .#mcp-self-audit
+
+# plugin runtime gates — all need KVM, tier2 needs *nested* KVM
+nix build .#plugins-wx-enforcement
+nix build .#plugins-policy-refusal
+nix build .#plugins-signed-install
+nix build .#plugins-tier1-runtime
+nix build .#plugins-tier2-runtime
 
 # eval-only check (full toplevel is already in checks; slow gates left out)
 nix flake check
