@@ -1,6 +1,11 @@
-# Tier 1 native, self-JIT. This is the interesting manifest: it is the one
-# that turns MemoryDenyWriteExecute off for its own systemd instance and
-# nothing else on the machine.
+# Tier 1 native, self-JIT, + the OPTIONAL dsp extension. This is the
+# interesting manifest: it is the one that turns MemoryDenyWriteExecute off for
+# its own systemd instance and nothing else on the machine.
+#
+# It is also the best argument for why `dsp` is optional rather than mandatory.
+# A plugin that genuinely needs runtime code generation for an oversampling
+# kernel is a real and rare thing; making every plugin declare a processor to be
+# loadable meant the ABI could not tell this apart from a chat client.
 #
 # It only loads if custom.plugins.allowSelfJit = true AND "native" is in
 # allowedTiers AND minTrust admits "trusted". Three independent gates, all

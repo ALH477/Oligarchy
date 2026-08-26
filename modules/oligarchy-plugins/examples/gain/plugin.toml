@@ -1,7 +1,12 @@
-# Tier 0. The default, and what the FX Bazaar should insist on for anything
-# it did not build itself. jit = "host" means Cranelift compiles this in the
-# host address space; the guest never asks the kernel for executable memory,
-# so the W^X filter costs it nothing and can stay on.
+# Tier 0 + the OPTIONAL dsp extension. The default tier, and what the FX Bazaar
+# should insist on for anything it did not build itself. jit = "host" means
+# Cranelift compiles this in the host address space; the guest never asks the
+# kernel for executable memory, so the W^X filter costs it nothing and can stay
+# on.
+#
+# This one exports `dsp`, which makes it the *unusual* shape — see
+# examples/README.md and examples/hello-control for the floor. A plugin is a
+# control surface; audio is an extension it may or may not carry.
 
 id      = "demod-gain"
 version = "0.3.1"

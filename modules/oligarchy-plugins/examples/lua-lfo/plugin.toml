@@ -1,7 +1,12 @@
-# Tier 1 Lua. jit = "none" deliberately: this is control-rate modulation, the
-# trace compiler buys nothing, and running with W^X enforced means one fewer
-# thing to reason about. Compare examples/tape-saturator, which genuinely
-# needs it.
+# Tier 1 Lua + the OPTIONAL dsp extension. jit = "none" deliberately: this is
+# control-rate modulation, the trace compiler buys nothing, and running with W^X
+# enforced means one fewer thing to reason about. Compare
+# examples/tape-saturator, which genuinely needs it.
+#
+# Worth reading directly against examples/dcf-talk: same tier, same jit, and the
+# only difference is that lfo.lua provides `create` and talk.lua does not. That
+# is the whole of what "exports dsp" means — a property of the artifact, which
+# the host discovers by asking rather than by trusting the manifest.
 
 id      = "demod-lfo"
 version = "0.1.0"

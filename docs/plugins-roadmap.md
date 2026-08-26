@@ -847,6 +847,26 @@ formality.
    but nothing exercises `LuaPlugin::load` yet — the `wx-probe` fixture is C.
    A LuaJIT fixture would also be the natural place to check that `jit=self`
    actually buys compiled traces rather than the interpreter fallback.
+
+   **And the Lua tier can only run single-file plugins**, which was found by
+   trying to write `examples/dcf-talk` and is a much bigger limitation than it
+   sounds. `strip_dangerous_globals` in `tiers/lua.rs` nils `dofile`, `require`,
+   `loadfile`, `load`, `loadstring`, `package`, `io` and `os`. The reasoning is
+   correct — `load` would let a plugin build chunks at runtime and walk around
+   source review, which is the whole point of reviewing source — but the
+   consequence is that no multi-module Lua library can be a plugin. That
+   excludes essentially every real one, including the six-module DCF-Talk stack
+   (`dcf_text`, `dcf_voice`, `dcf_transport`, `dcf_snake`, `dcf_history`,
+   `dcf_audio`) that `modules/demod-talk` already ships and certifies.
+
+   Landlock permits the *reads* — the artifact's own `$STORE` is in the
+   baseline — so the missing piece is only the resolution step. The fix is a
+   host-mediated loader: a `host.require(name)` that resolves against a fixed
+   allowlist inside the artifact's own store path and returns the module table,
+   with no path traversal and no arbitrary chunk compilation. That keeps the
+   property the strip list exists to protect (nothing runs that was not in the
+   reviewed artifact) while making the tier usable. Restoring `dofile` would
+   not — it takes an arbitrary path.
 6. **Nothing tests that the two drop-in generators agree beyond the MDWE line.**
    Both halves of the mirror gained directives during this stage and
    `NotifyAccess` plus the `AF_NETLINK` branch reached the Rust one alone —

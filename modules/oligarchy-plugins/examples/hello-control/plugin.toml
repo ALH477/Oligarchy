@@ -1,0 +1,34 @@
+# The floor. The smallest thing that is a valid plugin.
+#
+# No dsp, no network, no devices, no read caps beyond its own state directory.
+# It exports `control`, `init` and `shutdown` — the mandatory `plugin` world —
+# and that is the complete list.
+#
+# It is here because the examples used to be three audio effects, which taught
+# newcomers that a plugin is a DSP unit and that the processor vtable was
+# something you had to fill in. It is not. Start from this manifest and add only
+# what your plugin actually needs; every capability below the [caps] line is a
+# thing an operator has to agree to.
+
+id      = "hello-control"
+version = "1.0.0"
+tier    = "wasm"         # the default, and the right answer for anything you
+                         # did not build yourself
+jit     = "host"         # Cranelift compiles it in the host; the guest never
+                         # asks the kernel for executable memory
+trust   = "untrusted"    # and it does not matter, which is the point of tier 0
+entry   = "module.wasm"
+abi     = "oligarchy:plugin@0.1.0"
+
+[caps]
+fs_read       = []
+fs_read_write = ["$STATE"]
+network       = false
+devices       = []
+host_services = ["log"]
+memory_max    = 8388608     # 8 MiB
+cpu_quota     = 5
+
+[meta]
+author  = "DeMoD LLC"
+summary = "The minimal conforming plugin: control surface, nothing else"

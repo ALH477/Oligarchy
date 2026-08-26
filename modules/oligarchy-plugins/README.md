@@ -179,9 +179,11 @@ host/src/
   guest.rs                    the tier 2 peer: same binary, vsock side, inside the VM
 modules/guest.nix             the microVM guest's NixOS config
 tests/wx-probe.c              a real plugin that asks the kernel what it is allowed
-examples/                     wasm/native/lua manifests, incl. the self-JIT case.
-                              All three export the OPTIONAL dsp interface; a
-                              plugin does not have to, and most will not
+examples/                     five manifests + README.md indexing them. Start at
+                              dcf-talk (a real app: chat over DCF, control-only)
+                              and hello-control (the minimal floor). gain,
+                              lua-lfo and tape-saturator export the OPTIONAL dsp
+                              interface, which is the unusual shape
                               (no microvm example: tier 2 needs a closure, so it
                               only exists as a declaredPlugins entry)
 ```

@@ -1,0 +1,71 @@
+# THE HEADLINE EXAMPLE. Read this one first.
+#
+# DCF-Talk is decentralized text and voice chat over the DeMoD Compute Fabric —
+# the closest thing this tree has to a Discord, and a far better picture of what
+# a plugin *is* than any audio effect. It handles commands, keeps history,
+# talks to peers, and exports no `dsp` interface at all.
+#
+# That last part is the lesson. This plugin carries voice, and it still does not
+# want the host's audio callback: DCF's voice path is its own transport —
+# capture -> L2 -> jitter/PLC/DTX -> playout, over 17-byte DeModFrames — and it
+# never asks the host for a `process()` hook. Audio moving through a plugin is
+# not the same thing as a plugin being an audio effect. The realtime DSP path on
+# this system belongs to the RT VM engine; see examples/README.md.
+#
+# The real stack lives in modules/demod-talk/ (pure Lua, six certified golden
+# vectors gating its build). This manifest and talk.lua are the plugin-shaped
+# wrapper around it — and talk.lua documents why it is currently a shape rather
+# than a wiring: the Lua tier strips `dofile`/`require`/`load`, so it can only
+# run SINGLE-FILE plugins, which excludes the six-module DCF stack. Reading it
+# is permitted; loading it is not. That is a gap in the tier, recorded in
+# docs/plugins-roadmap.md, and this example is how it was found.
+
+id      = "dcf-talk"
+version = "0.1.0"
+tier    = "lua"          # the stack is pure Lua; nothing to compile
+jit     = "none"         # chat is not a hot loop. W^X stays enforced.
+trust   = "first-party"
+entry   = "talk.lua"
+abi     = "oligarchy:plugin@0.1.0"
+
+[caps]
+# The history database and the identity keypair.
+fs_read_write = ["$STATE"]
+# The certified DCF Lua modules, read-only out of the closure. Landlock permits
+# the reads; see above for why the tier cannot currently turn a read into a
+# loaded module.
+fs_read       = ["$STORE"]
+
+# ── the interesting capability ──────────────────────────────────────────────
+#
+# This is the only example that asks for the network, and it does NOT get it by
+# default: custom.plugins.allowNetwork is false, so on a stock host this
+# manifest is REFUSED at install time with the reason named. Turning it on is an
+# operator decision, made in the flake, not something the plugin can talk its
+# way into.
+#
+# Two honest caveats, because a capability you misunderstand is worse than one
+# you do not have:
+#
+#   1. DCF is UDP. `tcp_connect` cannot express that — Landlock's network
+#      confinement (ABI >= 4) gates TCP connect/bind only, with no UDP
+#      equivalent. So `network = true` here buys the coarse answer: the unit
+#      loses PrivateNetwork and reaches the whole network namespace it is in.
+#      A TCP plugin can be confined to a port list; this one cannot. That is a
+#      real gap in the design and not a property of this plugin.
+#
+#   2. DCF carries no encryption, deliberately, to stay clear of EAR/ITAR.
+#      Confidentiality is a property of the tunnel, so this belongs on a
+#      WireGuard interface and services.demod-talk asserts exactly that. The
+#      plugin policy's network gate is a SECOND, independent control: passing it
+#      does not mean the transport underneath is private.
+network       = true
+tcp_connect   = []       # deliberately empty; see caveat 1
+
+host_services = ["log", "now_ns", "read_config"]
+memory_max    = 67108864    # 64 MiB — StreamDB history plus jitter buffers
+cpu_quota     = 30
+
+[meta]
+author  = "DeMoD LLC"
+summary = "Decentralized text + voice chat over DCF. Control surface, no dsp."
