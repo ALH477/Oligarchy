@@ -161,6 +161,51 @@ Still open from the same review, and not yet fixed:
    `fs_read = ["/nix/var/nix/daemon-socket"]` passes policy and hands the plugin
    the nix-daemon. `/proc`, `/sys`, `/etc` and `/run/dbus` are equally unlisted.
    Add them, and treat `fs_read` of a socket as read-write.
+
+   **The `/proc` half of this is more serious than "an unlisted prefix", and a
+   seventh probe route now proves it.** `/proc/self/mem` writes use `FOLL_FORCE`,
+   so the target page's protection is not consulted — the identical primitive to
+   `ptrace(POKEDATA)`, which the filter *does* deny, reached through a file
+   descriptor instead of a syscall. A plugin can point it at its own `.text`,
+   which is a `PROT_READ|PROT_EXEC` mapping it never had to create and therefore
+   one no `mmap`/`mprotect` rule can refuse.
+
+   Probed on a booted kernel, the route is **closed** — and closed by Landlock,
+   in *both* rows:
+
+   ```
+   [wxnone] ... ptrace=denied  uffd=denied  procmem=denied(landlock)
+   [wxself] ... ptrace=allowed uffd=allowed procmem=denied(landlock)
+   ```
+
+   The `wxself` row is the informative one: it runs with **no filter installed
+   at all**, and the route is still refused. So this is not the W^X filter's
+   work, and it cannot be — **seccomp cannot inspect path strings**, and denying
+   `pwrite` wholesale is not available to a plugin that writes files. Landlock's
+   deny-by-default allowlist is the only layer that can close this route.
+
+   Which means the W^X guarantee on this route is a *dependency on the
+   filesystem policy*, and right now that dependency is implicit. Two ways it
+   breaks silently:
+
+   - `CompatLevel::BestEffort` drops rights on a lower Landlock ABI. `TARGET_ABI`
+     is v5 and the lowest kernel this distro offers is 6.12 (v6), so there is
+     headroom today — but the degradation is silent by design, and the tier 1
+     gate accepts `landlock partially` enforced.
+   - Adding `/proc` to a plugin's `fs_read` passes policy today, because of
+     exactly the omission this item opens with. That single line would reopen a
+     full W^X bypass, and no assertion, filter rule or gate would say so.
+
+   The gate now pins `procmem=denied(landlock)` rather than a bare `denied`, so
+   either failure mode fails the build instead of passing quietly. The fix on
+   the policy side is still open, and it is a real tradeoff rather than an
+   oversight: prefix-forbidding `/proc` is the only robust option the current
+   `is_under` mechanism supports, and it also costs a plugin `/proc/cpuinfo`
+   (SIMD detection is a legitimate thing for a DSP plugin to want). The
+   alternative is to keep Landlock as the sole control but make the dependency
+   explicit — refuse any `wx_enforced()` plugin whose caps reach `/proc`, and
+   require Landlock *fully* enforced rather than partially whenever
+   `wx_enforced()` is true.
 5. **`network = true` with an empty `tcp_connect` denies all TCP** while
    `plugind explain` prints "ALL TCP". Fail-closed, but the tool states the
    opposite of what the kernel will do.

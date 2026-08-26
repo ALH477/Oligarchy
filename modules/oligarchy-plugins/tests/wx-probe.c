@@ -13,7 +13,7 @@
  * reports through the host log callback — which also exercises the C vtable,
  * the host-services struct, and the journal path in one go.
  *
- * It probes SIX things, not one, and that is the lesson rather than a detail.
+ * It probes SEVEN things, not one, and that is the lesson rather than a detail.
  * The first version asked only whether mprotect(PROT_EXEC) and memfd_create
  * were refused — the two routes the filter happened to cover — so it reported
  * "denied" while three other routes to executable memory were wide open, and
@@ -28,6 +28,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <sys/mman.h>
 #include <sys/ptrace.h>
@@ -134,6 +135,59 @@ static bool probe_userfaultfd_allowed(void)
     return true;
 }
 
+/* /proc/self/mem, the sibling of the ptrace route above.
+ *
+ * Writes through this fd use FOLL_FORCE, so the target page's protection is not
+ * consulted — the identical primitive to ptrace(POKEDATA), reached through a
+ * file descriptor instead of a syscall a seccomp filter can name. It is probed
+ * SEVENTH because closing ptrace and leaving this open would be closing a door
+ * and not the one beside it.
+ *
+ * The target is this plugin's own machine code, which is the honest choice: a
+ * PROT_READ|PROT_EXEC mapping the plugin did not have to create, and therefore
+ * one no mmap/mprotect rule can deny it. If the write lands, the plugin can
+ * rewrite its own .text, and jit = "none" means nothing.
+ *
+ * Non-destructive by construction: the byte written is the byte just read. The
+ * page still COW-breaks and the write still goes through FOLL_FORCE, so a
+ * success is a real success — we simply decline to corrupt ourselves to prove
+ * it.
+ */
+static const char *probe_proc_self_mem(void)
+{
+    /* Our own address: in .text, mapped r-xp, and valid right here. */
+    uintptr_t target = (uintptr_t)(void *)&probe_proc_self_mem;
+    errno = 0;
+    int fd = open("/proc/self/mem", O_RDWR);
+    if (fd < 0) {
+        /* WHICH control refused matters more than the refusal. The W^X seccomp
+         * filter answers EPERM (SeccompAction::Errno(EPERM) in seccomp.rs);
+         * Landlock answers EACCES. The first denial here turned out to be
+         * EACCES in BOTH the jit=none and jit=self rows — meaning the filter
+         * was not involved at all and the filesystem allowlist was carrying
+         * this route by itself. That is a real defence, but it is a DIFFERENT
+         * defence, and it degrades on its own terms: CompatLevel::BestEffort
+         * silently drops rights on an older Landlock ABI, and any manifest that
+         * ever grants a cap under /proc reopens the route without the W^X layer
+         * noticing. Reporting the errno is what makes that visible instead of
+         * inferred. Same lesson as UFFD_USER_MODE_ONLY above. */
+        switch (errno) {
+        case EPERM:  return "denied(seccomp)";
+        case EACCES: return "denied(landlock)";
+        default:     return "denied(other)";
+        }
+    }
+    unsigned char byte;
+    bool ok = false;
+    if (pread(fd, &byte, 1, (off_t)target) == 1)
+        ok = (pwrite(fd, &byte, 1, (off_t)target) == 1);
+    close(fd);
+    /* The fd opened, so the FS layer let us in; anything refusing the write is
+     * the memory layer. Distinguished because "can open it" and "can write
+     * through it" are separate claims. */
+    return ok ? "allowed" : "denied(write)";
+}
+
 static bool pl_init(const oligarchy_host *host)
 {
     char msg[256];
@@ -146,15 +200,18 @@ static bool pl_init(const oligarchy_host *host)
     bool dual_ok = probe_file_dualmap_allowed();
     bool ptrace_ok = probe_ptrace_allowed();
     bool uffd_ok = probe_userfaultfd_allowed();
+    const char *procmem = probe_proc_self_mem();
 
     snprintf(msg, sizeof msg,
-             "WXPROBE exec=%s memfd=%s anon=%s dualmap=%s ptrace=%s uffd=%s",
+             "WXPROBE exec=%s memfd=%s anon=%s dualmap=%s ptrace=%s uffd=%s "
+             "procmem=%s",
              exec_ok ? "allowed" : "denied",
              memfd_ok ? "allowed" : "denied",
              anon_ok ? "allowed" : "denied",
              dual_ok ? "allowed" : "denied",
              ptrace_ok ? "allowed" : "denied",
-             uffd_ok ? "allowed" : "denied");
+             uffd_ok ? "allowed" : "denied",
+             procmem);
     host->log(host, OLIGARCHY_LOG_INFO, msg);
 
     /* Return true either way. The point is to report, not to refuse: a plugin

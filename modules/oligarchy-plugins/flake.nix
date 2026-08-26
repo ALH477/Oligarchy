@@ -406,26 +406,50 @@
                 # any plugin is involved.
                 machine.succeed("plugind selftest")
 
+                import re
+
                 def probe(plugin):
                     machine.succeed(f"plugind install /etc/oligarchy/test/{plugin} --allow-unsigned")
                     machine.succeed(f"plugind enable {plugin}")
                     machine.wait_for_unit(f"oligarchy-plugin@{plugin}.service")
-                    return machine.succeed(
+                    j = machine.succeed(
                         f"journalctl -u oligarchy-plugin@{plugin}.service --no-pager"
                     )
+                    # Echoed into the build log unconditionally, not just on a
+                    # failed assertion. What the kernel actually answered is the
+                    # only output of this gate anybody should be reading, and
+                    # burying it inside an assert means you see it only when it
+                    # is already too late to be curious.
+                    m = re.search(r"WXPROBE .*", j)
+                    print(f"[{plugin}] {m.group(0) if m else 'NO WXPROBE LINE'}")
+                    return j
 
                 # ── jit=none: the filter is installed, so the plugin's own
                 #    mprotect(PROT_EXEC) must fail — and so must memfd_create,
                 #    which is the half MemoryDenyWriteExecute leaves open.
-                # All six routes, named individually. The first version of this
-                # assertion checked only the two the filter happened to cover,
-                # and passed while three others were wide open — an anonymous
-                # PROT_EXEC mapping, a plain-file dual mapping, and the two
-                # syscalls that write a page regardless of its protection.
+                # All seven routes, named individually. The first version of
+                # this assertion checked only the two the filter happened to
+                # cover, and passed while three others were wide open — an
+                # anonymous PROT_EXEC mapping, a plain-file dual mapping, and the
+                # two syscalls that write a page regardless of its protection.
+                #
+                # procmem is pinned to denied(landlock) rather than a bare
+                # "denied" on purpose, and it is the one row here that is NOT
+                # the W^X filter's work. seccomp cannot see path strings, so no
+                # filter rule can ever cover /proc/self/mem — denying pwrite
+                # wholesale is not an option for a plugin that writes files.
+                # Landlock's deny-by-default allowlist is therefore the ONLY
+                # layer that can close this route, which makes the W^X claim on
+                # it a dependency on the filesystem policy rather than on the
+                # filter. Pinning the attribution means that dependency fails
+                # the gate if it ever changes: a BestEffort degradation on an
+                # older Landlock ABI, or a manifest granted a cap reaching
+                # /proc, both turn this into denied(write) or allowed.
                 j = probe("wxnone")
                 assert (
                     "WXPROBE exec=denied memfd=denied anon=denied "
-                    "dualmap=denied ptrace=denied uffd=denied"
+                    "dualmap=denied ptrace=denied uffd=denied "
+                    "procmem=denied(landlock)"
                 ) in j, j
                 # ...and the unit says so where an auditor would look.
                 cat = machine.succeed("systemctl cat oligarchy-plugin@wxnone.service")
@@ -433,13 +457,17 @@
 
                 # ── jit=self: the concession. Both must be allowed, or tier 1
                 #    cannot serve the LuaJIT/Faust case it exists for.
-                # jit=self: no filter, so everything is allowed. dualmap is the
-                # exception — NoExecPaths is keyed off wx_enforced, so it is
-                # absent here too and the file mapping succeeds.
+                # jit=self: no filter, so everything is allowed. Two
+                # exceptions, and they are informative. dualmap, because
+                # NoExecPaths is keyed off wx_enforced and so is absent here
+                # too. And procmem, which is denied in BOTH rows — the proof
+                # that this route was never the filter's: with no filter
+                # installed at all, it is still refused, by Landlock.
                 j = probe("wxself")
                 assert (
                     "WXPROBE exec=allowed memfd=allowed anon=allowed "
-                    "dualmap=allowed ptrace=allowed uffd=allowed"
+                    "dualmap=allowed ptrace=allowed uffd=allowed "
+                    "procmem=denied(landlock)"
                 ) in j, j
                 cat = machine.succeed("systemctl cat oligarchy-plugin@wxself.service")
                 assert "MemoryDenyWriteExecute=no" in cat, cat
