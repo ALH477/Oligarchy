@@ -12,6 +12,27 @@
 // New functionality arrives as *new interfaces* discovered through
 // `host.query-extension`, never as changes to an existing interface.
 // Bump the package minor for additive interfaces, major only for breakage.
+//
+// WHAT A PLUGIN IS, AND WHAT IT IS NOT
+//
+// A plugin is a *control* surface. `dsp` below is an OPTIONAL extension, not
+// part of the mandatory world, and most plugins will never export it.
+//
+// This was the other way round until it was noticed, and the correction is
+// worth recording because the shape of the whole ABI followed from it.
+// Realtime audio on this system belongs to the RT VM engine — the ArchibaldOS
+// DSP guest, with an isolated core, a realtime kernel and NETJACK. It does not
+// belong to a plugin dlopen'd into a sandboxed host process, and it never did:
+// see the note on `processor` in host/src/plugin.rs, which had already worked
+// out that the microVM tier cannot carry a sample-rate path.
+//
+// So the mandatory floor is `control` plus lifecycle. A plugin that wants to
+// process audio exports the `plugin-dsp` world instead, and the host discovers
+// that through `host.query-extension("dsp")` rather than assuming it.
+//
+// The version stays at 0.1.0 despite this being a breaking change to the world:
+// 0.1.0 was never published and nothing external has pinned it, so inventing a
+// 0.2.0 would record a history that did not happen. The freeze begins at 1.0.
 
 package oligarchy:plugin@0.1.0;
 
@@ -39,6 +60,13 @@ interface host {
     query-extension: func(name: string) -> option<u32>;
 }
 
+/// OPTIONAL. Exported only by plugins in the `plugin-dsp` world, and discovered
+/// through `host.query-extension("dsp")`.
+///
+/// Note what this is for. It is a block-rate processing hook for a plugin that
+/// genuinely has samples to touch — not the system's audio engine. The realtime
+/// path lives in the RT VM guest, and a plugin here reaches it through the
+/// control surface rather than by being it.
 interface dsp {
     record audio-config {
         sample-rate: u32,
@@ -86,18 +114,26 @@ interface control {
     load-state: func(blob: list<u8>) -> result<_, string>;
 }
 
+/// The mandatory floor. Every plugin, every tier, exports exactly this.
 world plugin {
     import host;
 
-    export dsp;
     export control;
 
-    /// Called once after instantiation, before any processor is constructed.
-    /// Returning an error unloads the plugin without ever entering the
-    /// audio graph.
+    /// Called once after instantiation. Returning an error unloads the plugin
+    /// without it ever becoming reachable.
     export init: func() -> result<_, string>;
 
     /// Called before teardown. Best-effort: the host will kill the tier
     /// sandbox regardless of whether this returns.
     export shutdown: func();
+}
+
+/// The floor plus audio. A plugin opts in by targeting this world; the host
+/// probes for it and falls back to `plugin` when it is absent, so a
+/// control-only plugin is not a degraded case but the normal one.
+world plugin-dsp {
+    include plugin;
+
+    export dsp;
 }

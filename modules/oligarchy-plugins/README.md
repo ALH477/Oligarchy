@@ -179,7 +179,9 @@ host/src/
   guest.rs                    the tier 2 peer: same binary, vsock side, inside the VM
 modules/guest.nix             the microVM guest's NixOS config
 tests/wx-probe.c              a real plugin that asks the kernel what it is allowed
-examples/                     wasm/native/lua manifests, incl. the self-JIT case
+examples/                     wasm/native/lua manifests, incl. the self-JIT case.
+                              All three export the OPTIONAL dsp interface; a
+                              plugin does not have to, and most will not
                               (no microvm example: tier 2 needs a closure, so it
                               only exists as a declaredPlugins entry)
 ```

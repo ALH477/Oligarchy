@@ -1,10 +1,19 @@
-//! The common trait. Everything above this line in the stack — the audio
-//! graph, the FX Bazaar UI, the CLI — sees only `dyn Plugin` and never learns
-//! which tier a plugin runs in.
+//! The common trait. Everything above this line in the stack — the FX Bazaar
+//! UI, the CLI — sees only `dyn Plugin` and never learns which tier a plugin
+//! runs in.
 //!
 //! This is the payoff of the "mixed artifacts, one ABI" requirement: the ABI
 //! is this trait, the WIT world is its serialised form, and each tier is an
 //! adapter.
+//!
+//! **A plugin is a control surface. Audio is optional and rare.** `Processor`
+//! below is reached only when a plugin exports the `dsp` interface, and
+//! `create_processor` returning `Ok(None)` is the normal answer rather than a
+//! failure. Realtime audio on this system is the RT VM engine's job — the
+//! ArchibaldOS DSP guest, isolated core, RT kernel, NETJACK. The note on
+//! `Processor` had already worked out that the microVM tier cannot carry a
+//! sample-rate path; the same reasoning applies to a Landlock-confined host
+//! process, and the ABI now says so.
 
 use anyhow::Result;
 use std::fmt;
@@ -33,8 +42,20 @@ pub trait Plugin: Send {
 
     fn init(&mut self) -> Result<()>;
 
-    fn create_processor(&mut self, cfg: AudioConfig) -> Result<Box<dyn Processor>>;
+    /// True when the plugin exports the optional `dsp` interface.
+    ///
+    /// Cheap and side-effect-free, so a caller can branch on it without
+    /// constructing anything. Every tier answers it by asking the artifact
+    /// rather than by guessing from the manifest: the manifest says what the
+    /// plugin is *allowed* to do, not what it actually exports.
+    fn exports_dsp(&self) -> bool;
 
+    /// `Ok(None)` when the plugin exports no `dsp` interface. That is the
+    /// common case and not an error — do not turn it into one.
+    fn create_processor(&mut self, cfg: AudioConfig) -> Result<Option<Box<dyn Processor>>>;
+
+    /// Empty for a plugin with no `dsp` interface. Parameters are part of the
+    /// audio extension, not the control floor.
     fn params(&mut self) -> Result<Vec<ParamInfo>>;
 
     fn handle_command(&mut self, verb: &str, args: &[String]) -> Result<String>;
@@ -45,9 +66,15 @@ pub trait Plugin: Send {
     fn shutdown(&mut self);
 }
 
-/// The realtime half. Tier 0 and Tier 1 make this an in-process call; Tier 2
-/// cannot, which is why Tier 2 is not for the audio hot path — a microVM
-/// plugin gets block-rate control, not sample-rate processing.
+/// The optional audio half, reached only through `Plugin::create_processor`
+/// returning `Some`.
+///
+/// Tier 0 and Tier 1 make this an in-process call; Tier 2 cannot, which is why
+/// Tier 2 is not for the audio hot path — a microVM plugin gets block-rate
+/// control, not sample-rate processing. That observation is what eventually got
+/// generalised into making the whole interface optional: if a vsock hop
+/// disqualifies a tier from realtime audio, a plugin sandbox was never the
+/// right home for the system's audio engine either. The RT VM engine is.
 pub trait Processor: Send {
     /// `input` and `output` are interleaved, `channels * frames` long.
     fn process(&mut self, input: &[f32], output: &mut [f32]) -> Result<()>;

@@ -55,7 +55,7 @@ fn wt(e: wasmtime::Error) -> anyhow::Error {
 mod bindings {
     wasmtime::component::bindgen!({
         path: "../wit",
-        world: "plugin",
+        world: "plugin-dsp",
         // Keep the audio path synchronous. WASI 0.3's async is attractive for
         // control-plane work but inserts a poll loop between process() and
         // the DAC. On wasmtime 43 `async: false` and `trappable_imports: true`
@@ -66,9 +66,124 @@ mod bindings {
     });
 }
 
-use bindings::exports::oligarchy::plugin::{control, dsp};
+/// The control-only world, for the plugins that are the normal case.
+///
+/// Two `bindgen!` invocations rather than one because WIT has no notion of an
+/// optional export: a world either requires an interface or does not mention
+/// it. `plugin-dsp` is `include plugin` plus `export dsp`, so a component
+/// exporting audio satisfies both worlds while a control-only component
+/// satisfies only this one — and instantiating the wrong world is an error, not
+/// a missing accessor. `Instantiated` below is the discovery mechanism: try the
+/// superset, fall back to the floor.
+///
+/// The generated `host` import bindings are identical in both modules, so the
+/// linker is only ever set up once, against this one.
+mod bindings_control {
+    wasmtime::component::bindgen!({
+        path: "../wit",
+        world: "plugin",
+        imports: { default: trappable },
+    });
+}
+
+use bindings::exports::oligarchy::plugin::control as dsp_control;
+use bindings::exports::oligarchy::plugin::dsp;
 use bindings::oligarchy::plugin::host as wit_host;
-use bindings::Plugin as PluginWorld;
+use bindings::PluginDsp as PluginWorld;
+use bindings_control::exports::oligarchy::plugin::control;
+use bindings_control::Plugin as ControlWorld;
+
+/// Which world the component turned out to satisfy.
+///
+/// Not a fallback in the apologetic sense — `Control` is the expected variant.
+/// A plugin exporting `dsp` is the unusual one, because realtime audio on this
+/// system belongs to the RT VM engine and not to a sandboxed plugin process.
+enum Instantiated {
+    /// Exports the optional `dsp` interface as well as the control floor.
+    Dsp(PluginWorld),
+    /// The floor only.
+    Control(ControlWorld),
+}
+
+/// The shared surface, dispatched once here instead of at every call site.
+///
+/// The two `bindgen!` modules generate structurally identical but nominally
+/// distinct types for `control`, `command-result` and the world itself, so
+/// every shared call needs a match somewhere. Doing it in one place keeps the
+/// `Plugin` impl below readable and means a third world (if one is ever added)
+/// touches this block and nothing else.
+impl Instantiated {
+    /// `None` when the plugin does not process audio, which is the normal case.
+    fn dsp_world(&self) -> Option<&PluginWorld> {
+        match self {
+            Instantiated::Dsp(w) => Some(w),
+            Instantiated::Control(_) => None,
+        }
+    }
+
+    fn call_init(&self, store: &mut Store<HostState>) -> Result<()> {
+        let r = match self {
+            Instantiated::Dsp(w) => w.call_init(store),
+            Instantiated::Control(w) => w.call_init(store),
+        };
+        r.map_err(wt)
+            .context("calling init")?
+            .map_err(|e| anyhow::anyhow!("plugin init refused: {e}"))
+    }
+
+    fn call_shutdown(&self, store: &mut Store<HostState>) {
+        let _ = match self {
+            Instantiated::Dsp(w) => w.call_shutdown(store),
+            Instantiated::Control(w) => w.call_shutdown(store),
+        };
+    }
+
+    fn handle_command(
+        &self,
+        store: &mut Store<HostState>,
+        verb: &str,
+        args: &[String],
+    ) -> Result<String> {
+        match self {
+            Instantiated::Dsp(w) => {
+                match w
+                    .oligarchy_plugin_control()
+                    .call_handle_command(store, verb, args)?
+                {
+                    dsp_control::CommandResult::Ok(s) => Ok(s),
+                    dsp_control::CommandResult::Err(e) => Err(anyhow::anyhow!(e)),
+                }
+            }
+            Instantiated::Control(w) => {
+                match w
+                    .oligarchy_plugin_control()
+                    .call_handle_command(store, verb, args)?
+                {
+                    control::CommandResult::Ok(s) => Ok(s),
+                    control::CommandResult::Err(e) => Err(anyhow::anyhow!(e)),
+                }
+            }
+        }
+    }
+
+    fn save_state(&self, store: &mut Store<HostState>) -> Result<Vec<u8>> {
+        Ok(match self {
+            Instantiated::Dsp(w) => w.oligarchy_plugin_control().call_save_state(store)?,
+            Instantiated::Control(w) => w.oligarchy_plugin_control().call_save_state(store)?,
+        })
+    }
+
+    fn load_state(&self, store: &mut Store<HostState>, blob: &[u8]) -> Result<()> {
+        // Annotated because the two arms are nominally distinct `result<_,
+        // string>` types from the two bindgen modules, and inference will not
+        // pick one for the closure parameter on its own.
+        let r: std::result::Result<(), String> = match self {
+            Instantiated::Dsp(w) => w.oligarchy_plugin_control().call_load_state(store, blob)?,
+            Instantiated::Control(w) => w.oligarchy_plugin_control().call_load_state(store, blob)?,
+        };
+        r.map_err(|e| anyhow::anyhow!(e))
+    }
+}
 
 pub struct HostState {
     ctx: WasiCtx,
@@ -161,7 +276,7 @@ struct Ticker {
 pub struct WasmPlugin {
     manifest: Manifest,
     store: Store<HostState>,
-    bindings: PluginWorld,
+    bindings: Instantiated,
     ticker: Arc<Ticker>,
     /// Handle to the single live processor, if any.
     ///
@@ -239,9 +354,30 @@ impl WasmPlugin {
         store.limiter(|s| &mut s.limits);
         store.set_epoch_deadline(1);
 
-        let bindings = PluginWorld::instantiate(&mut store, &component, &linker)
-            .map_err(wt)
-            .context("instantiating component")?;
+        // Probe for the audio extension by instantiating the superset world
+        // first. A control-only component fails this and succeeds below; the
+        // error is discarded deliberately, because "does not export dsp" is the
+        // ordinary case and reporting it would train an operator to ignore a
+        // real instantiation failure.
+        //
+        // Instantiating twice is safe: instantiation runs no guest code beyond
+        // the component's own initialiser, and the pooling allocator makes it an
+        // mmap of a COW image. If that ever stops being true, probe the
+        // component's export list instead of trying it.
+        let bindings = match PluginWorld::instantiate(&mut store, &component, &linker) {
+            Ok(w) => {
+                tracing::debug!(plugin = %m.id, "component exports the optional dsp interface");
+                Instantiated::Dsp(w)
+            }
+            Err(_) => Instantiated::Control(
+                ControlWorld::instantiate(&mut store, &component, &linker)
+                    .map_err(wt)
+                    .context(
+                        "instantiating component: it satisfies neither the plugin world \
+                         (control + init + shutdown) nor plugin-dsp",
+                    )?,
+            ),
+        };
 
         let ticker = Arc::new(Ticker {
             stop: AtomicBool::new(false),
@@ -292,16 +428,20 @@ impl Plugin for WasmPlugin {
 
     fn init(&mut self) -> Result<()> {
         self.store.set_epoch_deadline(200); // ~1s at 5ms ticks, for setup
-        self.bindings
-            .call_init(&mut self.store)
-            .map_err(wt)
-            .context("calling init")?
-            .map_err(|e| anyhow::anyhow!("plugin init refused: {e}"))?;
+        self.bindings.call_init(&mut self.store)?;
         self.store.set_epoch_deadline(2); // ~10ms in steady state
         Ok(())
     }
 
-    fn create_processor(&mut self, cfg: AudioConfig) -> Result<Box<dyn Processor>> {
+    fn exports_dsp(&self) -> bool {
+        self.bindings.dsp_world().is_some()
+    }
+
+    fn create_processor(&mut self, cfg: AudioConfig) -> Result<Option<Box<dyn Processor>>> {
+        // No dsp export is not an error — see Plugin::create_processor.
+        if self.bindings.dsp_world().is_none() {
+            return Ok(None);
+        }
         anyhow::ensure!(
             self.processor.is_none(),
             "plugin {} already has a live processor; every Processor call needs \
@@ -316,6 +456,8 @@ impl Plugin for WasmPlugin {
         };
         let res = self
             .bindings
+            .dsp_world()
+            .expect("checked above")
             .oligarchy_plugin_dsp()
             .processor()
             .call_constructor(&mut self.store, wcfg)
@@ -323,22 +465,26 @@ impl Plugin for WasmPlugin {
             .context("constructing processor")?;
         self.processor = Some(res);
 
-        Ok(Box::new(WasmProcessor {
+        Ok(Some(Box::new(WasmProcessor {
             res,
             // The Box<dyn Plugin> holding this WasmPlugin is heap-pinned, and
             // the registry drops processors before plugins. The `processor`
             // field above enforces the one-at-a-time half of the invariant.
             owner: self as *mut WasmPlugin,
-        }))
+        })))
     }
 
     fn params(&mut self) -> Result<Vec<ParamInfo>> {
+        // Params belong to the audio extension, so a control-only plugin has
+        // none. Empty, not an error.
+        let Some(world) = self.bindings.dsp_world() else {
+            return Ok(Vec::new());
+        };
         // Params hang off a processor handle in the WIT, so this needs one to
         // exist. Taking &mut self (rather than &self, as before) is what lets
         // this work at all without casting the borrow away.
         let res = self.processor_handle()?;
-        let list = self
-            .bindings
+        let list = world
             .oligarchy_plugin_dsp()
             .processor()
             .call_params(&mut self.store, res)
@@ -357,32 +503,19 @@ impl Plugin for WasmPlugin {
     }
 
     fn handle_command(&mut self, verb: &str, args: &[String]) -> Result<String> {
-        match self
-            .bindings
-            .oligarchy_plugin_control()
-            .call_handle_command(&mut self.store, verb, args)?
-        {
-            control::CommandResult::Ok(s) => Ok(s),
-            control::CommandResult::Err(e) => Err(anyhow::anyhow!(e)),
-        }
+        self.bindings.handle_command(&mut self.store, verb, args)
     }
 
     fn save_state(&mut self) -> Result<Vec<u8>> {
-        Ok(self
-            .bindings
-            .oligarchy_plugin_control()
-            .call_save_state(&mut self.store)?)
+        self.bindings.save_state(&mut self.store)
     }
 
     fn load_state(&mut self, blob: &[u8]) -> Result<()> {
-        self.bindings
-            .oligarchy_plugin_control()
-            .call_load_state(&mut self.store, blob)?
-            .map_err(|e| anyhow::anyhow!(e))
+        self.bindings.load_state(&mut self.store, blob)
     }
 
     fn shutdown(&mut self) {
-        let _ = self.bindings.call_shutdown(&mut self.store);
+        self.bindings.call_shutdown(&mut self.store);
         self.ticker.stop.store(true, Ordering::Relaxed);
     }
 }
@@ -409,6 +542,10 @@ impl Processor for WasmProcessor {
         let p = unsafe { &mut *self.owner };
         let out = p
             .bindings
+            .dsp_world()
+            // A WasmProcessor only exists because create_processor returned
+            // Some, which only happens for the Dsp variant.
+            .expect("a processor implies the dsp world")
             .oligarchy_plugin_dsp()
             .processor()
             .call_process(&mut p.store, self.res, input)
@@ -428,6 +565,8 @@ impl Processor for WasmProcessor {
         let p = unsafe { &mut *self.owner };
         let _ = p
             .bindings
+            .dsp_world()
+            .expect("a processor implies the dsp world")
             .oligarchy_plugin_dsp()
             .processor()
             .call_set_param(&mut p.store, self.res, id, value);
@@ -436,6 +575,8 @@ impl Processor for WasmProcessor {
     fn get_param(&mut self, id: u32) -> f32 {
         let p = unsafe { &mut *self.owner };
         p.bindings
+            .dsp_world()
+            .expect("a processor implies the dsp world")
             .oligarchy_plugin_dsp()
             .processor()
             .call_get_param(&mut p.store, self.res, id)
@@ -446,6 +587,8 @@ impl Processor for WasmProcessor {
         let p = unsafe { &mut *self.owner };
         let _ = p
             .bindings
+            .dsp_world()
+            .expect("a processor implies the dsp world")
             .oligarchy_plugin_dsp()
             .processor()
             .call_reset(&mut p.store, self.res);

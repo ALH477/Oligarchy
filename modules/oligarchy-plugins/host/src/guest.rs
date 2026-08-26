@@ -189,16 +189,23 @@ fn dispatch(req: Req, plugin: &mut dyn Plugin, processors: &mut Vec<Box<dyn Proc
             plugin.init()?;
             Ok(Resp::Ok)
         }
+        Req::ExportsDsp => Ok(Resp::Bool(plugin.exports_dsp())),
         Req::CreateProcessor {
             sample_rate,
             block_size,
             channels,
         } => {
-            let p = plugin.create_processor(AudioConfig {
+            // None means the plugin is control-only, which is the floor and not
+            // a fault. Reported as its own variant so the host does not have to
+            // parse an error string to tell the two apart.
+            let Some(p) = plugin.create_processor(AudioConfig {
                 sample_rate,
                 block_size,
                 channels,
-            })?;
+            })?
+            else {
+                return Ok(Resp::NoDsp);
+            };
             processors.push(p);
             Ok(Resp::Handle((processors.len() - 1) as u32))
         }

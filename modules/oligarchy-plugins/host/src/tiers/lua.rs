@@ -182,10 +182,27 @@ impl Plugin for LuaPlugin {
         Ok(())
     }
 
-    fn create_processor(&mut self, cfg: AudioConfig) -> Result<Box<dyn Processor>> {
+    fn exports_dsp(&self) -> bool {
+        // The Lua adapter's version of get_extension: a module that processes
+        // audio provides `create`. Everything else is control-only, which for a
+        // scripting tier is the overwhelmingly common shape — Lua is glue here,
+        // not the audio hot path.
+        let Ok(lua) = self.lua.lock() else {
+            return false;
+        };
+        let Ok(module) = lua.registry_value::<Table>(&self.module) else {
+            return false;
+        };
+        matches!(module.get::<Value>("create"), Ok(Value::Function(_)))
+    }
+
+    fn create_processor(&mut self, cfg: AudioConfig) -> Result<Option<Box<dyn Processor>>> {
         let lua = self.lua.lock().unwrap();
         let module: Table = lua.registry_value(&self.module)?;
-        let create: Function = module.get("create")?;
+        // Absent `create` means a control-only module. Not an error.
+        let Value::Function(create) = module.get::<Value>("create")? else {
+            return Ok(None);
+        };
 
         let t = lua.create_table()?;
         t.set("sample_rate", cfg.sample_rate)?;
@@ -196,12 +213,12 @@ impl Plugin for LuaPlugin {
         let key = lua.create_registry_value(proc_)?;
         drop(lua);
 
-        Ok(Box::new(LuaProcessor {
+        Ok(Some(Box::new(LuaProcessor {
             lua: self.lua.clone(),
             proc_: key,
             channels: cfg.channels as usize,
             scratch: Vec::with_capacity((cfg.block_size * cfg.channels as u32) as usize),
-        }))
+        })))
     }
 
     fn params(&mut self) -> Result<Vec<ParamInfo>> {

@@ -222,44 +222,20 @@ static bool pl_init(const oligarchy_host *host)
 
 static void pl_shutdown(void) {}
 
-/* The DSP side is deliberately trivial — this fixture is about the sandbox. */
-static bool proc_process(const oligarchy_processor *p, const float *in,
-                         float *out, uint32_t frames)
-{
-    (void)p;
-    for (uint32_t i = 0; i < frames; i++)
-        out[i] = in[i];
-    return true;
-}
-static void proc_set_param(const oligarchy_processor *p, uint32_t id, float v)
-{
-    (void)p; (void)id; (void)v;
-}
-static float proc_get_param(const oligarchy_processor *p, uint32_t id)
-{
-    (void)p; (void)id; return 0.0f;
-}
-static void proc_reset(const oligarchy_processor *p) { (void)p; }
-
-static oligarchy_processor the_processor = {
-    .plugin_data = NULL,
-    .process = proc_process,
-    .set_param = proc_set_param,
-    .get_param = proc_get_param,
-    .reset = proc_reset,
-};
-
-static oligarchy_processor *pl_create(const oligarchy_audio_config *cfg)
-{
-    (void)cfg;
-    return &the_processor;
-}
-static void pl_destroy(oligarchy_processor *p) { (void)p; }
-static uint32_t pl_param_count(void) { return 0; }
-static bool pl_param_info(uint32_t index, oligarchy_param_info *out)
-{
-    (void)index; (void)out; return false;
-}
+/* No dsp extension, and that is the point rather than an omission.
+ *
+ * This fixture is a sandbox probe: it has no samples to touch, and under the
+ * current ABI a plugin is a control surface with audio as an optional
+ * extension. Returning NULL for every id makes it the *ordinary* shape of a
+ * plugin, so the tier 1 gate now exercises the control-only floor end to end —
+ * dlopen, init, the host vtable, the journal — without a processor anywhere in
+ * the picture.
+ *
+ * Before the ABI was corrected this file had to carry a stub `process()` that
+ * copied its input to its output, purely to satisfy a mandatory export. That
+ * stub was the clearest possible sign the world was the wrong shape: realtime
+ * audio belongs to the RT VM engine, not to every plugin that wants to be
+ * loaded. */
 static const void *pl_get_extension(const char *ext_id) { (void)ext_id; return NULL; }
 
 static const oligarchy_plugin the_plugin = {
@@ -269,10 +245,6 @@ static const oligarchy_plugin the_plugin = {
     .version = "0.0.1",
     .init = pl_init,
     .shutdown = pl_shutdown,
-    .create = pl_create,
-    .destroy = pl_destroy,
-    .param_count = pl_param_count,
-    .param_info = pl_param_info,
     .get_extension = pl_get_extension,
 };
 

@@ -1,8 +1,8 @@
 /* oligarchy_plugin.h - stable C ABI for Tier 1 native plugins.
  *
  * This is a hand-maintained projection of wit/oligarchy-plugin.wit. It exists
- * because native DSP cannot tolerate the Wasm boundary on the audio hot path,
- * but must still be drivable through the same host-side trait.
+ * because a native plugin must be drivable through the same host-side trait as
+ * a wasm one without paying the component boundary to get there.
  *
  * ABI CONTRACT (borrowed wholesale from CLAP, which got this right):
  *   - `oligarchy_plugin_entry` is the ONLY exported symbol.
@@ -11,11 +11,29 @@
  *     get_extension(). Unknown ids return NULL; callers must handle NULL.
  *   - A binary built against 1.x loads in any host implementing 1.y.
  *
- * REALTIME CONTRACT:
- *   - process() runs on the audio thread. No malloc, no syscalls, no locks,
- *     no logging. Everything it needs is allocated in create().
- *   - Violating this under Tier 1 will not be caught by the sandbox. It will
- *     just make the guitar sound bad.
+ * A PLUGIN IS A CONTROL SURFACE. Audio is an extension, and an unusual one.
+ *
+ * The processor vtable used to live in `oligarchy_plugin` itself, which made
+ * every plugin an audio effect whether it had samples to touch or not. It is
+ * now behind OLIGARCHY_EXT_DSP like everything else — which is what the third
+ * bullet above said should happen all along, and what the pre-existing
+ * OLIGARCHY_EXT_PARAMS id was already implying while param_count/param_info
+ * sat in the core struct contradicting it.
+ *
+ * The reason is architectural, not tidiness: realtime audio on this system is
+ * the RT VM engine's job. That guest has an isolated core, a realtime kernel
+ * and NETJACK. A plugin dlopen'd into a sandboxed, Landlock-confined host
+ * process is not where a sample-rate deadline should live, and the note on
+ * `Processor` in host/src/plugin.rs had already reached that conclusion for the
+ * microVM tier without the ABI following it.
+ *
+ * REALTIME CONTRACT (only if you export OLIGARCHY_EXT_DSP):
+ *   - process() runs on whatever thread the caller drives it from, at block
+ *     rate. No malloc, no syscalls, no locks, no logging. Everything it needs
+ *     is allocated in create().
+ *   - Violating this will not be caught by the sandbox. It will just make the
+ *     guitar sound bad.
+ *   - If you want a sample-rate path, you want the RT VM engine, not this.
  */
 
 #ifndef OLIGARCHY_PLUGIN_H
@@ -36,6 +54,9 @@ extern "C" {
 #define OLIGARCHY_EXT_CONTROL "oligarchy.control/1"
 #define OLIGARCHY_EXT_PARAMS  "oligarchy.params/1"
 #define OLIGARCHY_EXT_STATE   "oligarchy.state/1"
+/* Audio. Optional, and rare — see the header comment. get_extension() returns
+ * an `oligarchy_dsp *` for this id, or NULL, which is the normal answer. */
+#define OLIGARCHY_EXT_DSP     "oligarchy.dsp/1"
 
 /* --- log levels (must match wit `host.log-level` ordinals) -------------- */
 typedef enum {
@@ -91,6 +112,21 @@ typedef struct oligarchy_processor {
     void  (*reset)(const struct oligarchy_processor *p);
 } oligarchy_processor;
 
+/* --- the audio extension (OLIGARCHY_EXT_DSP) ---------------------------- */
+/* Returned by get_extension(OLIGARCHY_EXT_DSP). A plugin that does not process
+ * audio returns NULL for this id, which is the common case and not an error.
+ *
+ * Lifetime: the struct must outlive the plugin (statically allocated is the
+ * expected shape), because the host holds the pointer for as long as the
+ * plugin is loaded. */
+typedef struct oligarchy_dsp {
+    oligarchy_processor *(*create)(const oligarchy_audio_config *cfg);
+    void (*destroy)(oligarchy_processor *p);
+
+    uint32_t (*param_count)(void);
+    bool     (*param_info)(uint32_t index, oligarchy_param_info *out);
+} oligarchy_dsp;
+
 typedef struct oligarchy_plugin {
     uint32_t abi_major;
     uint32_t abi_minor;
@@ -103,13 +139,9 @@ typedef struct oligarchy_plugin {
     bool (*init)(const oligarchy_host *host);
     void (*shutdown)(void);
 
-    oligarchy_processor *(*create)(const oligarchy_audio_config *cfg);
-    void (*destroy)(oligarchy_processor *p);
-
-    uint32_t (*param_count)(void);
-    bool     (*param_info)(uint32_t index, oligarchy_param_info *out);
-
-    /* NULL for unknown ids. */
+    /* NULL for unknown ids — including OLIGARCHY_EXT_DSP, which most plugins
+     * do not implement. This is the whole optional surface: audio, params and
+     * state all arrive through here rather than as core fields. */
     const void *(*get_extension)(const char *ext_id);
 } oligarchy_plugin;
 

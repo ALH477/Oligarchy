@@ -236,6 +236,58 @@ Still open from the same review, and not yet fixed:
    logs "the W^X filter did not take" every time — training an operator to
    ignore the exact message meant to catch a real failure.
 
+### 4.2 A plugin is a control surface, not an audio effect
+
+The ABI shipped requiring every plugin to be one. `world plugin` mandated
+`export dsp`, so a conforming plugin had to provide a realtime processor —
+`constructor(audio-config)`, `process(list<f32>) -> list<f32>` documented "no
+allocation, no syscalls, no locks", `set-param`, `params`, `reset` — whether it
+had samples to touch or not. The C header put the same four function pointers in
+the core `oligarchy_plugin` struct. Every fixture and example in the tree was an
+audio effect, and `tests/wx-probe.c` — a *sandbox probe* — carried a stub
+`process()` that copied its input to its output purely to satisfy the export.
+That stub was the tell.
+
+**Realtime audio belongs to the RT VM engine.** The ArchibaldOS DSP guest has an
+isolated core (`isolcpus=0`), a realtime kernel, kexec recovery and NETJACK. A
+plugin dlopen'd into a bwrap + Landlock + seccomp host process is not where a
+sample-rate deadline should live, and `host/src/plugin.rs` had already written
+down half the argument — "Tier 2 is not for the audio hot path", because a vsock
+hop disqualifies it — without anyone noticing that a plugin sandbox in general
+fails the same test for the same reason.
+
+What changed:
+
+| | Before | After |
+|---|---|---|
+| WIT world | `plugin` = host + **dsp** + control + lifecycle | `plugin` = host + control + lifecycle; `plugin-dsp` = `include plugin` + `export dsp` |
+| C ABI | `create`/`destroy`/`param_count`/`param_info` in the core struct | behind `get_extension(OLIGARCHY_EXT_DSP)` → `oligarchy_dsp *`, NULL by default |
+| `Plugin` trait | `create_processor -> Result<Box<dyn Processor>>` | `-> Result<Option<..>>`, plus `exports_dsp()` |
+| vsock protocol | `CreateProcessor` → `Handle` | additive `Req::ExportsDsp` / `Resp::Bool`, `Resp::NoDsp` |
+| `wx-probe.c` | stub audio processor | control-only, which now exercises the floor in the gates |
+
+Three notes on the implementation, because each is a place where the obvious
+choice was wrong:
+
+- **WIT has no optional exports.** A world either requires an interface or does
+  not mention it, so `bindgen!` runs twice and `wasm.rs` discovers the answer by
+  instantiating the superset world first and falling back. The instantiation
+  error on the `dsp` attempt is discarded on purpose: "does not export dsp" is
+  the ordinary case, and logging it would teach an operator to ignore a real
+  failure.
+- **The C change moves fields out of a struct the header froze at 1.x.** That is
+  legal only because 1.0 was never released. It also resolves a contradiction
+  that was already there: `OLIGARCHY_EXT_PARAMS` existed as an extension id
+  while `param_count`/`param_info` sat in the core struct.
+- **The vsock protocol grew variants rather than changing one.** Its own comment
+  demanded that, and `exports_dsp()` takes `&self` so it cannot do a round trip
+  — the answer is queried once after Hello and cached.
+
+The package version stays at `0.1.0` despite this being a breaking change to the
+world. `0.1.0` was never published and nothing external has pinned it, so
+minting a `0.2.0` would record a history that did not happen. The freeze begins
+at 1.0.
+
 ## 5. Trust: caches, not users
 
 **Nobody is added to `nix.settings.trusted-users`.** Per the Nix manual that is
@@ -805,17 +857,31 @@ formality.
    less likely but not impossible. The real fix is a check that renders both for
    the same set of manifests and diffs them — a `plugind dropin <manifest.toml>`
    verb plus a `runCommand` needs no KVM, so it would be the cheapest gate here.
-7. `process()` is never called by anything. Both tiers implement it and the
-   realtime contract is documented, but there is no audio graph yet, so the hot
-   path is untested and the `#[warn(dead_code)]` list is long for a real reason.
+7. ~~`process()` is never called by anything.~~ **Withdrawn — this was the wrong
+   diagnosis, and the ABI was what needed fixing.** It was recorded as an
+   unfinished feature: no audio graph, so the hot path is untested. It was
+   actually a vestigial interface. Realtime audio on this system belongs to the
+   **RT VM engine** — the ArchibaldOS DSP guest, isolated core, RT kernel,
+   NETJACK — not to a Landlock-confined plugin process. `plugin.rs` had already
+   reasoned its way to half of this ("Tier 2 is not for the audio hot path"
+   because a vsock hop disqualifies it) without anyone noticing the same
+   argument applies to a plugin sandbox generally.
+
+   So `dsp` is now an **optional** interface rather than a mandatory export, and
+   a plugin is a control surface. See §4.2.
 
 **Before the ABI is public (any stage)**
 
 - `wasm.rs`'s `call_process` returns an owned `Vec<f32>` that is then copied
-  into the output buffer: one allocation and two copies per audio block, on the
-  callback that has to meet a deadline. That is imposed by the WIT signature
-  (`list<f32>` return), so it is fixable only at the ABI level — before
-  third-party plugins pin `oligarchy:plugin@0.1.0`, not after.
+  into the output buffer: one allocation and two copies per audio block, on a
+  callback that has to meet a deadline. Imposed by the WIT signature (`list<f32>`
+  return), so fixable only at the ABI level.
+
+  **Deprioritised, not fixed.** With `dsp` optional and the realtime path living
+  in the RT VM engine (§4.2), this is no longer on the critical path for anything
+  — the plugins that matter do not call `process()` at all. It still wants fixing
+  before a *third party* pins the interface and starts caring, but it is no
+  longer a reason to touch the ABI on its own.
 - The wasmtime pooling allocator is configured for 64 component instances and
   64 memories at 256 MiB, but the unit model is one `plugind run %i` process
   per plugin, so the pool is per-plugin and reserves on the order of 16 GiB of

@@ -25,7 +25,6 @@ use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::manifest::Manifest;
@@ -43,6 +42,11 @@ pub enum Req {
     Reset { handle: u32 },
     GetParam { handle: u32, id: u32 },
     Params,
+    /// Does the guest's plugin export the optional `dsp` interface? Asked once,
+    /// right after Hello, because `Plugin::exports_dsp` takes `&self` and
+    /// cannot do a round trip. A new variant rather than a field on Hello,
+    /// per the rule above.
+    ExportsDsp,
     Command { verb: String, args: Vec<String> },
     SaveState,
     LoadState { blob: Vec<u8> },
@@ -59,6 +63,10 @@ pub enum Resp {
     Params(Vec<(u32, String, f32, f32, f32)>),
     Text(String),
     Blob(Vec<u8>),
+    Bool(bool),
+    /// The plugin exports no `dsp` interface. A distinct variant rather than an
+    /// Err because it is not a failure — it is the answer for most plugins.
+    NoDsp,
     Err(String),
 }
 
@@ -67,6 +75,11 @@ pub struct MicrovmPlugin {
     conn: Conn,
     /// Unit we started and are therefore responsible for stopping.
     unit: String,
+    /// Whether the guest's plugin exports `dsp`. Cached from a single
+    /// `Req::ExportsDsp` after the handshake: the trait method takes `&self`,
+    /// and asking the guest per call would put a vsock round trip on a path
+    /// that exists to avoid exactly that.
+    dsp: bool,
 }
 
 struct Conn {
@@ -161,9 +174,15 @@ impl MicrovmPlugin {
             other => anyhow::bail!("unexpected handshake response: {other:?}"),
         }
 
+        // One round trip, once, immediately after the handshake. A guest built
+        // from an older plugind answers Err rather than Bool; treat that as
+        // "no dsp" rather than failing the boot, since the floor is control.
+        let dsp = matches!(conn.call(&Req::ExportsDsp), Ok(Resp::Bool(true)));
+
         Ok(Self {
             manifest: m,
             conn,
+            dsp,
             unit,
         })
     }
@@ -287,23 +306,30 @@ impl Plugin for MicrovmPlugin {
         Ok(())
     }
 
-    fn create_processor(&mut self, cfg: AudioConfig) -> Result<Box<dyn Processor>> {
+    fn exports_dsp(&self) -> bool {
+        self.dsp
+    }
+
+    fn create_processor(&mut self, cfg: AudioConfig) -> Result<Option<Box<dyn Processor>>> {
         let handle = match self.conn.call(&Req::CreateProcessor {
             sample_rate: cfg.sample_rate,
             block_size: cfg.block_size,
             channels: cfg.channels,
         })? {
             Resp::Handle(h) => h,
+            // Not an error: the guest is telling us it is control-only.
+            Resp::NoDsp => return Ok(None),
             other => anyhow::bail!("expected handle, got {other:?}"),
         };
-        Ok(Box::new(MicrovmProcessor {
+        Ok(Some(Box::new(MicrovmProcessor {
             handle,
             owner: self as *mut MicrovmPlugin,
-        }))
+        })))
     }
 
     fn params(&mut self) -> Result<Vec<ParamInfo>> {
         match self.conn.call(&Req::Params)? {
+            Resp::NoDsp => Ok(Vec::new()),
             Resp::Params(v) => Ok(v
                 .into_iter()
                 .map(|(id, name, min, max, default)| ParamInfo {

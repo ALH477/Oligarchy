@@ -56,6 +56,24 @@ struct CProcessor {
     reset: extern "C" fn(*const CProcessor),
 }
 
+/// `oligarchy_dsp`, fetched by `get_extension(OLIGARCHY_EXT_DSP)`. Optional:
+/// most plugins return NULL for that id, and this struct is then never
+/// materialised at all.
+///
+/// Field order and count must match the C header exactly. It is a separate
+/// struct precisely so that adding to it later cannot disturb the layout of
+/// `CPlugin`, which is the thing the ABI freeze applies to.
+#[repr(C)]
+struct CDsp {
+    create: extern "C" fn(*const CAudioConfig) -> *mut CProcessor,
+    destroy: extern "C" fn(*mut CProcessor),
+    param_count: extern "C" fn() -> u32,
+    param_info: extern "C" fn(u32, *mut CParamInfo) -> bool,
+}
+
+/// The extension id for the audio half. Must match OLIGARCHY_EXT_DSP.
+const EXT_DSP: &[u8] = b"oligarchy.dsp/1\0";
+
 #[repr(C)]
 struct CPlugin {
     abi_major: u32,
@@ -64,10 +82,6 @@ struct CPlugin {
     version: *const c_char,
     init: extern "C" fn(*const CHost) -> bool,
     shutdown: extern "C" fn(),
-    create: extern "C" fn(*const CAudioConfig) -> *mut CProcessor,
-    destroy: extern "C" fn(*mut CProcessor),
-    param_count: extern "C" fn() -> u32,
-    param_info: extern "C" fn(u32, *mut CParamInfo) -> bool,
     get_extension: extern "C" fn(*const c_char) -> *const c_void,
 }
 
@@ -214,6 +228,22 @@ impl NativePlugin {
     }
 }
 
+impl NativePlugin {
+    /// The `oligarchy_dsp` vtable, or null when this plugin does not process
+    /// audio — which is the ordinary answer.
+    ///
+    /// Asked of the artifact every time rather than cached at load: the C
+    /// contract says `get_extension` is a pure lookup, the pointer must outlive
+    /// the plugin, and re-asking costs a call through a function pointer. A
+    /// cache here would be a lifetime question in exchange for nothing.
+    fn dsp(&self) -> *const CDsp {
+        // EXT_DSP is a literal with an explicit NUL, so this cannot fail and
+        // needs no allocation on a path that may be hit per block.
+        let id = EXT_DSP.as_ptr() as *const c_char;
+        unsafe { ((*self.plugin).get_extension)(id) as *const CDsp }
+    }
+}
+
 impl Plugin for NativePlugin {
     fn manifest(&self) -> &Manifest {
         &self.manifest
@@ -227,23 +257,38 @@ impl Plugin for NativePlugin {
         Ok(())
     }
 
-    fn create_processor(&mut self, cfg: AudioConfig) -> Result<Box<dyn Processor>> {
+    fn exports_dsp(&self) -> bool {
+        !self.dsp().is_null()
+    }
+
+    fn create_processor(&mut self, cfg: AudioConfig) -> Result<Option<Box<dyn Processor>>> {
+        let dsp = self.dsp();
+        if dsp.is_null() {
+            // Not an error. Most plugins are control-only.
+            return Ok(None);
+        }
         let c = CAudioConfig {
             sample_rate: cfg.sample_rate,
             block_size: cfg.block_size,
             channels: cfg.channels,
         };
-        let p = unsafe { ((*self.plugin).create)(&c) };
-        anyhow::ensure!(!p.is_null(), "create() returned NULL");
-        Ok(Box::new(NativeProcessor {
+        let p = unsafe { ((*dsp).create)(&c) };
+        anyhow::ensure!(!p.is_null(), "the dsp extension's create() returned NULL");
+        Ok(Some(Box::new(NativeProcessor {
             proc_: p,
-            destroy: unsafe { (*self.plugin).destroy },
+            destroy: unsafe { (*dsp).destroy },
             channels: cfg.channels as usize,
-        }))
+        })))
     }
 
     fn params(&mut self) -> Result<Vec<ParamInfo>> {
-        let n = unsafe { ((*self.plugin).param_count)() };
+        let dsp = self.dsp();
+        if dsp.is_null() {
+            // Parameters belong to the audio extension, so no dsp means no
+            // params. An empty list, not a refusal.
+            return Ok(Vec::new());
+        }
+        let n = unsafe { ((*dsp).param_count)() };
         let mut out = Vec::with_capacity(n as usize);
         for i in 0..n {
             let mut ci = CParamInfo {
@@ -253,7 +298,7 @@ impl Plugin for NativePlugin {
                 max: 0.0,
                 def: 0.0,
             };
-            if unsafe { ((*self.plugin).param_info)(i, &mut ci) } && !ci.name.is_null() {
+            if unsafe { ((*dsp).param_info)(i, &mut ci) } && !ci.name.is_null() {
                 out.push(ParamInfo {
                     id: ci.id,
                     name: unsafe { CStr::from_ptr(ci.name) }
