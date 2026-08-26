@@ -159,8 +159,13 @@ Still open from the same review, and not yet fixed:
 4. **Landlock cannot gate unix-socket `connect()`**, so for sockets bwrap is the
    only layer — and `forbidden_paths` does not list `/nix/var`, so
    `fs_read = ["/nix/var/nix/daemon-socket"]` passes policy and hands the plugin
-   the nix-daemon. `/proc`, `/sys`, `/etc` and `/run/dbus` are equally unlisted.
-   Add them, and treat `fs_read` of a socket as read-write.
+   the nix-daemon. `/sys`, `/etc` and `/run/dbus` are equally unlisted. Add
+   them, and treat `fs_read` of a socket as read-write.
+
+   **`/proc` is now listed** — see the W^X argument below, which is why it was
+   the one entry promoted out of this item and fixed. The remaining three are
+   still open, and `/nix/var` is the one that matters most: handing a plugin the
+   nix-daemon socket is handing it the store.
 
    **The `/proc` half of this is more serious than "an unlisted prefix", and a
    seventh probe route now proves it.** `/proc/self/mem` writes use `FOLL_FORCE`,
@@ -197,15 +202,28 @@ Still open from the same review, and not yet fixed:
      full W^X bypass, and no assertion, filter rule or gate would say so.
 
    The gate now pins `procmem=denied(landlock)` rather than a bare `denied`, so
-   either failure mode fails the build instead of passing quietly. The fix on
-   the policy side is still open, and it is a real tradeoff rather than an
-   oversight: prefix-forbidding `/proc` is the only robust option the current
-   `is_under` mechanism supports, and it also costs a plugin `/proc/cpuinfo`
-   (SIMD detection is a legitimate thing for a DSP plugin to want). The
-   alternative is to keep Landlock as the sole control but make the dependency
-   explicit — refuse any `wx_enforced()` plugin whose caps reach `/proc`, and
-   require Landlock *fully* enforced rather than partially whenever
-   `wx_enforced()` is true.
+   either failure mode fails the build instead of passing quietly.
+
+   **And `/proc` is now in `forbidden_paths`, in both mirrors** — so the
+   Landlock dependency no longer rests on nobody having thought to grant a cap
+   under it. The tradeoff was accepted knowingly: prefix-forbidding is all
+   `is_under` supports, so this also costs a plugin `/proc/cpuinfo`, and SIMD
+   detection is a legitimate thing for a DSP plugin to want. That belongs in the
+   host-services struct in the ABI rather than behind a W^X primitive, and it
+   should land before `oligarchy:plugin@0.1.0` is public.
+
+   Note the list is now **two guarantees in one option**. Six entries are
+   confidentiality; `/proc` is W^X. A future "tidy the secrets list" commit that
+   drops it weakens `jit = "none"` without touching anything that looks like a
+   W^X setting, so both mirrors say so at the entry and
+   `proc_is_refused_because_it_is_a_wx_bypass` is a separate unit test from
+   `forbidden_paths_are_prefixes` for exactly that reason — the failure names
+   the guarantee that broke.
+
+   **Still open:** the tier 1 gate accepts `landlock partially` enforced. Now
+   that a W^X route depends on Landlock, partial enforcement for a
+   `wx_enforced()` plugin should arguably be refused outright rather than
+   logged.
 5. **`network = true` with an empty `tcp_connect` denies all TCP** while
    `plugind explain` prints "ALL TCP". Fail-closed, but the tool states the
    opposite of what the kernel will do.

@@ -485,17 +485,35 @@ in
     forbiddenPaths = mkOption {
       type = types.listOf types.str;
       default = [
+        # Confidentiality.
         "/etc/ssh"
         "/etc/shadow"
         "/var/lib/sops"
         "/run/secrets"
         "/root"
         "/home"
+        # W^X, not confidentiality — do not prune this one with the secrets
+        # above. Writes through /proc/<pid>/mem use FOLL_FORCE, so a page's
+        # protection is not consulted; a plugin can rewrite its own .text and
+        # jit = "none" stops meaning anything. seccomp cannot cover it (it
+        # cannot inspect paths), so Landlock's deny-by-default allowlist is the
+        # only layer that can — and only while nothing is granted a path under
+        # /proc. Mirrors `Policy::default` in host/src/policy.rs, which carries
+        # the long version.
+        "/proc"
       ];
       description = ''
         Prefixes no plugin may name in its capabilities, even read-only.
         Checked before Landlock, so a manifest naming one of these fails to
         load rather than loading with a ruleset that quietly omits it.
+
+        Two different guarantees live in this list. Most entries are
+        confidentiality. `/proc` is W^X: a read-only cap under it reopens a
+        full bypass via `FOLL_FORCE` writes to the plugin's own `.text`, which
+        no seccomp rule can close. Removing it weakens `jit = "none"` without
+        touching anything that looks like a W^X setting. The cost is that a
+        plugin cannot read `/proc/cpuinfo`; CPU features belong in the host
+        services struct in the ABI rather than behind a W^X primitive.
       '';
     };
 

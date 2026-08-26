@@ -44,6 +44,11 @@ pub struct Policy {
     pub max_cpu_quota: u32,
     /// Paths a plugin may never name in caps, even read-only. Manifest paths
     /// are checked against these prefixes before Landlock ever sees them.
+    ///
+    /// The list is NOT homogeneous, and the difference matters to anyone
+    /// tempted to prune it. Most entries are confidentiality: ssh keys, shadow,
+    /// sops material, /root, /home. `/proc` is there for **W^X**, which is a
+    /// different guarantee — see the default impl.
     pub forbidden_paths: Vec<String>,
     /// If false, `network = true` in a manifest is an error rather than a
     /// request.
@@ -63,12 +68,37 @@ impl Default for Policy {
             max_memory: 256 << 20,
             max_cpu_quota: 100,
             forbidden_paths: vec![
+                // Confidentiality.
                 "/etc/ssh".into(),
                 "/etc/shadow".into(),
                 "/var/lib/sops".into(),
                 "/run/secrets".into(),
                 "/root".into(),
                 "/home".into(),
+                // W^X, not confidentiality. Do not prune this one along with
+                // the secrets above.
+                //
+                // Writes through /proc/<pid>/mem use FOLL_FORCE, so the target
+                // page's protection is not consulted — the same primitive as
+                // ptrace(POKEDATA), which seccomp.rs denies outright. A plugin
+                // can point it at its own .text, a PROT_READ|PROT_EXEC mapping
+                // it never had to create and therefore one no mmap/mprotect
+                // rule can refuse. That is a complete W^X bypass reachable from
+                // a single read-only cap.
+                //
+                // seccomp cannot close this route: it cannot inspect path
+                // strings, and denying pwrite wholesale is not available to a
+                // plugin that writes files. Landlock's deny-by-default
+                // allowlist is the only layer that can, and it only holds while
+                // no manifest is granted a path under /proc. Hence this entry —
+                // the guarantee was previously resting on the omission being
+                // noticed.
+                //
+                // The cost is real and accepted: a DSP plugin cannot read
+                // /proc/cpuinfo for SIMD detection. That belongs in the host
+                // services struct in the ABI anyway, where it does not require
+                // handing out a W^X primitive to get at it.
+                "/proc".into(),
             ],
             allow_network: false,
         }
@@ -273,6 +303,25 @@ mod tests {
         assert!(is_under("/home", "/home"));
         // `..` is refused rather than resolved.
         assert!(is_under("/tmp/../home", "/anything"));
+    }
+
+    #[test]
+    fn proc_is_refused_because_it_is_a_wx_bypass() {
+        // Not a duplicate of forbidden_paths_are_prefixes: that one proves the
+        // prefix mechanism works, this one proves /proc is IN the set. It is the
+        // only entry whose absence would silently weaken W^X rather than leak a
+        // secret, so it gets its own test — a "tidy the secrets list" commit
+        // that drops it fails here with a name that says what broke.
+        let p = Policy::default();
+        for path in ["/proc", "/proc/self/mem", "/proc/1/mem", "//proc/cpuinfo"] {
+            let mut m = manifest(Tier::Native, Jit::None, Trust::Trusted);
+            m.caps.fs_read.push(path.into());
+            assert!(
+                p.authorize(&m).is_err(),
+                "a jit=none plugin was granted {path}, which reopens W^X via \
+                 FOLL_FORCE writes to its own .text"
+            );
+        }
     }
 
     #[test]
