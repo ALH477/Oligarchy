@@ -77,8 +77,8 @@ let
     PIDFILE="''${XDG_RUNTIME_DIR:-/tmp}/oligarchy-rig.pid"
     # Run JACK tools inside PipeWire's JACK environment.
     PWJACK="${pkgs.pipewire}/bin/pw-jack"
-    JLSP="$PWJACK ${pkgs.jack2}/bin/jack_lsp"
-    jc() { $PWJACK ${pkgs.jack2}/bin/jack_connect "$@" 2>/dev/null || true; }
+    JLSP="$PWJACK ${pkgs.jack-example-tools}/bin/jack_lsp"
+    jc() { $PWJACK ${pkgs.jack-example-tools}/bin/jack_connect "$@" 2>/dev/null || true; }
     note() { command -v notify-send >/dev/null 2>&1 && notify-send "🎛 Rig" "$1" || echo "$1"; }
 
     stop_current() {

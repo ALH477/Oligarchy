@@ -222,7 +222,7 @@ in {
           sleep 10
           
           # Create netjack connection to VM
-          exec ${pkgs.jack2}/bin/jack_netsource \
+          exec ${pkgs.jack-example-tools}/bin/jack_netsource \
             -H 127.0.0.1 \
             -p ${toString cfg.jackPort} \
             -n dsp-vm \

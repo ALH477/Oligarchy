@@ -499,7 +499,7 @@
             # Connect to VM's NETJACK server via QEMU port forwarding.
             # QEMU user-mode networking forwards host 127.0.0.1:4713 → VM:4713.
             # 128 frames @ 96kHz = 1.33ms round-trip latency
-            exec ${pkgs.jack2}/bin/jack_netsource \
+            exec ${pkgs.jack-example-tools}/bin/jack_netsource \
               -H 127.0.0.1 \
               -p ${toString cfg.archibaldOS.netjack.sourcePort} \
               -n archibaldos-dsp \
@@ -527,7 +527,7 @@
 
           ExecStart = pkgs.writeShellScript "dsp-jack-bridge" ''
             sleep 10
-            exec ${pkgs.jack2}/bin/jack_netsource \
+            exec ${pkgs.jack-example-tools}/bin/jack_netsource \
               -H 127.0.0.1 \
               -p 4713 \
               -n dsp-vm \
