@@ -24,6 +24,7 @@ mod nixstore;
 mod peer;
 mod resolve;
 mod route;
+mod torrent;
 mod transport;
 mod upstream;
 mod verify;
@@ -87,6 +88,9 @@ fn main() -> Result<()> {
                 Some(a) => format!("{a}:{}", cfg.peer_port),
                 None => "disabled".to_string(),
             });
+            if cfg.transport == "bittorrent" {
+                println!("swarm       : port {} , min artifact {}", cfg.swarm_port, cfg.min_artifact_size);
+            }
             println!("OK");
             Ok(())
         }
@@ -180,11 +184,53 @@ async fn daemon(cfg: config::Config) -> Result<()> {
         Duration::from_secs(cfg.upstream_timeout_secs),
     )?;
 
+    let peer_deadline = Duration::from_secs(cfg.peer_timeout_secs);
+    let mut swarm_port = None;
+
     let transport: std::sync::Arc<dyn transport::ArtifactTransport> = match cfg.transport.as_str() {
-        "lan" => std::sync::Arc::new(transport::lan::LanTransport::new(
-            &cfg.peers,
-            Duration::from_secs(cfg.peer_timeout_secs),
-        )?),
+        "lan" => std::sync::Arc::new(transport::lan::LanTransport::new(&cfg.peers, peer_deadline)?),
+
+        "bittorrent" => {
+            use std::num::NonZeroU32;
+            let lan = transport::lan::LanTransport::new(&cfg.peers, peer_deadline)?;
+            let scratch = state_dir.join("swarm");
+
+            let opts = librqbit::SessionOptions {
+                // No DHT and no trackers. Discovery is the LAN peer surface,
+                // and every address dialled came from a private-range peer
+                // list — which is what makes this work under strict-egress
+                // with no firewall change. Turning either on would put the
+                // daemon in touch with arbitrary internet hosts.
+                disable_dht: true,
+                disable_dht_persistence: true,
+                // The swarm listens on exactly the advertised port, not a
+                // range: peers learn it from /peer/v1/info and the firewall
+                // opens one port.
+                listen_port_range: Some(cfg.swarm_port..cfg.swarm_port + 1),
+                ratelimits: librqbit::limits::LimitsConfig {
+                    upload_bps: NonZeroU32::new(cfg.swarm_upload_bps),
+                    download_bps: NonZeroU32::new(cfg.swarm_download_bps),
+                },
+                ..Default::default()
+            };
+            let session = librqbit::Session::new_with_opts(scratch.clone(), opts)
+                .await
+                .context("starting the BitTorrent session")?;
+            swarm_port = Some(cfg.swarm_port);
+
+            std::sync::Arc::new(transport::bittorrent::BitTorrentTransport::new(
+                session,
+                tokio::runtime::Handle::current(),
+                lan,
+                cfg.peers
+                    .iter()
+                    .filter_map(|p| p.parse().ok())
+                    .collect(),
+                cache::parse_size(&cfg.min_artifact_size)?,
+                scratch,
+            )?)
+        }
+
         // Validated in Config::validate; this arm is the only other value.
         _ => std::sync::Arc::new(transport::NullTransport),
     };
@@ -197,8 +243,9 @@ async fn daemon(cfg: config::Config) -> Result<()> {
         Duration::from_secs(cfg.upstream_timeout_secs),
         cfg.cache_downloaded,
         cfg.serve_from_store,
-        transport,
+        transport.clone(),
         Duration::from_secs(cfg.peer_timeout_secs),
+        swarm_port,
     ));
 
     // Bind before announcing readiness, so `systemctl start` returning means a
@@ -215,8 +262,39 @@ async fn daemon(cfg: config::Config) -> Result<()> {
         cache_max = %cfg.max_cache_size,
         transport = %cfg.transport,
         peers = cfg.peers.len(),
+        swarm_port = ?swarm_port,
         "oligarchy-p2pd ready"
     );
+
+    // Re-announce what we already hold. A restart otherwise silently stops
+    // seeding everything in the cache — the daemon looks healthy, peers see it as
+    // reachable, and no artifact is ever served from it again.
+    if transport.name() == "bittorrent" {
+        let t = transport.clone();
+        let dir = state_dir.join("nar");
+        tokio::task::spawn_blocking(move || {
+            let Ok(rd) = std::fs::read_dir(&dir) else { return };
+            let mut n = 0usize;
+            for e in rd.flatten() {
+                let p = e.path();
+                let Some(stem) = p.file_name().and_then(|s| s.to_str()) else { continue };
+                let Some(stem) = stem.strip_suffix(".nar") else { continue };
+                let Ok(h) = nixhash::Sha256Digest::from_nix32(stem) else { continue };
+                let Ok(md) = e.metadata() else { continue };
+                let art = transport::ArtifactRef {
+                    hash_part: String::new(),
+                    nar_hash: h,
+                    nar_size: md.len(),
+                };
+                if t.provide(&art, &p).is_ok() {
+                    n += 1;
+                }
+            }
+            if n > 0 {
+                tracing::info!(artifacts = n, "re-announced the cache to the swarm");
+            }
+        });
+    }
 
     // The peer surface is a SEPARATE listener on a real interface, serving a
     // deliberately smaller route set. See peer.rs for why it is not simply the

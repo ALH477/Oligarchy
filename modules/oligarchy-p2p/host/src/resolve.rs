@@ -24,6 +24,7 @@
 //! serve of that path comes from source 1 and does get the full guarantee.
 
 use crate::cache::{Cache, Slot};
+use crate::transport::ArtifactRef;
 use crate::decompress::Codec;
 use crate::narinfo::NarInfo;
 use crate::nixhash::Sha256Digest;
@@ -119,6 +120,11 @@ pub fn local(
 
     if serve_from_store {
         match dump_into_cache(cache, ni, store_dir) {
+            // NOTE: nothing is announced here. `provide` is blocking by the
+            // trait's contract and this function is called from an async
+            // handler, so calling it here panics with "Cannot start a runtime
+            // from within a runtime". The caller owns the blocking context and
+            // announces there — see the `Source::NixStore` arm in http.rs.
             Ok(Some(p)) => return Some((Source::NixStore, p)),
             Ok(None) => {}
             Err(e) => tracing::warn!(error = %e, "nix-store dump failed; falling through"),
@@ -175,12 +181,14 @@ fn dump_into_cache(cache: &Cache, ni: &NarInfo, store_dir: &str) -> Result<Optio
 /// whole pipeline runs on a blocking task and hands finished chunks back over a
 /// channel. The lookahead lives on the blocking side because that is where the
 /// digest is known.
+#[allow(clippy::too_many_arguments)]
 pub fn upstream_stream<S>(
     body: S,
     codec: Codec,
     mut verifier: Verifier,
     slot: Option<Slot>,
     cache: Option<Arc<Cache>>,
+    transport: Option<Arc<dyn crate::transport::ArtifactTransport>>,
 ) -> impl Stream<Item = std::io::Result<Bytes>> + Send
 where
     S: Stream<Item = std::io::Result<Bytes>> + Send + Unpin + 'static,
@@ -252,13 +260,39 @@ where
                         match s.commit() {
                             Ok(p) => {
                                 tracing::debug!(path = %p.display(), "cached");
+                                // Seed what we just fetched. This is the COMMON
+                                // case — a host pulls a rebuild from upstream
+                                // and its neighbours then pull it from the
+                                // host — and wiring `provide` only into the
+                                // peer-fetch path missed it entirely, so
+                                // nothing ever seeded anything it had not
+                                // itself received from another peer.
+                                if let Some(t) = transport.as_ref() {
+                                    let a = ArtifactRef {
+                                        hash_part: String::new(),
+                                        nar_hash: v.digest,
+                                        nar_size: v.bytes,
+                                    };
+                                    if let Err(e) = t.provide(&a, &p) {
+                                        tracing::warn!(error = %e, "could not announce");
+                                    }
+                                }
                                 // Sweep here, not only at startup. A daemon that
                                 // runs for weeks would otherwise grow without
                                 // bound between restarts, and `maxCacheSize`
                                 // would describe a boot-time snapshot rather
                                 // than a budget.
                                 if let Some(c) = cache.as_ref() {
-                                    match c.evict() {
+                                    match c.evict_with(&|d| {
+                                        if let Some(t) = transport.as_ref() {
+                                            let a = ArtifactRef {
+                                                hash_part: String::new(),
+                                                nar_hash: *d,
+                                                nar_size: 0,
+                                            };
+                                            let _ = t.remove(&a);
+                                        }
+                                    }) {
                                         Ok((b, a)) if b != a => {
                                             tracing::info!(before = b, after = a, "evicted")
                                         }
@@ -342,7 +376,7 @@ mod tests {
         let src = futures_util::stream::iter(
             chunks.into_iter().map(|c| Ok(Bytes::from_static(c))),
         );
-        let st = upstream_stream(Box::pin(src), Codec::None, v, slot, None);
+        let st = upstream_stream(Box::pin(src), Codec::None, v, slot, None, None);
         futures_util::pin_mut!(st);
         let (mut out, mut err) = (Vec::new(), None);
         while let Some(item) = st.next().await {

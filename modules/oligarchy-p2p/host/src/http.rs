@@ -37,6 +37,9 @@ pub struct AppState {
     pub serve_from_store: bool,
     pub transport: std::sync::Arc<dyn ArtifactTransport>,
     pub peer_timeout: Duration,
+    /// Advertised to peers in `/peer/v1/info` so they know where to dial for
+    /// BitTorrent. `None` when no swarm is configured, which is the default.
+    pub swarm_port: Option<u16>,
     cache: Mutex<NarInfoCache>,
 }
 
@@ -81,6 +84,7 @@ impl AppState {
         serve_from_store: bool,
         transport: std::sync::Arc<dyn ArtifactTransport>,
         peer_timeout: Duration,
+        swarm_port: Option<u16>,
     ) -> Self {
         Self {
             upstream,
@@ -92,6 +96,7 @@ impl AppState {
             serve_from_store,
             transport,
             peer_timeout,
+            swarm_port,
             cache: Mutex::new(NarInfoCache {
                 map: Default::default(),
                 // Short. A narinfo is immutable for a given store path, but a
@@ -295,6 +300,16 @@ async fn nar(st: &AppState, hash_part: &str, name: &str, head_only: bool) -> Res
     if let Some((source, path)) =
         resolve::local(&st.artifacts, &ni, &st.store_dir, st.serve_from_store)
     {
+        // A path we just serialised out of our own store is a new cache entry,
+        // and worth seeding. Only on the NixStore arm: a cache hit was already
+        // announced when it was first published.
+        if source == Source::NixStore {
+            if let Ok(art) = ArtifactRef::from_narinfo(&ni) {
+                if let Err(e) = st.transport.provide(&art, &path) {
+                    tracing::warn!(error = %e, "could not announce");
+                }
+            }
+        }
         match tokio::fs::File::open(&path).await {
             Ok(f) => {
                 // INFO, not DEBUG. Which source answered is the single most
@@ -337,6 +352,16 @@ async fn nar(st: &AppState, hash_part: &str, name: &str, head_only: bool) -> Res
             .flatten();
 
             if let Some(path) = got {
+                // Seeding is best-effort by contract: failing to announce must
+                // never fail the fetch that produced the artifact.
+                let t2 = st.transport.clone();
+                let a2 = art.clone();
+                let p2 = path.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Err(e) = t2.provide(&a2, &p2) {
+                        tracing::warn!(error = %e, "could not announce the artifact");
+                    }
+                });
                 match tokio::fs::File::open(&path).await {
                     Ok(f) => {
                         tracing::info!(hash_part, source = "peer", bytes = len, "serving verified");
@@ -403,7 +428,14 @@ async fn nar(st: &AppState, hash_part: &str, name: &str, head_only: bool) -> Res
     let verifier = Verifier::new(digest, len, body.source.clone());
     let inner = body.stream.map(|r| r.map_err(std::io::Error::other));
     let stream =
-        resolve::upstream_stream(Box::pin(inner), codec, verifier, slot, Some(st.artifacts.clone()));
+        resolve::upstream_stream(
+            Box::pin(inner),
+            codec,
+            verifier,
+            slot,
+            Some(st.artifacts.clone()),
+            Some(st.transport.clone()),
+        );
 
     (StatusCode::OK, h, Body::from_stream(stream)).into_response()
 }

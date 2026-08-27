@@ -79,6 +79,58 @@ impl LanTransport {
 
 }
 
+impl LanTransport {
+    /// A peer's BitTorrent port, from its `/peer/v1/info`.
+    ///
+    /// Queried rather than configured: the swarm port is the peer's business,
+    /// and requiring the operator to keep two ports in sync per peer is the
+    /// kind of configuration that goes wrong quietly. A peer that advertises
+    /// none is simply not dialled.
+    pub fn swarm_port(&self, peer: &SocketAddr) -> Option<u16> {
+        let text = self
+            .client
+            .get_text(
+                &format!("http://{peer}/peer/v1/info"),
+                Duration::from_secs(5),
+                64 * 1024,
+            )
+            .ok()??;
+        // Deliberately not a JSON dependency for one integer.
+        let after = text.split("\"swarm_port\":").nth(1)?;
+        let digits: String = after
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        digits.parse().ok()
+    }
+
+    /// The canonical `.torrent` for an artifact, from the first peer that has
+    /// one. Untrusted: its piece hashes are only as good as the peer, which is
+    /// why the completed download is hashed against the signed `NarHash`.
+    pub fn torrent_for(
+        &self,
+        art: &ArtifactRef,
+        peers: &[PeerRef],
+        deadline: Duration,
+    ) -> Option<Vec<u8>> {
+        for p in peers {
+            let url = format!(
+                "http://{}/peer/v1/torrent/{}/{}",
+                p.address,
+                art.hash_part,
+                art.nar_hash.to_nix32()
+            );
+            match self.client.get_bytes(&url, deadline, 16 * 1024 * 1024) {
+                Ok(Some(b)) if !b.is_empty() => return Some(b),
+                Ok(_) => {}
+                Err(e) => tracing::debug!(peer = %p.address, error = %e, "no torrent from peer"),
+            }
+        }
+        None
+    }
+}
+
 impl ArtifactTransport for LanTransport {
     fn name(&self) -> &'static str {
         "lan"
@@ -337,6 +389,19 @@ mod ureq_like {
             let mut s = String::new();
             p.reader.take(cap).read_to_string(&mut s)?;
             Ok(Some(s))
+        }
+
+        pub fn get_bytes(&self, url: &str, deadline: Duration, cap: u64) -> Result<Option<Vec<u8>>> {
+            let p = self.request(url, "GET", deadline)?;
+            if p.status == 404 {
+                return Ok(None);
+            }
+            if p.status != 200 {
+                bail!("HTTP {}", p.status);
+            }
+            let mut v = Vec::new();
+            p.reader.take(cap).read_to_end(&mut v)?;
+            Ok(Some(v))
         }
 
         pub fn get_stream(&self, url: &str, deadline: Duration) -> Result<Option<Body>> {

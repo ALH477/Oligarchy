@@ -654,6 +654,237 @@
             '';
           };
 
+          # ── Gate 5: the swarm ──────────────────────────────────────────────
+          # BitTorrent's only justification here is parallel multi-peer
+          # transfer, so what has to be proven is that artifacts actually move
+          # over it — and that small ones deliberately do NOT, because this
+          # repo's own closure has a median NAR of 355 KiB and a swarm per NAR
+          # would be pathological.
+          swarm = nodePkgs.testers.runNixOSTest {
+            name = "oligarchy-p2p-swarm";
+            nodes = {
+              seeder = { pkgs, ... }: {
+                imports = [ ./modules/p2p-cache.nix ];
+                custom.p2pCache = {
+                  enable = true;
+                  registerSubstituter = false;
+                  upstreams = [ "http://127.0.0.1:8000" ];
+                  serveFromStore = true;
+                  transport = "bittorrent";
+                  peer.enable = true;
+                  peer.openFirewall = [ "eth1" ];
+                  # Low enough that `hello` (a 279 KiB NAR) enters the swarm,
+                  # while the deliberately tiny path below still does not.
+                  swarm.minArtifactSize = "128K";
+                  logLevel = "oligarchy_p2pd=debug";
+                };
+                environment.systemPackages = [ pkgs.hello pkgs.curl ];
+                nix.settings.experimental-features = [ "nix-command" "flakes" ];
+                virtualisation.memorySize = 2048;
+                virtualisation.diskSize = 8192;
+              };
+              leecher = { pkgs, ... }: {
+                imports = [ ./modules/p2p-cache.nix ];
+                custom.p2pCache = {
+                  enable = true;
+                  registerSubstituter = false;
+                  upstreams = [ "http://127.0.0.1:9" ];
+                  upstreamTimeout = 2;
+                  serveFromStore = false;
+                  transport = "bittorrent";
+                  peers = [ "${seederIp}:5112" ];
+                  peerTimeout = 60;
+                  peer.enable = true;
+                  peer.openFirewall = [ "eth1" ];
+                  swarm.minArtifactSize = "128K";
+                  logLevel = "oligarchy_p2pd=debug";
+                };
+                environment.systemPackages = [ pkgs.curl ];
+                nix.settings.experimental-features = [ "nix-command" "flakes" ];
+                nix.settings.substituters = nixpkgs.lib.mkForce [ ];
+                virtualisation.memorySize = 2048;
+                virtualisation.diskSize = 8192;
+              };
+            };
+            testScript = ''
+              start_all()
+              for m in (seeder, leecher):
+                  m.wait_for_unit("oligarchy-p2pd.service")
+
+              assert "${seederIp}/24" in seeder.succeed("ip -4 addr show eth1"), \
+                  "node address assignment changed"
+
+              seeder.succeed("mkdir -p /tmp/upstream")
+              seeder.succeed(
+                  "nix-store --generate-binary-cache-key test-cache-1 "
+                  "/tmp/cache.sec /tmp/cache.pub"
+              )
+              pubkey = seeder.succeed("cat /tmp/cache.pub").strip()
+              hello = seeder.succeed(
+                  "readlink -f $(which hello) | xargs dirname | xargs dirname"
+              ).strip()
+              hp = hello.split("/")[-1].split("-")[0]
+              seeder.succeed(f"nix store sign --key-file /tmp/cache.sec --recursive {hello}")
+              seeder.succeed(f"nix copy --to file:///tmp/upstream {hello}")
+
+              # A tiny path, to prove the threshold keeps it OUT of a swarm.
+              seeder.succeed("echo tiny > /tmp/tiny")
+              tiny = seeder.succeed("nix-store --add /tmp/tiny").strip()
+              seeder.succeed(f"nix store sign --key-file /tmp/cache.sec {tiny}")
+              seeder.succeed(f"nix copy --to file:///tmp/upstream {tiny}")
+              tiny_hp = tiny.split("/")[-1].split("-")[0]
+
+              seeder.succeed(
+                  "systemd-run --unit=upstream-http -p WorkingDirectory=/tmp/upstream "
+                  "${pkgs.python3}/bin/python3 -m http.server 8000 --bind 127.0.0.1"
+              )
+              seeder.wait_until_succeeds("curl -sf http://127.0.0.1:8000/nix-cache-info", timeout=30)
+
+              # Warm over the whole closure — a peer serves only metadata it has
+              # itself resolved.
+              seeder.succeed(
+                  f"nix-store --realise {hello} --store /tmp/warm "
+                  f"--option substituters http://127.0.0.1:5111 "
+                  f"--option require-sigs true "
+                  f"--option trusted-public-keys '{pubkey}'"
+              )
+
+              info = seeder.succeed(f"curl -sf http://127.0.0.1:5111/{hp}.narinfo")
+              f = dict(l.split(": ", 1) for l in info.strip().split("\n"))
+              narhash = f["NarHash"].split(":")[1]
+              narsize = int(f["NarSize"])
+              assert narsize >= 128 * 1024, f"hello is too small to test the swarm: {narsize}"
+
+              # 1. The seeder advertises a swarm port and is actually seeding.
+              peer_info = seeder.succeed("curl -sf http://127.0.0.1:5112/peer/v1/info")
+              assert '"swarm_port":6881' in peer_info, peer_info
+              seeder_journal = seeder.succeed("journalctl -u oligarchy-p2pd --no-pager")
+              assert "seeding" in seeder_journal, seeder_journal
+
+              # 2. And it can hand over the canonical torrent, without which no
+              #    peer can join: an infohash cannot be derived from a NarHash.
+              seeder.succeed(
+                  f"curl -sf -o /tmp/t.torrent "
+                  f"http://127.0.0.1:5112/peer/v1/torrent/{hp}/{narhash}"
+              )
+              assert int(seeder.succeed("stat -c%s /tmp/t.torrent").strip()) > 0
+
+              # 3. THE test: the leecher gets the bytes over BitTorrent.
+              leecher.succeed(
+                  f"curl -sf --max-time 120 -o /tmp/got.nar "
+                  f"http://127.0.0.1:5111/nar/{hp}/{narhash}.nar"
+              )
+              assert leecher.succeed(
+                  "nix hash file --type sha256 --base32 /tmp/got.nar"
+              ).strip() == narhash
+              journal = leecher.succeed("journalctl -u oligarchy-p2pd --no-pager")
+              assert "joining a swarm" in journal, journal
+              assert "fetched from the swarm" in journal, journal
+
+              # 4. The threshold: a tiny path must NOT enter a swarm. With no
+              #    upstream reachable this is a clean 404 rather than a slow
+              #    swarm that finds nothing.
+              tiny_info = seeder.succeed(f"curl -sf http://127.0.0.1:5111/{tiny_hp}.narinfo")
+              tf = dict(l.split(": ", 1) for l in tiny_info.strip().split("\n"))
+              tiny_hash = tf["NarHash"].split(":")[1]
+              assert int(tf["NarSize"]) < 128 * 1024
+
+              code = leecher.succeed(
+                  f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 60 "
+                  f"http://127.0.0.1:5111/nar/{tiny_hp}/{tiny_hash}.nar"
+              ).strip()
+              assert code == "404", f"a below-threshold artifact entered the swarm (HTTP {code})"
+              journal = leecher.succeed("journalctl -u oligarchy-p2pd --no-pager")
+              assert "below minArtifactSize" in journal, journal
+
+              # 5. And a real substitution end to end, signatures required.
+              leecher.succeed(
+                  f"nix-store --realise {hello} --store /tmp/teststore "
+                  f"--option substituters http://127.0.0.1:5111 "
+                  f"--option require-sigs true "
+                  f"--option trusted-public-keys '{pubkey}'"
+              )
+              leecher.succeed(f"test -x /tmp/teststore{hello}/bin/hello")
+
+              print("swarm: seeder announced and served a canonical torrent, "
+                    "leecher pulled the artifact over BitTorrent and verified it "
+                    "against the signed NarHash, a below-threshold path stayed "
+                    "out of the swarm, and a real substitution completed")
+            '';
+          };
+
+          # ── Gate 6: P2P is an enhancement, never a requirement ─────────────
+          # A transport is configured and no peer answers. The build must still
+          # succeed from upstream, and it must not first burn the peer deadline
+          # on every path — a fallback that works but takes a minute per artifact
+          # is a fallback nobody will leave enabled.
+          no-peer-fallback = nodePkgs.testers.runNixOSTest {
+            name = "oligarchy-p2p-no-peer-fallback";
+            nodes.machine = { pkgs, ... }: {
+              imports = [ ./modules/p2p-cache.nix ];
+              custom.p2pCache = {
+                enable = true;
+                registerSubstituter = false;
+                upstreams = [ "http://127.0.0.1:8000" ];
+                serveFromStore = false;
+                transport = "lan";
+                # Loopback, private-range, and nothing is listening.
+                peers = [ "127.0.0.1:5199" ];
+                peerTimeout = 10;
+                peer.enable = true;
+                logLevel = "oligarchy_p2pd=debug";
+              };
+              environment.systemPackages = [ pkgs.hello pkgs.curl pkgs.python3 ];
+              nix.settings.experimental-features = [ "nix-command" "flakes" ];
+              nix.settings.substituters = nixpkgs.lib.mkForce [ ];
+              virtualisation.memorySize = 2048;
+              virtualisation.diskSize = 8192;
+            };
+            testScript = ''
+              machine.wait_for_unit("oligarchy-p2pd.service")
+              machine.succeed("mkdir -p /tmp/upstream")
+              machine.succeed(
+                  "nix-store --generate-binary-cache-key test-cache-1 "
+                  "/tmp/cache.sec /tmp/cache.pub"
+              )
+              pubkey = machine.succeed("cat /tmp/cache.pub").strip()
+              hello = machine.succeed(
+                  "readlink -f $(which hello) | xargs dirname | xargs dirname"
+              ).strip()
+              machine.succeed(f"nix store sign --key-file /tmp/cache.sec --recursive {hello}")
+              machine.succeed(f"nix copy --to file:///tmp/upstream {hello}")
+              machine.succeed(
+                  "systemd-run --unit=upstream-http -p WorkingDirectory=/tmp/upstream "
+                  "${pkgs.python3}/bin/python3 -m http.server 8000 --bind 127.0.0.1"
+              )
+              machine.wait_until_succeeds("curl -sf http://127.0.0.1:8000/nix-cache-info", timeout=30)
+              machine.fail("curl -sf --max-time 3 http://127.0.0.1:5199/peer/v1/info")
+
+              # The whole closure, with every peer lookup failing, inside a
+              # bound. Five paths at a 10s peer deadline each would be 50s of
+              # pure waiting; a refused connection must cost nothing like that.
+              import time
+              t0 = time.monotonic()
+              machine.succeed(
+                  f"nix-store --realise {hello} --store /tmp/teststore "
+                  f"--option substituters http://127.0.0.1:5111 "
+                  f"--option require-sigs true "
+                  f"--option trusted-public-keys '{pubkey}'",
+                  timeout=180,
+              )
+              elapsed = time.monotonic() - t0
+              machine.succeed(f"test -x /tmp/teststore{hello}/bin/hello")
+
+              journal = machine.succeed("journalctl -u oligarchy-p2pd --no-pager")
+              assert "peer unreachable" in journal, journal
+              assert 'source="upstream"' in journal, journal
+              assert elapsed < 60, f"fell back, but took {elapsed:.0f}s to do it"
+
+              print(f"no-peer-fallback: every peer lookup failed, the whole "
+                    f"closure still substituted from upstream in {elapsed:.0f}s")
+            '';
+          };
+
           # ── Gate 2: the trust boundary ─────────────────────────────────────
           # Two separate claims. First, that an unsigned or badly-signed path is
           # refused when it comes through us — we add availability, never trust.

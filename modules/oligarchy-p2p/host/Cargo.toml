@@ -35,6 +35,12 @@ tokio-util = { version = "0.7", features = ["io", "io-util"] }
 xz2 = { version = "0.1", features = ["static"] }
 zstd = "0.13"
 
+# BitTorrent. `default-features = false` + `rust-tls` is not optional: the
+# default `default-tls` feature routes librqbit's reqwest at openssl and drags
+# it into the closure. Established in Stage 0 spike (b); see
+# docs/p2p-substituter-roadmap.md §2.3.
+librqbit = { version = "8.1.1", default-features = false, features = ["rust-tls"] }
+
 # rustls, never openssl. Verified in Stage 0 spike (b): default features route
 # reqwest at openssl and pull it into the closure; this posture keeps
 # buildInputs empty. See docs/p2p-substituter-roadmap.md §2.3.

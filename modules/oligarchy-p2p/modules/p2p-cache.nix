@@ -41,6 +41,10 @@ let
     peer_timeout_secs = cfg.peerTimeout;
     peer_listen = if cfg.peer.enable then cfg.peer.listenAddress else null;
     peer_port = cfg.peer.port;
+    swarm_port = cfg.swarm.port;
+    min_artifact_size = cfg.swarm.minArtifactSize;
+    swarm_upload_bps = cfg.swarm.uploadBps;
+    swarm_download_bps = cfg.swarm.downloadBps;
   });
 
   # Every substituter this host will consult, from wherever it was declared.
@@ -133,7 +137,7 @@ in
     };
 
     transport = mkOption {
-      type = types.enum [ "none" "lan" ];
+      type = types.enum [ "none" "lan" "bittorrent" ];
       default = "none";
       description = ''
         Where the adapter looks for artifacts before falling back to
@@ -143,7 +147,15 @@ in
           upstream and behaves exactly as it did before peers existed. This is
           the default, and it is what makes "P2P is an enhancement, never a
           requirement" structural rather than aspirational.
-        - `lan` — other Oligarchy hosts named in `peers`, over plain HTTP.
+        - `lan` — other Oligarchy hosts named in `peers`, over plain HTTP. One
+          peer at a time, serially. Simple, and for a two-machine site it is all
+          you need.
+        - `bittorrent` — the same peers, but pieces pulled from all of them at
+          once. The win is parallel multi-peer transfer, so it is worth having
+          from roughly three peers upward and buys nothing at two. Discovery is
+          still the LAN peer surface: **no DHT, no trackers, no PEX**, because
+          every address dialled has to come from the private-range peer list for
+          this to work under `strict-egress` unchanged.
 
         There is no sniffing and no silent fallback between transports: an
         unrecognised value is a startup failure, not a machine that quietly has
@@ -178,6 +190,53 @@ in
         upstream. Kept well under Nix's `stalled-download-timeout` (300s) so an
         unreachable peer costs a pause, not a failed build.
       '';
+    };
+
+    swarm = {
+      port = mkOption {
+        type = types.port;
+        default = 6881;
+        description = ''
+          BitTorrent listen port, advertised to peers in `/peer/v1/info` so they
+          know where to dial. Opened on the same interfaces as
+          `peer.openFirewall` — a swarm needs inbound connections to be more
+          than a leech.
+        '';
+      };
+
+      minArtifactSize = mkOption {
+        type = types.str;
+        default = "4M";
+        description = ''
+          Artifacts smaller than this never enter a swarm; they come from a peer
+          over plain HTTP or from upstream.
+
+          The default is measured rather than guessed. Over this workstation's
+          live closure (4096 paths, 48.6 GiB) the **median NAR is 355 KiB**, and
+          a swarm per NAR would be pathological — announce and handshake
+          overhead dominates and almost every swarm has one peer. At 4 MiB,
+          16.4% of paths enter swarms and still cover **96.0% of the bytes**.
+          The knee sits between 4 and 8 MiB. See
+          `docs/p2p-substituter-roadmap.md` §4.1.
+
+          The sample is a desktop- and dev-heavy closure, so a stage rig or a
+          shipped instrument may want its own number.
+        '';
+      };
+
+      uploadBps = mkOption {
+        type = types.int;
+        default = 0;
+        example = 20 * 1024 * 1024;
+        description = "Swarm upload limit in bytes per second. 0 is unlimited.";
+      };
+
+      downloadBps = mkOption {
+        type = types.int;
+        default = 0;
+        example = 100 * 1024 * 1024;
+        description = "Swarm download limit in bytes per second. 0 is unlimited.";
+      };
     };
 
     peer = {
@@ -386,6 +445,24 @@ in
         '';
       }
       {
+        assertion = cfg.transport != "bittorrent" || cfg.peer.enable;
+        message = ''
+          custom.p2pCache.transport = "bittorrent" needs custom.p2pCache.peer
+          enabled. The swarm has no DHT and no trackers by design, so the peer
+          surface is the ONLY way another host can learn this one's infohashes
+          and swarm port — without it this host can leech and can never seed,
+          and a swarm where nobody seeds does not form.
+        '';
+      }
+      {
+        assertion = cfg.transport != "bittorrent" || cfg.swarm.port != cfg.peer.port;
+        message = ''
+          custom.p2pCache.swarm.port and .peer.port are both
+          ${toString cfg.swarm.port}. They are two different listeners and
+          cannot share a port.
+        '';
+      }
+      {
         assertion = cfg.upstreams != [ ];
         message = ''
           custom.p2pCache.upstreams is empty. Stage 1 is a proxy — with no
@@ -453,7 +530,11 @@ in
     # Per-interface, never global, and never `trustedInterfaces` — the same
     # shape services.demod-talk and services.dcf-hypr-agent use.
     networking.firewall.interfaces = lib.genAttrs cfg.peer.openFirewall (_: {
-      allowedTCPPorts = [ cfg.peer.port ];
+      # The swarm port travels with the peer surface: a BitTorrent peer that
+      # cannot accept inbound connections can only leech, and a swarm of pure
+      # leeches transfers nothing.
+      allowedTCPPorts = [ cfg.peer.port ]
+        ++ optional (cfg.transport == "bittorrent") cfg.swarm.port;
     });
 
     # Definitions, not defaults, so they MERGE with nixpkgs' own

@@ -192,14 +192,32 @@ impl Cache {
     /// Evict least-recently-used entries until the cache fits.
     /// Returns `(before, after)` in bytes for the NAR directory.
     pub fn evict(&self) -> Result<(u64, u64)> {
-        // Metadata is swept under its own budget so the two never compete.
-        if let Err(e) = self.sweep(&self.narinfo_dir, NARINFO_BUDGET) {
-            tracing::warn!(error = %e, "narinfo sweep failed");
-        }
-        self.sweep(&self.nar_dir, self.max_bytes)
+        self.evict_with(&|_| {})
     }
 
-    fn sweep(&self, dir: &Path, budget: u64) -> Result<(u64, u64)> {
+    /// As `evict`, but tell `on_evict` about each artifact **before** its file
+    /// is removed.
+    ///
+    /// The ordering is the point. A seeding transport has the file open and is
+    /// advertising it to a swarm; deleting it first leaves peers talking to a
+    /// host that claims to have an artifact and cannot produce it, which is
+    /// worse than one that never claimed it.
+    pub fn evict_with(&self, on_evict: &dyn Fn(&Sha256Digest)) -> Result<(u64, u64)> {
+        // Metadata is swept under its own budget so the two never compete.
+        // Nothing announces a narinfo, so no callback here.
+        if let Err(e) = self.sweep(&self.narinfo_dir, NARINFO_BUDGET, &|_| {}) {
+            tracing::warn!(error = %e, "narinfo sweep failed");
+        }
+        self.sweep(&self.nar_dir, self.max_bytes, on_evict)
+    }
+
+    /// The digest an artifact filename encodes, if it is one of ours.
+    fn digest_of(path: &Path) -> Option<Sha256Digest> {
+        let stem = path.file_name()?.to_str()?.strip_suffix(".nar")?;
+        Sha256Digest::from_nix32(stem).ok()
+    }
+
+    fn sweep(&self, dir: &Path, budget: u64, on_evict: &dyn Fn(&Sha256Digest)) -> Result<(u64, u64)> {
         let mut entries: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
         let mut total = 0u64;
         for e in fs::read_dir(dir)?.flatten() {
@@ -218,6 +236,9 @@ impl Cache {
         for (_, len, path) in entries {
             if total <= budget {
                 break;
+            }
+            if let Some(d) = Self::digest_of(&path) {
+                on_evict(&d);
             }
             match fs::remove_file(&path) {
                 Ok(()) => {
@@ -360,6 +381,40 @@ mod tests {
         assert_eq!(before, 4096);
         assert!(after <= 1, "NAR budget not enforced: {after}");
         assert!(c.get_narinfo("keepme").is_some(), "metadata evicted with the NARs");
+    }
+
+    #[test]
+    fn eviction_announces_before_it_deletes() {
+        // The ordering a seeding transport depends on: it must be told to stop
+        // serving a file while that file still exists.
+        use std::sync::Mutex;
+        let d = tempfile::tempdir().unwrap();
+        let c = Cache::new(d.path(), 10).unwrap();
+        let slot = c.slot(&digest(4)).unwrap();
+        fs::write(slot.temp_path(), vec![0u8; 4096]).unwrap();
+        let path = slot.commit().unwrap();
+
+        let seen: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
+        c.evict_with(&|dg| {
+            seen.lock().unwrap().push((dg.to_nix32(), path.exists()));
+        })
+        .unwrap();
+
+        let seen = seen.into_inner().unwrap();
+        assert_eq!(seen.len(), 1, "callback not invoked");
+        assert_eq!(seen[0].0, digest(4).to_nix32(), "wrong artifact announced");
+        assert!(seen[0].1, "the file was already gone when the callback ran");
+        assert!(!path.exists(), "eviction did not actually delete");
+    }
+
+    #[test]
+    fn digest_of_ignores_files_that_are_not_ours() {
+        assert!(Cache::digest_of(Path::new("/x/README")).is_none());
+        assert!(Cache::digest_of(Path::new("/x/short.nar")).is_none());
+        assert_eq!(
+            Cache::digest_of(Path::new(&format!("/x/{}.nar", digest(5).to_nix32()))),
+            Some(digest(5))
+        );
     }
 
     #[test]

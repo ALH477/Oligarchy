@@ -685,6 +685,13 @@
         # a leecher whose only possible source is the seeder — no upstream that
         # resolves, nothing in its store, an empty cache.
         p2p-two-node = oligarchy-p2p.checks.${system}.two-node;
+        # BitTorrent. The swarm gate also asserts the NEGATIVE case — that a
+        # below-threshold artifact stays out of a swarm — because this closure's
+        # median NAR is 355 KiB and a swarm per NAR would be pathological.
+        p2p-swarm = oligarchy-p2p.checks.${system}.swarm;
+        # The claim that P2P is an enhancement and never a requirement, asserted
+        # rather than stated: every peer lookup fails and the build still works.
+        p2p-no-peer-fallback = oligarchy-p2p.checks.${system}.no-peer-fallback;
 
         # ════════════════════════════════════════════════════════════════════
         # Malware Shield build gate — scans the FULL system closure with pinned,

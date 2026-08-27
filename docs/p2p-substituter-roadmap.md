@@ -1,6 +1,6 @@
 # P2P Substituter — Design & Living Roadmap
 
-> **Status:** LIVING DOCUMENT. Stages 1-3 are landed and all four gates pass.
+> **Status:** LIVING DOCUMENT. Stages 1-4 are landed and all six gates pass.
 > Stage 1's narinfo posture was WRONG and stage 2 corrects it — read Known gap 1
 > and §3.2 before changing anything about the URL or the compression. The module
 > is wired on the workstation host and **disabled by default**; §6 "Current
@@ -243,7 +243,7 @@ One stage per commit. Each stage's gate must be green before the next starts.
 | 1 | Sub-flake + loopback adapter, pass-through proxy, no transport | `nix build .#p2p-substituter-protocol` and `.#p2p-signature-refusal` | **DONE** |
 | 2 | Local artifact cache + `nix-store --dump` serving + the uncompressed-NAR canonicalisation | `nix build .#p2p-artifact-cache` — a corrupt body is refused *before* Nix sees a byte | **DONE** |
 | 3 | `ArtifactTransport` + `LanTransport` over the peer surface, static peers | `nix build .#p2p-two-node` — the repo's first multi-node test | **DONE** (mDNS deferred, gap 20) |
-| 4 | `BitTorrentTransport` (librqbit, `initial_peers`, `disable_trackers`) | two-node swarm + `p2p-no-peer-fallback` | not started |
+| 4 | `BitTorrentTransport` (librqbit, `initial_peers`, `disable_trackers`) | `nix build .#p2p-swarm` and `.#p2p-no-peer-fallback` | **DONE** |
 | 5 | BEP44-shaped signed index records + the OCI index container | tampered record refused; unsigned record refused | not started |
 | 6 | Limits, eviction, `oligarchy-p2p-status`/`-test`, MCP `net` wiring | `.#mcp-self-audit` still green, daemon absent from `.mcp.json` | not started |
 
@@ -286,6 +286,36 @@ One stage per commit. Each stage's gate must be green before the next starts.
   nix build .#p2p-artifact-cache         # the cache is real, and is verified
   nix build .#p2p-two-node               # a leecher whose ONLY source is a peer
   ```
+
+### Current wiring (stage 4)
+
+The resolver is unchanged in shape; `transport = "bittorrent"` swaps what sits
+at step 3.
+
+```
+1. local cache      verified IN FULL, then served
+2. local Nix store  verified IN FULL, then served      → announced to the swarm
+3. peers            LAN HTTP *or* BitTorrent           → verified IN FULL, then served
+4. upstream HTTP    decompress + verify + tee          → announced to the swarm
+```
+
+- **Discovery is not BitTorrent's.** `disable_dht: true`, no trackers, no PEX.
+  Peers *and* infohashes both come from the stage-3 peer surface, because every
+  address dialled has to come from the private-range peer list for this to work
+  under `strict-egress` unchanged. `AddTorrentOptions { initial_peers,
+  disable_trackers }` is what makes a tracker-less, DHT-less swarm expressible.
+- **BitTorrent adds nothing to the trust story.** Piece hashes come from a
+  `.torrent` an untrusted peer handed us. What makes a fetch safe is what always
+  did: the completed file is hashed against the **signed** `NarHash` before it
+  is given a name.
+- **`minArtifactSize` defaults to 4 MiB**, from the Stage 0 measurement (§4.1):
+  the median NAR here is 355 KiB, and 4 MiB puts 16.4% of paths in swarms while
+  covering 96.0% of the bytes. `discover` checks it *before* contacting any
+  peer, so a small path costs no round trip.
+- A host seeds at every point an artifact becomes a cache entry: upstream fetch,
+  `nix-store --dump`, and peer fetch. It re-announces the whole cache at startup,
+  because a restart otherwise silently stops seeding everything while the daemon
+  still looks healthy.
 
 ### Known gaps, by the stage that will hit them
 
@@ -406,7 +436,33 @@ One stage per commit. Each stage's gate must be green before the next starts.
     the wrong thing about what a transport owes. Stage 4 adds them, where
     announcing to a swarm and dropping a torrent on eviction are real.
 
-**Before BitTorrent lands (stage 4+)**
+**Stage 4 leftovers**
+
+26. **`provide` and `remove` are fire-and-forget, and `remove` therefore has no
+    ordering guarantee.** Eviction may delete a file before `librqbit` has let
+    go of it; librqbit errors on the missing file and drops the torrent, which
+    is survivable. The alternative was worse — see gap 27 — but a synchronous
+    `remove` would need the transport to own a runtime thread of its own. Worth
+    doing if evicting a hot artifact ever shows up as peer-visible errors.
+27. **`Handle::block_on` is wrong in a transport, in both directions.** From an
+    async handler it panics outright (`Cannot start a runtime from within a
+    runtime`); from a `spawn_blocking` thread it never returns at all —
+    silently, with no panic, no error and a healthy-looking daemon. Both were
+    shipped and both were caught by `.#p2p-swarm`. The trait now says **must not
+    block** and records why.
+28. **A swarm of two is slower than a direct HTTP copy.** BitTorrent's win is
+    parallel multi-peer transfer; with one seeder it adds handshake and piece
+    scheduling for nothing. `transport = "lan"` remains the right answer for a
+    two-machine site and is not deprecated by this stage.
+29. **The infohash still comes from a peer.** That is the stage-5 index's job.
+    Until then a host can only join a swarm for an artifact some reachable peer
+    already holds *and* has resolved metadata for — so the swarm cannot outlive
+    the peer surface, and a fully offline swarm is not yet possible.
+30. **Nothing limits how many torrents the session holds.** The cache is bounded
+    and eviction calls `remove`, so it is bounded in practice, but there is no
+    independent cap and no back-pressure if `provide` outruns `remove`.
+
+**Deferred (stage 5+)**
 
 16. `strict-egress` puts RFC1918 / 100.64.0.0/10 / link-local in its *static*
    allow set, so a LAN or tailnet swarm needs no firewall change. A **public**
@@ -527,3 +583,14 @@ design, so any gate aimed at one of them has to remove the other two.
   ships one. That is the third instance in this subsystem of the same rule: a
   test whose subject can be satisfied by something else is not testing its
   subject.
+- **Stage 4** — the BitTorrent transport, canonical torrent construction, real
+  `provide`/`remove`, and the `minArtifactSize` threshold. 82 unit tests. Three
+  bugs, all found by the gate rather than by local testing, and the local miss
+  is the lesson: the local harness ran with `serveFromStore = false`, so the
+  `nix-store` path — the one that panicked — was never exercised. Front-loading
+  local tests only helps when the local config matches the gate's.
+  * `Handle::block_on` from the async handler panicked on every store hit.
+  * Moving it to `spawn_blocking` replaced the panic with a silent hang.
+  * And the `provide` call site was never added at all: a `str.replace` anchor
+    had gone stale when the line it keyed on was promoted from `debug!` to
+    `info!` in stage 2, so the edit silently did nothing.

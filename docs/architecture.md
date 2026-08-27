@@ -303,11 +303,17 @@ and serves nothing it has not verified. Peer addresses are restricted to
 private ranges in code — the same set `strict-egress.nix` allows statically,
 which is why a LAN swarm needs no firewall change.
 
-Staged: stage 3 (LAN peer transport) is wired on `nixosConfigurations.nixos`
-only and **disabled by default**, with `transport` defaulting to `"none"`.
-Gates: `nix build .#p2p-substituter-protocol`, `.#p2p-signature-refusal`,
-`.#p2p-artifact-cache` and `.#p2p-two-node` — the repo's first multi-node VM
-test.
+`transport = "bittorrent"` swaps what sits at the peer step: the same peers,
+but pieces pulled from all of them at once. Discovery is still the LAN peer
+surface — no DHT, no trackers, no PEX — because every address dialled has to
+come from the private-range peer list. Artifacts below
+`swarm.minArtifactSize` (4 MiB, measured) never enter a swarm at all.
+
+Staged: stage 4 is wired on `nixosConfigurations.nixos` only and **disabled
+by default**, with `transport` defaulting to `"none"`. Gates:
+`nix build .#p2p-substituter-protocol`, `.#p2p-signature-refusal`,
+`.#p2p-artifact-cache`, `.#p2p-two-node` (the repo's first multi-node VM
+test), `.#p2p-swarm` and `.#p2p-no-peer-fallback`.
 
 ## 6. `vm-manager/` — VMs
 
@@ -645,6 +651,8 @@ nix build .#p2p-substituter-protocol # real substitution through the P2P adapter
 nix build .#p2p-signature-refusal    # the adapter never becomes a trust authority
 nix build .#p2p-artifact-cache       # the local artifact cache is real and verified
 nix build .#p2p-two-node             # a host whose only source is a peer gets the path
+nix build .#p2p-swarm                # artifacts move over BitTorrent; small ones stay out
+nix build .#p2p-no-peer-fallback     # no peers, and the build still works
 nix build .#plugins-tier2-runtime
 
 # eval-only check (full toplevel is already in checks; slow gates left out)

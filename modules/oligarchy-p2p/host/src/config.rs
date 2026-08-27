@@ -44,6 +44,16 @@ pub struct Config {
     /// Serve the peer surface on this address, or `null` to serve nobody.
     pub peer_listen: Option<String>,
     pub peer_port: u16,
+
+    /// BitTorrent swarm port, advertised to peers in `/peer/v1/info`.
+    pub swarm_port: u16,
+    /// Below this many bytes an artifact never enters a swarm. This closure's
+    /// median NAR is 355 KiB; 4 MiB covers 96% of the bytes with 16% of the
+    /// swarms. See docs/p2p-substituter-roadmap.md §4.1.
+    pub min_artifact_size: String,
+    /// Bytes per second, or 0 for unlimited.
+    pub swarm_upload_bps: u32,
+    pub swarm_download_bps: u32,
 }
 
 impl Config {
@@ -96,9 +106,13 @@ impl Config {
             bail!("store_dir must be set");
         }
         crate::cache::parse_size(&self.max_cache_size)?;
-        if !matches!(self.transport.as_str(), "none" | "lan") {
-            bail!("unknown transport {:?}; expected \"none\" or \"lan\"", self.transport);
+        if !matches!(self.transport.as_str(), "none" | "lan" | "bittorrent") {
+            bail!(
+                "unknown transport {:?}; expected \"none\", \"lan\" or \"bittorrent\"",
+                self.transport
+            );
         }
+        crate::cache::parse_size(&self.min_artifact_size)?;
         if let Some(a) = &self.peer_listen {
             let ip: IpAddr = a
                 .parse()
@@ -147,7 +161,11 @@ mod tests {
             "peers": [],
             "peer_timeout_secs": 10,
             "peer_listen": null,
-            "peer_port": 5112
+            "peer_port": 5112,
+            "swarm_port": 6881,
+            "min_artifact_size": "4M",
+            "swarm_upload_bps": 0,
+            "swarm_download_bps": 0
         })
     }
 
@@ -201,7 +219,21 @@ mod tests {
         // No sniffing, no silent fallback to "none": a typo in the module must
         // be a startup failure, not a machine that quietly has no peers.
         let mut v = base();
+        v["transport"] = "carrier-pigeon".into();
+        assert!(load(v).is_err());
+    }
+
+    #[test]
+    fn accepts_the_bittorrent_transport() {
+        let mut v = base();
         v["transport"] = "bittorrent".into();
+        assert!(load(v).is_ok());
+    }
+
+    #[test]
+    fn refuses_a_min_artifact_size_it_cannot_parse() {
+        let mut v = base();
+        v["min_artifact_size"] = "four megs".into();
         assert!(load(v).is_err());
     }
 

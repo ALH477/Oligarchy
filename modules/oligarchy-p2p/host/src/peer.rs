@@ -36,6 +36,10 @@ pub enum PeerRoute {
     Have { hash_part: String, nar_hash: String },
     NarInfo { hash_part: String },
     Nar { hash_part: String, nar_hash: String },
+    /// The canonical `.torrent` for an artifact we hold. A peer cannot derive
+    /// an infohash from a `NarHash` without already having the file, so
+    /// whoever has it has to publish the mapping.
+    Torrent { hash_part: String, nar_hash: String },
 }
 
 fn is_hash_part(s: &str) -> bool {
@@ -63,6 +67,10 @@ pub fn parse(path: &str) -> Option<PeerRoute> {
             hash_part: (*hp).to_string(),
             nar_hash: (*nh).to_string(),
         }),
+        ["torrent", hp, nh] if is_hash_part(hp) && is_nar_hash(nh) => Some(PeerRoute::Torrent {
+            hash_part: (*hp).to_string(),
+            nar_hash: (*nh).to_string(),
+        }),
         _ => None,
     }
 }
@@ -83,15 +91,25 @@ async fn dispatch(State(st): State<Arc<AppState>>, method: Method, uri: Uri) -> 
         Some(PeerRoute::Nar { hash_part, nar_hash }) => {
             nar(&st, &hash_part, &nar_hash, head_only).await
         }
+        Some(PeerRoute::Torrent { hash_part, nar_hash }) => {
+            torrent(&st, &hash_part, &nar_hash).await
+        }
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
 fn info(st: &AppState) -> Response {
+    // `swarm_port` is how a peer learns where to dial for BitTorrent. Absent
+    // (null) when no swarm is configured, which is the default — a peer that
+    // does not advertise one is simply not dialled.
     let body = format!(
-        "{{\"impl\":\"oligarchy-p2pd\",\"version\":\"{}\",\"artifacts\":{}}}\n",
+        "{{\"impl\":\"oligarchy-p2pd\",\"version\":\"{}\",\"artifacts\":{},\"swarm_port\":{}}}\n",
         env!("CARGO_PKG_VERSION"),
-        st.artifacts.total_bytes().unwrap_or(0)
+        st.artifacts.total_bytes().unwrap_or(0),
+        match st.swarm_port {
+            Some(p) => p.to_string(),
+            None => "null".into(),
+        }
     );
     let mut h = HeaderMap::new();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -194,6 +212,42 @@ async fn nar(st: &AppState, hash_part: &str, nar_hash: &str, head_only: bool) ->
     }
 }
 
+/// Hand over the canonical `.torrent`, built on demand from a verified local
+/// copy. Same rule as every other route here: local sources only.
+async fn torrent(st: &AppState, hash_part: &str, nar_hash: &str) -> Response {
+    let Some(text) = st.artifacts.get_narinfo(hash_part) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(ni) = crate::narinfo::NarInfo::parse(&text) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if ni.nar_hash().to_nix32() != nar_hash {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Ok(len) = ni.nar_size() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some((_source, path)) =
+        resolve::local(&st.artifacts, &ni, &st.store_dir, st.serve_from_store)
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match crate::torrent::build(&path, &ni.nar_hash(), len).await {
+        Ok(bytes) => {
+            let mut h = HeaderMap::new();
+            h.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/x-bittorrent"),
+            );
+            (StatusCode::OK, h, bytes).into_response()
+        }
+        Err(e) => {
+            tracing::warn!(hash_part, error = %e, "could not build a torrent");
+            StatusCode::NOT_FOUND.into_response()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +269,14 @@ mod tests {
         assert_eq!(
             parse(&format!("/peer/v1/nar/{HP}/{NH}")),
             Some(PeerRoute::Nar { hash_part: HP.into(), nar_hash: NH.into() })
+        );
+    }
+
+    #[test]
+    fn the_torrent_route_parses() {
+        assert_eq!(
+            parse(&format!("/peer/v1/torrent/{HP}/{NH}")),
+            Some(PeerRoute::Torrent { hash_part: HP.into(), nar_hash: NH.into() })
         );
     }
 

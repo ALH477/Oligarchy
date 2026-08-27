@@ -19,7 +19,8 @@ cache, and hands them back through the standard protocol.
    │            ▼  ordered, first success wins                │
    │   1. local cache   verified IN FULL, then served         │
    │   2. local store   verified IN FULL, then served         │
-   │   3. peers         fetched, verified IN FULL, served     │
+   │   3. peers         LAN HTTP or BitTorrent —              │
+   │                    fetched, verified IN FULL, served     │
    │   4. upstream      decompressed, streamed w/ lookahead,  │
    │                    teed into the cache                   │
    │            │                                             │
@@ -144,6 +145,8 @@ roadmap's Known gap 1.
 | `host/src/peer.rs` | The peer surface: the three rules that keep it from becoming a proxy |
 | `host/src/transport/mod.rs` | The `ArtifactTransport` trait and `NullTransport` |
 | `host/src/transport/lan.rs` | LAN peers over plain HTTP, and the private-range check |
+| `host/src/transport/bittorrent.rs` | The swarm, and why discovery is not BitTorrent's |
+| `host/src/torrent.rs` | Canonical torrent construction — all of it is wire contract |
 | `modules/p2p-cache.nix` | `custom.p2pCache.*`, the unit, the assertions |
 | `pkgs/oligarchy-p2pd/default.nix` | `buildInputs = [ ]`, and that is load-bearing |
 
@@ -158,6 +161,8 @@ nix build .#p2p-substituter-protocol
 nix build .#p2p-signature-refusal
 nix build .#p2p-artifact-cache
 nix build .#p2p-two-node
+nix build .#p2p-swarm
+nix build .#p2p-no-peer-fallback
 ```
 
 By hand, against the real cache:
@@ -170,7 +175,43 @@ diff <(curl -s https://cache.nixos.org/<hp>.narinfo) \
      <(curl -s http://127.0.0.1:5111/<hp>.narinfo)   # only URL should differ
 ```
 
-## Two bugs worth knowing about
+## BitTorrent, and what it does not buy you
+
+`transport = "bittorrent"` pulls pieces from every peer at once. That is the
+only thing it buys, so it is worth having from roughly three peers upward and
+buys nothing at two — `transport = "lan"` stays the right answer for a
+two-machine site.
+
+Discovery is **not** BitTorrent's: no DHT, no trackers, no PEX. Peers and
+infohashes both come from the peer surface, because every address dialled has to
+come from the private-range peer list for this to work under `strict-egress`
+unchanged.
+
+And it adds nothing to the trust story. Piece hashes come from a `.torrent` an
+untrusted peer handed us, so they are exactly as trustworthy as that peer. What
+makes a fetch safe is what always did: the completed file is hashed against the
+signed `NarHash` before it is given a name.
+
+Artifacts below `swarm.minArtifactSize` (4 MiB by default) never enter a swarm.
+That number is measured, not guessed — the median NAR in this repo's own closure
+is **355 KiB**, and 4 MiB puts 16.4% of paths in swarms while still covering
+96.0% of the bytes.
+
+## Three bugs worth knowing about
+
+### A transport method that blocked
+
+`Handle::block_on` inside a transport is wrong in two different ways, and both
+shipped. From the async request handler it panics outright — *Cannot start a
+runtime from within a runtime* — on every store hit. Moving it to
+`spawn_blocking` traded that for something worse: the task simply never
+returned. No panic, no error, no log line, and a daemon that looked entirely
+healthy while seeding nothing.
+
+`provide` and `remove` now spawn and return, and the trait says **must not
+block**. The cost is that `remove` no longer beats eviction to the file, which
+librqbit survives.
+
 
 ### A cache that only worked when you did not need it
 

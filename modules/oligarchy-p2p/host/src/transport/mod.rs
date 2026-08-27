@@ -84,12 +84,30 @@ pub trait ArtifactTransport: Send + Sync {
         deadline: Duration,
     ) -> Result<PathBuf>;
 
-    // NOTE: no `provide`/`remove` yet. For the LAN transport being reachable
-    // IS the announcement, so both would be no-ops, and a trait method whose
-    // only implementation does nothing teaches the next reader the wrong thing
-    // about what a transport owes. They arrive in stage 4, where announcing to
-    // a swarm and dropping a torrent on eviction are real operations with real
-    // failure modes to design against.
+    /// Announce that we hold this artifact, at this path.
+    ///
+    /// A no-op for the LAN transport, where being reachable IS the
+    /// announcement — these methods were deliberately absent until BitTorrent
+    /// gave them something to mean. For a swarm it is the difference between
+    /// leeching and seeding.
+    ///
+    /// Best-effort by contract: failing to seed must never fail the fetch that
+    /// produced the artifact.
+    ///
+    /// **Must not block.** An implementation that needs async work should
+    /// spawn it and return. Both other spellings were tried and both were
+    /// wrong: blocking on a runtime from an async handler panics outright, and
+    /// blocking on one from a `spawn_blocking` thread never returned at all —
+    /// silently, with the daemon still looking healthy. "Best effort" has to
+    /// mean it cannot stall the caller either.
+    fn provide(&self, _art: &ArtifactRef, _path: &std::path::Path) -> Result<()> {
+        Ok(())
+    }
+
+    /// Stop announcing it — after eviction, when the file is about to go away.
+    fn remove(&self, _art: &ArtifactRef) -> Result<()> {
+        Ok(())
+    }
 
     /// A narinfo from a peer, for a path we have never seen.
     ///
@@ -132,6 +150,7 @@ impl ArtifactTransport for NullTransport {
     }
 }
 
+pub mod bittorrent;
 pub mod lan;
 
 #[cfg(test)]
