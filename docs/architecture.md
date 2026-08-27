@@ -309,11 +309,29 @@ surface — no DHT, no trackers, no PEX — because every address dialled has to
 come from the private-range peer list. Artifacts below
 `swarm.minArtifactSize` (4 MiB, measured) never enter a swarm at all.
 
-Staged: stage 4 is wired on `nixosConfigurations.nixos` only and **disabled
-by default**, with `transport` defaulting to `"none"`. Gates:
+`servePackages` closes the inversion the first four stages left: a host could
+only seed what it *fetched*, because a locally-built path has a narinfo nowhere
+and a peer cannot verify a NAR without the signed `NarHash` in one. Listing
+packages there builds them, GC-roots them, signs the ones that carry no
+signature — precisely the locally-built ones — and publishes a minted narinfo
+into a non-evictable `declared/` tier that the peer surface serves. Minting
+needs a signing key and the Nix database, both of which the daemon is
+deliberately denied, so it runs in a **separate root oneshot**
+(`oligarchy-p2p-seed.service`); the key is not named in the daemon's config and
+the daemon never opens it.
+
+The consumer half, `trustedPublicKeys`, is the only setting in this subsystem
+that extends trust, and it is not scoped: Nix cannot restrict a key to a set of
+paths, so trusting a seeder trusts that host for everything this machine will
+ever substitute. Both options default to `[ ]`, where the "peers are sources of
+bytes and nothing else" rule holds exactly as written.
+
+Staged: stage 5 is wired on `nixosConfigurations.nixos` only and **disabled
+by default**, with `transport` defaulting to `"none"` and `servePackages` /
+`trustedPublicKeys` to `[ ]`. Gates:
 `nix build .#p2p-substituter-protocol`, `.#p2p-signature-refusal`,
 `.#p2p-artifact-cache`, `.#p2p-two-node` (the repo's first multi-node VM
-test), `.#p2p-swarm` and `.#p2p-no-peer-fallback`.
+test), `.#p2p-swarm`, `.#p2p-no-peer-fallback` and `.#p2p-local-signing`.
 
 ## 6. `vm-manager/` — VMs
 
@@ -653,6 +671,7 @@ nix build .#p2p-artifact-cache       # the local artifact cache is real and veri
 nix build .#p2p-two-node             # a host whose only source is a peer gets the path
 nix build .#p2p-swarm                # artifacts move over BitTorrent; small ones stay out
 nix build .#p2p-no-peer-fallback     # no peers, and the build still works
+nix build .#p2p-local-signing        # a host seeds what it BUILT; refused without the key
 nix build .#plugins-tier2-runtime
 
 # eval-only check (full toplevel is already in checks; slow gates left out)

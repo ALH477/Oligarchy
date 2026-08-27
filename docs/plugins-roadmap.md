@@ -822,6 +822,21 @@ formality.
    picks the hostname up on its own. **Keep the secret half off every machine
    that runs plugins** — signing is an authoring step, not a runtime one.
 
+   **The P2P substituter now solves half of this, and creates a tension worth
+   naming.** `custom.p2pCache.servePackages` (stage 5, see
+   `docs/p2p-substituter-roadmap.md`) gives a host a signing key and publishes
+   the paths it built to its peers — which is a serving mechanism for exactly
+   the artifacts this gap is waiting on, and both subsystems were blocked on the
+   same missing key. It does keep the key out of the network-facing daemon: a
+   separate root oneshot signs, and `oligarchy-p2pd` never opens the key.
+
+   But it does put a signing key on a machine that also *runs* things, which is
+   what the sentence above says not to do. That sentence stands for the FX
+   Bazaar: a public plugin cache wants an offline authoring key, and a LAN
+   convenience for a handful of self-administered hosts is a different risk
+   calculation from a cache strangers install from. Do not read stage 5 as
+   permission to skip the offline key here.
+
 2. **Determinate: resolved, no action needed.** `/etc/nix/nix.conf` carries
    `!include nix.custom.conf`, and `nix config show` on the running host
    confirms the NixOS-generated `trusted-public-keys` / `substituters` /

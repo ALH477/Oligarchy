@@ -52,6 +52,34 @@
         # is a Python f-string embedded in a Nix indented string, so a program
         # containing braces and its own heredoc has three levels of quoting to
         # get wrong, and did.
+        # ── Fixtures for the local-signing gate ────────────────────────────
+        #
+        # A THROWAWAY keypair, in the clear, on purpose. `trustedPublicKeys` is
+        # a module option consumed at evaluation time, so the public half has to
+        # be a literal; generating the pair inside the VM would need IFD to get
+        # it back out into a node's config. The secret half never leaves this
+        # test and signs nothing but `seedProbe`.
+        gateSecretKey = "p2p-gate-1:ajz8FUuVq/YrfHP/fAvZvRxMhwBWoQ2waIXsTE16sDu3GyW2ECgd3rY95OyyxUoYQSvl87eOU+jIuAl7g9qmVQ==";
+        gatePublicKey = "p2p-gate-1:txslthAoHd62PeTsssVKGEEr5fO3jlPoyLgJe4PaplU=";
+
+        # The artifact under test. THREE properties are load-bearing and each
+        # has killed a gate in this subsystem before:
+        #
+        #  1. `runCommand` output is INPUT-ADDRESSED. A content-addressed path
+        #     needs no signature at all — `checkSignatures` returns `maxSigs`
+        #     without examining one — so `writeText`/`nix-store --add` would
+        #     make the refusal leg pass for the wrong reason. The gate asserts
+        #     `ca is None` rather than trusting this comment.
+        #  2. It is built HERE, so it carries no signature from anywhere. Using
+        #     `pkgs.hello` would leave `cache.nixos.org-1:` on it and the
+        #     refusal leg would again pass for the wrong reason.
+        #  3. Its name is unique to this gate, so it cannot collide with
+        #     anything already in a developer's store.
+        seedProbe = nodePkgs.runCommand "p2p-seed-probe" { } ''
+          mkdir -p $out
+          echo "oligarchy p2p local signing probe" > $out/marker
+        '';
+
         hostilePeer = nodePkgs.writeText "hostile-peer.py" ''
           # Serves right-length, wrong bytes under the peer protocol. The point
           # is that only the digest can catch it: the length is correct, the
@@ -890,6 +918,289 @@
           # refused when it comes through us — we add availability, never trust.
           # Second, that the substituter URI we register carries no `trusted=`,
           # which is the one mistake that would silently make claim one false.
+          # ── Gate 7: can a host seed what it BUILT? ─────────────────────────
+          #
+          # Stages 1-4 could only seed what a host had FETCHED: the peer surface
+          # serves narinfo only from disk, and a locally-built path has one
+          # nowhere. So a machine that substituted a rebuild was a good seeder
+          # and a machine that compiled it was useless. This gate is that
+          # inversion, fixed — and it is the first one here where a peer supplies
+          # metadata it minted rather than metadata it relayed.
+          #
+          # THE VACUITY PROBLEM, because it has bitten this subsystem three
+          # times. NixOS test nodes normally mount the HOST's /nix/store, so a
+          # path "only the seeder has" is on the consumer's filesystem too and
+          # `serveFromStore` answers locally without the transport ever running.
+          # Every prior gate worked around it with `serveFromStore = false` and
+          # the weaker `nix path-info` assertion. This one sets
+          # `useNixStoreImage = true` on the consumer instead, which severs the
+          # shared store outright (it flips `mountHostNixStore`) — so the gate
+          # can assert `test -e` and mean it.
+          local-signing = nodePkgs.testers.runNixOSTest {
+            name = "oligarchy-p2p-local-signing";
+
+            nodes = {
+              # Alphabetical, because NixOS assigns node addresses in that
+              # order: builder = .1, consumer = .2.
+              builder = { pkgs, ... }: {
+                imports = [ ./modules/p2p-cache.nix ];
+                custom.p2pCache = {
+                  enable = true;
+                  registerSubstituter = false;
+                  # NO upstream. This host proxies nothing and publishes only
+                  # what it built — the pure-seeder configuration the relaxed
+                  # `upstreams != []` assertion exists for.
+                  upstreams = [ ];
+                  serveFromStore = true;
+                  servePackages = [ seedProbe ];
+                  signingKeyFile = "/tmp/cache.sec";
+                  peer.enable = true;
+                  peer.openFirewall = [ "eth1" ];
+                  logLevel = "oligarchy_p2pd=debug";
+                };
+                environment.systemPackages = [ pkgs.curl ];
+                nix.settings.experimental-features = [ "nix-command" "flakes" ];
+                virtualisation.memorySize = 2048;
+                virtualisation.diskSize = 8192;
+              };
+
+              consumer = { pkgs, lib, ... }: {
+                imports = [ ./modules/p2p-cache.nix ];
+                custom.p2pCache = {
+                  enable = true;
+                  registerSubstituter = false;
+                  upstreams = [ "http://127.0.0.1:9" ];
+                  upstreamTimeout = 2;
+                  serveFromStore = true;
+                  transport = "lan";
+                  peers = [ "192.168.1.1:5112" ];
+                  peerTimeout = 30;
+                  # The builder's key, declared the way an operator would.
+                  trustedPublicKeys = [ gatePublicKey ];
+                  logLevel = "oligarchy_p2pd=debug";
+                };
+                # Sever the shared host store. Without this the probe is on this
+                # node's filesystem and nothing below proves anything.
+                virtualisation.useNixStoreImage = true;
+                environment.systemPackages = [ pkgs.curl ];
+                nix.settings.experimental-features = [ "nix-command" "flakes" ];
+                nix.settings.substituters = nixpkgs.lib.mkForce [ ];
+                virtualisation.memorySize = 2048;
+                virtualisation.diskSize = 8192;
+              };
+            };
+
+            testScript = ''
+              import json
+
+              # NOTE: the probe's store path is discovered at RUNTIME, never
+              # interpolated into this script. With `useNixStoreImage` the test
+              # framework copies every derivation the script REFERENCES into
+              # every node's image (nixos/lib/testing/testScript.nix:73), so a
+              # `${"$"}{seedProbe}` here would place the artifact on the consumer
+              # and make the whole gate vacuous — the precise trap it is built
+              # to avoid. The consumer learns the path the way a real one does:
+              # from the peer.
+
+              start_all()
+              builder.wait_for_unit("multi-user.target")
+              consumer.wait_for_unit("multi-user.target")
+
+              # ── The key arrives at runtime, as a real one would ────────────
+              # ConditionPathExists means the boot-time run was skipped; nothing
+              # is published yet.
+              builder.succeed(
+                  "test -z \"$(ls -A /var/lib/oligarchy/p2p/declared 2>/dev/null)\""
+              )
+              # SKIPPED by its condition, not FAILED. Both leave declared/ empty,
+              # so asserting emptiness alone cannot tell them apart — and
+              # `ConditionPathExists` in `[Service]` instead of `[Unit]` is
+              # ignored with only a log line, which would turn "wait quietly for
+              # sops to decrypt the key" into "fail at every boot".
+              cond = builder.succeed(
+                  "systemctl show oligarchy-p2p-seed -p ConditionResult -p Result"
+              )
+              assert "ConditionResult=no" in cond, cond
+              assert "Result=success" in cond, cond
+
+              builder.succeed("printf '%s' '${gateSecretKey}' > /tmp/cache.sec")
+
+              # A key anyone can read must be refused outright: it would be in
+              # reach of the daemon's user, which is the entire reason seeding
+              # runs in a separate unit.
+              builder.succeed("chmod 0444 /tmp/cache.sec")
+              builder.fail("systemctl start oligarchy-p2p-seed")
+              builder.succeed("systemctl reset-failed oligarchy-p2p-seed")
+              builder.succeed(
+                  "test -z \"$(ls -A /var/lib/oligarchy/p2p/declared 2>/dev/null)\""
+              )
+
+              builder.succeed("chmod 0400 /tmp/cache.sec")
+              builder.succeed("systemctl start oligarchy-p2p-seed")
+              builder.wait_for_unit("oligarchy-p2pd.service")
+
+              # ── The builder published, and published only what it built ────
+              published = builder.succeed(
+                  "ls /var/lib/oligarchy/p2p/declared"
+              ).split()
+              assert len(published) == 1, f"expected one declared narinfo, got {published}"
+              hp = published[0].removesuffix(".narinfo")
+
+              # From `declared/`, not from a resolution — this host has no
+              # upstream at all, so nothing could have been fetched.
+              builder.fail(f"test -e /var/lib/oligarchy/p2p/narinfo/{hp}.narinfo")
+
+              minted = builder.succeed(
+                  f"cat /var/lib/oligarchy/p2p/declared/{hp}.narinfo"
+              )
+              assert "Sig: p2p-gate-1:" in minted, minted
+              assert "Compression: none" in minted, minted
+              f = dict(l.split(": ", 1) for l in minted.strip().split("\n"))
+              narhash = f["NarHash"].split(":")[1]
+              narsize = int(f["NarSize"])
+              assert f["URL"] == f"nar/{hp}/{narhash}.nar", f["URL"]
+              assert f["FileHash"] == f["NarHash"], f
+              assert int(f["FileSize"]) == narsize, f
+
+              probe = f["StorePath"]
+              assert probe.endswith("-p2p-seed-probe"), probe
+
+              # ── Seeding twice must be idempotent ──────────────────────────
+              # On a re-run the path already carries our signature, so it no
+              # longer needs signing. If "needs signing" is mistaken for "may
+              # be published", the prune step unpublishes on the second
+              # nixos-rebuild everything the first one published — silently, on
+              # a host that still looks healthy.
+              builder.succeed("systemctl restart oligarchy-p2p-seed")
+              builder.succeed(f"test -e /var/lib/oligarchy/p2p/declared/{hp}.narinfo")
+              assert builder.succeed(
+                  f"cat /var/lib/oligarchy/p2p/declared/{hp}.narinfo"
+              ) == minted, "a second seed run changed the published narinfo"
+
+              # ── The fixture is what the gate thinks it is ──────────────────
+              # Asserted, not assumed. A content-addressed path needs NO
+              # signature — `checkSignatures` returns `maxSigs` without looking
+              # at one — so a CA fixture would make the refusal leg below pass
+              # while testing nothing. That exact mistake made an earlier gate
+              # in this subsystem vacuous.
+              after = json.loads(builder.succeed(
+                  f"nix path-info --json --sigs {probe}"
+              ))[probe]
+              assert after["ca"] is None, \
+                  f"probe is content-addressed; the refusal leg would be vacuous: {after}"
+              # Exactly one signature, and it is ours. This also proves the
+              # probe carried none before: we only ever sign unsigned paths.
+              assert after["signatures"] == [f"p2p-gate-1:{minted.split('Sig: p2p-gate-1:')[1].strip()}"], \
+                  after["signatures"]
+
+              # ── The builder does NOT mint for arbitrary local paths ────────
+              # peer.rs rule 2: declared-and-signed, or relayed from upstream.
+              # Nothing else. A path it holds but never declared is a 404.
+              other = builder.succeed(
+                  "readlink -f $(which curl) | xargs dirname | xargs dirname"
+              ).strip()
+              ohp = other.split("/")[-1].split("-")[0]
+              builder.fail(
+                  f"curl -sf --max-time 5 http://127.0.0.1:5112/peer/v1/narinfo/{ohp}"
+              )
+
+              # ── The consumer really cannot supply this itself ──────────────
+              # `test -e`, which no earlier gate here could assert: with
+              # useNixStoreImage the host store is not mounted, so the probe is
+              # genuinely absent rather than merely unregistered.
+              consumer.fail(f"test -e {probe}")
+              consumer.fail(f"nix path-info {probe}")
+              consumer.fail("curl -sf --max-time 3 http://127.0.0.1:9/nix-cache-info")
+
+              assert "192.168.1.1/24" in builder.succeed("ip -4 addr show eth1"), \
+                  "the builder is not at 192.168.1.1; node address assignment changed"
+              consumer.wait_until_succeeds(
+                  "curl -sf --max-time 5 http://192.168.1.1:5112/peer/v1/info", timeout=60
+              )
+
+              # ── The metadata and the bytes both come from the builder ──────
+              got = consumer.succeed(
+                  f"curl -sf --max-time 30 http://127.0.0.1:5111/{hp}.narinfo"
+              )
+              assert "Sig: p2p-gate-1:" in got, got
+              assert f"NarHash: sha256:{narhash}" in got, got
+
+              consumer.succeed(
+                  f"curl -sf --max-time 60 -o /tmp/got.nar "
+                  f"http://127.0.0.1:5111/nar/{hp}/{narhash}.nar"
+              )
+              assert int(consumer.succeed("stat -c%s /tmp/got.nar").strip()) == narsize
+              assert consumer.succeed(
+                  "nix hash file --type sha256 --base32 /tmp/got.nar"
+              ).strip() == narhash
+
+              journal = consumer.succeed("journalctl -u oligarchy-p2pd --no-pager")
+              assert "narinfo from a peer" in journal, journal
+              assert "fetched from a peer" in journal, journal
+
+              # ── THE POSITIVE LEG: a real substitution, signatures required ─
+              consumer.succeed("rm -f /root/.cache/nix/binary-cache-v*.sqlite*")
+              consumer.succeed(
+                  f"nix-store --realise {probe} --store /tmp/ok "
+                  f"--option substituters http://127.0.0.1:5111 "
+                  f"--option require-sigs true "
+                  f"--option trusted-public-keys '${gatePublicKey}'"
+              )
+              assert "probe" in consumer.succeed(f"cat /tmp/ok{probe}/marker")
+
+              # ── THE NEGATIVE LEG: same bytes, same peer, key not trusted ───
+              # This is what makes the gate non-vacuous. It cannot be satisfied
+              # by the shared store (severed), by upstream (dead port), or by
+              # the transport (which demonstrably works, one line above). Only
+              # Nix's signature check can decide it.
+              consumer.succeed("rm -f /root/.cache/nix/binary-cache-v*.sqlite*")
+              refused = consumer.fail(
+                  f"nix-store --realise {probe} --store /tmp/nope "
+                  f"--option substituters http://127.0.0.1:5111 "
+                  f"--option require-sigs true "
+                  f"--option trusted-public-keys "
+                  f"'cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=' 2>&1"
+              )
+              assert "signature" in refused or "signed" in refused, refused
+              consumer.fail(f"nix path-info --store /tmp/nope {probe}")
+
+              # And it was refused for that reason rather than for want of
+              # bytes: the adapter served the artifact during the attempt.
+              # Without this the leg above cannot tell "untrusted" from
+              # "unavailable", which is exactly how a gate here went vacuous
+              # before.
+              j2 = consumer.succeed("journalctl -u oligarchy-p2pd --no-pager")
+              assert "serving verified" in j2, j2
+
+              # ── The clincher: remove the feature and the gate fails ────────
+              # Take the declared tier away and the same request 404s. Nothing
+              # else in this test changes.
+              builder.succeed("systemctl stop oligarchy-p2pd")
+              builder.succeed(
+                  "mv /var/lib/oligarchy/p2p/declared /var/lib/oligarchy/p2p/declared.off"
+              )
+              builder.succeed("systemctl start oligarchy-p2pd")
+              builder.wait_for_unit("oligarchy-p2pd.service")
+              consumer.succeed("systemctl restart oligarchy-p2pd")
+              consumer.wait_for_unit("oligarchy-p2pd.service")
+              consumer.succeed("rm -rf /var/lib/oligarchy/p2p/narinfo/* /var/lib/oligarchy/p2p/nar/*")
+              consumer.succeed("rm -f /root/.cache/nix/binary-cache-v*.sqlite*")
+              consumer.fail(
+                  f"curl -sf --max-time 20 http://127.0.0.1:5111/{hp}.narinfo"
+              )
+
+              # ── And the declared set shrinking really unpublishes ──────────
+              builder.succeed("systemctl stop oligarchy-p2pd")
+              builder.succeed("mv /var/lib/oligarchy/p2p/declared.off /var/lib/oligarchy/p2p/declared")
+              builder.succeed(": > /tmp/empty-paths")
+              builder.succeed(
+                  "oligarchy-p2pd --config /etc/oligarchy/p2p/config.json seed "
+                  "--store-paths /tmp/empty-paths --key-file /tmp/cache.sec"
+              )
+              builder.fail(f"test -e /var/lib/oligarchy/p2p/declared/{hp}.narinfo")
+            '';
+          };
+
           signature-refusal = nodePkgs.testers.runNixOSTest {
             name = "oligarchy-p2p-signature-refusal";
             nodes.machine = { ... }: {

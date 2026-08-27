@@ -16,6 +16,7 @@
 
 mod cache;
 mod config;
+mod declared;
 mod decompress;
 mod http;
 mod narinfo;
@@ -56,6 +57,21 @@ enum Cmd {
     Check,
     /// Report what the running daemon is advertising to Nix.
     Status,
+    /// Mint and sign narinfo for the declared packages, so peers can fetch
+    /// paths this host BUILT.
+    ///
+    /// Run from `oligarchy-p2p-seed.service`, as root, and deliberately not
+    /// from the daemon: this needs a signing key and the Nix database, and
+    /// `daemon` is allowed neither. Neither the key nor the path list is in
+    /// the config file — they arrive here and nowhere else.
+    Seed {
+        /// `${closureInfo}/store-paths` for `custom.p2pCache.servePackages`.
+        #[arg(long)]
+        store_paths: PathBuf,
+        /// The Ed25519 secret key, `nix key generate-secret` format.
+        #[arg(long)]
+        key_file: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -78,6 +94,16 @@ fn main() -> Result<()> {
             println!("upstreams   : {}", cfg.upstreams.join(", "));
             println!("cache       : {}/nar, max {}", cfg.state_dir, cfg.max_cache_size);
             println!("from store  : {}", cfg.serve_from_store);
+            println!("declared    : {}", if cfg.serve_declared {
+                match cache::Cache::open(std::path::Path::new(&cfg.state_dir), 1)
+                    .and_then(|c| c.list_declared())
+                {
+                    Ok(v) => format!("{} package(s) published", v.len()),
+                    Err(e) => format!("enabled, unreadable ({e})"),
+                }
+            } else {
+                "disabled".to_string()
+            });
             println!("transport   : {}", cfg.transport);
             println!("peers       : {}", if cfg.peers.is_empty() {
                 "(none)".to_string()
@@ -95,6 +121,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Status => status(&cfg),
+        Cmd::Seed { store_paths, key_file } => seed(&cfg, &store_paths, &key_file),
         Cmd::Daemon => {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -103,6 +130,42 @@ fn main() -> Result<()> {
             rt.block_on(daemon(cfg))
         }
     }
+}
+
+fn seed(cfg: &config::Config, store_paths: &std::path::Path, key_file: &PathBuf) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let meta = std::fs::metadata(key_file)
+        .with_context(|| format!("reading signing key {}", key_file.display()))?;
+    declared::check_key_mode(meta.permissions().mode(), key_file)?;
+    let secret = std::fs::read_to_string(key_file)
+        .with_context(|| format!("reading signing key {}", key_file.display()))?;
+
+    let paths = declared::read_path_list(store_paths)?;
+    let max = cache::parse_size(&cfg.max_cache_size)?;
+    // `open`, not `new`: `new` sweeps tmp/, and this process can run while the
+    // daemon is mid-fetch.
+    let cache = cache::Cache::open(std::path::Path::new(&cfg.state_dir), max)?;
+
+    let sum = declared::seed(&cache, "nix", key_file, &secret, &paths)?;
+    tracing::info!(
+        published = sum.published,
+        signed = sum.signed,
+        unpublished = sum.unpublished,
+        skipped = sum.skipped,
+        "seeded declared packages"
+    );
+    if sum.published == 0 && !paths.is_empty() {
+        // Not fatal — a seeding failure must never take the substituter down —
+        // but it must be visible. "Serving nothing" otherwise looks identical
+        // to "serving fine" from outside.
+        tracing::warn!(
+            declared = paths.len(),
+            "nothing was published: every declared path already carries a \
+             signature, so nothing here is locally built"
+        );
+    }
+    Ok(())
 }
 
 fn status(cfg: &config::Config) -> Result<()> {
@@ -177,6 +240,22 @@ async fn daemon(cfg: config::Config) -> Result<()> {
         }
         Ok(_) => {}
         Err(e) => tracing::warn!(error = %e, "startup eviction failed"),
+    }
+
+    // Report the declared tier explicitly. A host configured to seed its own
+    // builds whose seed unit failed looks, from outside and from every other
+    // log line, exactly like one that is working — it answers, it proxies, it
+    // just quietly serves none of what it was set up to serve.
+    if cfg.serve_declared {
+        match cache.list_declared() {
+            Ok(v) if v.is_empty() => tracing::warn!(
+                "servePackages is set but nothing is published in {}/declared — \
+                 check oligarchy-p2p-seed.service",
+                cfg.state_dir
+            ),
+            Ok(v) => tracing::info!(count = v.len(), "publishing declared packages to peers"),
+            Err(e) => tracing::warn!(error = %e, "cannot read the declared tier"),
+        }
     }
 
     let up = upstream::Upstream::new(

@@ -13,9 +13,15 @@
 //!    If we do not already hold the artifact, the answer is 404 — not "hold on
 //!    while I get it". Otherwise one peer asking for a path it invented turns
 //!    this host into a proxy.
-//! 2. **No narinfo we did not get from upstream.** We serve back exactly what
-//!    upstream signed, so a peer receives something Nix can verify. We do not
-//!    mint metadata.
+//! 2. **No narinfo we did not get from upstream, or declare and sign
+//!    ourselves.** A peer receives either exactly what upstream signed, or
+//!    metadata this host minted for a path its operator listed in
+//!    `servePackages` and signed with this host's own key — and nothing else.
+//!    The second half is new; it exists because a locally-BUILT path has a
+//!    narinfo nowhere, so without it a machine that compiled a rebuild could
+//!    never hand it to anyone. What has not changed is that a peer cannot make
+//!    us mint anything: the declared set is fixed at activation by a root
+//!    oneshot, and a request never adds to it.
 //! 3. **Everything it serves is verified first**, by the same funnel the
 //!    substituter surface uses. We do not hand a neighbour bytes we have not
 //!    checked, even though they will check them too.

@@ -7,12 +7,32 @@
 # same seam.
 #
 # THE INVARIANT THIS MODULE EXISTS TO HOLD: the adapter is never a trust
-# authority. It is unprivileged, it cannot write the store, nobody is in
-# `nix.settings.trusted-users`, and the substituter URI it registers carries no
-# `trusted=` parameter. Adding one would make Nix accept unsigned paths from it
-# — silently, with exit 0 and no warning, verified on real hardware (see
-# docs/p2p-substituter-roadmap.md §2.1 spike 11). The assertion below is the
-# only thing standing between that and a future "just make it work" commit.
+# authority. The DAEMON is unprivileged, holds no key, cannot write the store,
+# nobody is in `nix.settings.trusted-users`, and the substituter URI it
+# registers carries no `trusted=` parameter. Adding one would make Nix accept
+# unsigned paths from it — silently, with exit 0 and no warning, verified on
+# real hardware (see docs/p2p-substituter-roadmap.md §2.1 spike 11). The
+# assertion below is the only thing standing between that and a future "just
+# make it work" commit.
+#
+# TWO OPTIONS QUALIFY THAT, AND BOTH ARE OFF BY DEFAULT.
+#
+#   `servePackages` puts an Ed25519 signing key on this host so it can publish
+#   paths it BUILT — which no cache has heard of, and which Nix therefore
+#   refuses unsigned. The key is read by `oligarchy-p2p-seed.service`, a
+#   separate root oneshot; it is not named in the daemon's config file and the
+#   daemon never opens it. That split is deliberate: the process exposed to
+#   hostile input is not the process holding the key. Note that signing does
+#   write `/nix/var/nix/db` — the *daemon* still cannot, but the module can no
+#   longer claim the subsystem as a whole touches nothing.
+#
+#   `trustedPublicKeys` is the other half, and it is the one with teeth. Nix
+#   cannot scope a key to a set of paths: trusting a peer's key trusts it for
+#   EVERY store path this host will ever substitute, and `priority = 30` puts
+#   this adapter ahead of cache.nixos.org for all of them. A compromised
+#   seeder can then serve signed bytes for any path at all. Extending that
+#   trust is an operator decision made in the flake — nothing the transport
+#   can do, and nothing this module does on its own.
 #
 # Design record + staging: docs/p2p-substituter-roadmap.md
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -45,7 +65,17 @@ let
     min_artifact_size = cfg.swarm.minArtifactSize;
     swarm_upload_bps = cfg.swarm.uploadBps;
     swarm_download_bps = cfg.swarm.downloadBps;
+
+    # A bool, and deliberately nothing else. The declared path list and the
+    # signing key reach `oligarchy-p2pd seed` on its own unit's ExecStart; this
+    # file is what the DAEMON reads, and the daemon must not so much as know
+    # where the key lives. (It is also world-readable, being in the store.)
+    serve_declared = cfg.servePackages != [ ];
   });
+
+  # The transitive closure of the declared packages, realised at build time.
+  # `store-paths` is the list `oligarchy-p2pd seed` walks.
+  declaredClosure = pkgs.closureInfo { rootPaths = cfg.servePackages; };
 
   # Every substituter this host will consult, from wherever it was declared.
   # Scanned for `trusted=` below.
@@ -366,6 +396,100 @@ in
       '';
     };
 
+    servePackages = mkOption {
+      type = types.listOf types.pathInStore;
+      default = [ ];
+      example = literalExpression ''[ pkgs.my-thing self.packages.x86_64-linux.thing ]'';
+      description = ''
+        Packages this host BUILDS and publishes to peers.
+
+        Without this, a host can only seed what it *fetched*. A locally-built
+        path has a narinfo nowhere — nothing ever resolved one — and a peer
+        cannot verify a NAR without the signed `NarHash` that lives in one. So
+        a machine that substituted a rebuild was a good seeder and a machine
+        that compiled it was useless, which is backwards for a distro whose
+        point is artifacts no public cache has.
+
+        Listing a package here does four things: it is built by
+        `nixos-rebuild`, it is added to {option}`system.extraDependencies` so
+        the garbage collector keeps it, its closure is signed with
+        {option}`custom.p2pCache.signingKeyFile`, and a narinfo is published
+        under `declared/` in {option}`custom.p2pCache.stateDir`, where the peer
+        surface serves it.
+
+        **Only paths with no signature at all are signed and published** — the
+        ones this host actually built. The rest of the closure already carries
+        cache.nixos.org's signature and resolves the ordinary way; re-signing
+        it would put this host's name on glibc, permanently, in the Nix
+        database, for nothing.
+
+        Note that a package coerces to its **default output** here, the same as
+        in {option}`system.extraDependencies`. To publish `foo.dev` or
+        `foo.lib`, list them.
+
+        A consumer must add this host's public key to
+        {option}`custom.p2pCache.trustedPublicKeys` before it will accept any
+        of this. Read that option's description first — it is the one with
+        teeth.
+      '';
+    };
+
+    signingKeyFile = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "/var/lib/oligarchy/p2p/cache.sec";
+      description = ''
+        Path to the Ed25519 secret key that signs {option}`servePackages`.
+
+        A **runtime** path, deliberately typed `str` rather than `path`: a path
+        literal would copy the private key into the world-readable Nix store.
+        Point it outside the store, or at `config.sops.secrets."<name>".path`.
+
+        Create one with:
+
+        ```
+        nix key generate-secret --key-name <host>-1 > /var/lib/oligarchy/p2p/cache.sec
+        chmod 0400 /var/lib/oligarchy/p2p/cache.sec
+        nix key convert-secret-to-public < /var/lib/oligarchy/p2p/cache.sec
+        ```
+
+        The last line prints the half to paste into peers'
+        {option}`trustedPublicKeys`. The key is read only by
+        `oligarchy-p2p-seed.service`, which runs as root; it is not named in
+        the daemon's config file and the daemon never opens it. Seeding is
+        refused if the file is readable by anyone but its owner.
+      '';
+    };
+
+    trustedPublicKeys = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = literalExpression ''[ "nixos-p2p-1:kBnLtBEr6M9v5Zk2..." ]'';
+      description = ''
+        Public keys this host will accept signatures from, added to
+        {option}`nix.settings.trusted-public-keys`. Set this on a CONSUMER to
+        accept packages a peer built.
+
+        **Understand the blast radius before setting this.** Nix has no way to
+        scope a key to a set of paths. Trusting a peer's key trusts it for
+        *every* store path this host will ever substitute, from every
+        substituter — not merely for the packages that peer meant to publish.
+        Combined with {option}`custom.p2pCache.priority` (30, ahead of
+        cache.nixos.org), a compromised or malicious holder of that key can
+        serve signed bytes for any path at all and this host will register them
+        as valid.
+
+        For an input-addressed path the signature is the entire trust anchor;
+        the adapter's own `NarHash` check does not help, because whoever
+        controls the bytes controls the narinfo too. This is categorically
+        different from leaving the list empty, where peers are sources of bytes
+        and nothing else and removing every peer changes throughput but not
+        correctness.
+
+        Trust hosts you administer, on networks you control.
+      '';
+    };
+
     serveFromStore = mkOption {
       type = types.bool;
       default = true;
@@ -463,11 +587,65 @@ in
         '';
       }
       {
-        assertion = cfg.upstreams != [ ];
+        assertion = cfg.upstreams != [ ] || cfg.servePackages != [ ];
         message = ''
-          custom.p2pCache.upstreams is empty. Stage 1 is a proxy — with no
-          upstream it can serve nothing, and every narinfo lookup would be a
-          404 that Nix caches for an hour (narinfo-cache-negative-ttl).
+          custom.p2pCache.upstreams is empty and nothing is declared in
+          servePackages. The adapter would have nothing to serve, and every
+          narinfo lookup would be a 404 that Nix caches for an hour
+          (narinfo-cache-negative-ttl).
+
+          A pure seeder — a build host that publishes only what it built and
+          proxies nothing — is legitimate; set servePackages.
+        '';
+      }
+      {
+        assertion = cfg.servePackages == [ ] || cfg.signingKeyFile != null;
+        message = ''
+          custom.p2pCache.servePackages is set but signingKeyFile is not.
+
+          A locally-built path has no signature anywhere, and Nix refuses an
+          unsigned substitute outright ("lacks a signature by a trusted key").
+          Without a key the declared packages are unusable to every peer, so
+          this is a build-time error rather than a runtime surprise.
+
+            nix key generate-secret --key-name ${config.networking.hostName}-p2p-1 \
+              > /var/lib/oligarchy/p2p/cache.sec
+            chmod 0400 /var/lib/oligarchy/p2p/cache.sec
+            nix key convert-secret-to-public < /var/lib/oligarchy/p2p/cache.sec
+
+          The last line prints the half to paste into peers' trustedPublicKeys.
+        '';
+      }
+      {
+        assertion = cfg.signingKeyFile == null
+          || !(lib.hasPrefix builtins.storeDir cfg.signingKeyFile);
+        message = ''
+          custom.p2pCache.signingKeyFile points into ${builtins.storeDir},
+          which is world-readable. A signing key there is a signing key every
+          user on this machine holds.
+
+          Use a runtime path, or config.sops.secrets."<name>".path.
+        '';
+      }
+      {
+        assertion = cfg.servePackages == [ ] || cfg.serveFromStore;
+        message = ''
+          custom.p2pCache.servePackages is set but serveFromStore is false.
+
+          Declaring a package publishes its narinfo; the NAR bytes are produced
+          on demand by `nix-store --dump`, which is exactly what serveFromStore
+          gates. With it off the whole feature is inert: peers get metadata,
+          `/peer/v1/have` answers 404, and nothing is ever materialised.
+        '';
+      }
+      {
+        assertion = cfg.servePackages == [ ] || cfg.peer.enable;
+        message = ''
+          custom.p2pCache.servePackages is set but peer.enable is false.
+
+          The peer surface is the only way another host can reach a declared
+          package. Signing paths nobody can ask for is a no-op that looks like
+          a feature.
         '';
       }
     ];
@@ -505,6 +683,43 @@ in
         builds and runs. That is inherent to serving artifacts and is scoped to
         the interfaces named in peer.openFirewall; there is no authentication.
       ''
+      ++ optional (cfg.servePackages != [ ]) ''
+        custom.p2pCache.servePackages is set, so this host now holds an Ed25519
+        signing key and publishes ${toString (builtins.length cfg.servePackages)}
+        package(s) it built to its peers.
+
+        Two consequences worth knowing. The declared set is a stable, guessable
+        list rather than an incidental cache, so it discloses more about this
+        machine than the peer surface alone. And signing writes /nix/var/nix/db,
+        so this host's signature travels with those paths through `nix copy`,
+        `nix path-info --sigs` and ssh-ng — not only through this adapter.
+
+        The key is read by oligarchy-p2p-seed.service (root) and never by the
+        daemon. Keep it that way: a key the daemon's user can read is a key
+        reachable from the network-facing process.
+      ''
+      ++ optional (cfg.trustedPublicKeys != [ ]) ''
+        custom.p2pCache.trustedPublicKeys is not empty, so this host will accept
+        store paths signed by ${toString (builtins.length cfg.trustedPublicKeys)}
+        key(s) beyond nixpkgs' own.
+
+        Nix cannot scope a key to a set of paths. Each key here is trusted for
+        EVERY store path this host will ever substitute, from every substituter
+        — and priority ${toString cfg.priority} puts this adapter ahead of
+        cache.nixos.org for all of them. Whoever holds one of these keys can
+        serve signed bytes for any path at all and this host will register them
+        as valid.
+
+        This is the one setting in this module that extends trust. Set it only
+        for hosts you administer.
+      ''
+      ++ optional (cfg.upstreams == [ ] && cfg.registerSubstituter) ''
+        custom.p2pCache has no upstreams but is registered as a substituter, so
+        Nix will ask this adapter first (priority ${toString cfg.priority}) for
+        every path and get a 404 for everything except the declared packages.
+        That costs a loopback round trip per path and nothing else, but if you
+        did not mean to run a pure seeder, set upstreams.
+      ''
       ++ optional (!cfg.registerSubstituter) ''
         custom.p2pCache.registerSubstituter is false, so the daemon will run but
         Nix will not consult it. Nothing will use the adapter until this is true
@@ -523,7 +738,14 @@ in
       "d ${cfg.stateDir} 0750 ${cfg.user} ${cfg.group} -"
       "d ${cfg.stateDir}/nar 0750 ${cfg.user} ${cfg.group} -"
       "d ${cfg.stateDir}/tmp 0750 ${cfg.user} ${cfg.group} -"
-    ];
+    ]
+    # `declared/` is ROOT-owned and the daemon gets it read-only (see
+    # ReadOnlyPaths below), because it is generated state: root mints and signs
+    # it, the daemon only serves it. `narinfo/` is deliberately NOT here — the
+    # daemon creates that one itself, since it owns it. Do not "tidy" the two
+    # into the same shape; the asymmetry is the access control.
+    ++ optional (cfg.servePackages != [ ])
+      "d ${cfg.stateDir}/declared 0755 root root -";
 
     environment.etc."oligarchy/p2p/config.json".source = configFile;
 
@@ -542,21 +764,121 @@ in
     # configured behind us on purpose: if this daemon is down or wrong, Nix
     # must still be able to build the system that fixes it.
     #
-    # Note what is NOT here: no `trusted-public-keys`, no `trusted-users`, and
-    # no `trusted=` on the URI. This adapter adds a source of bytes and zero
-    # new trust.
-    nix.settings = mkIf cfg.registerSubstituter {
-      substituters = [ substituterUrl ];
-      trusted-substituters = [ substituterUrl ];
-    };
+    # Note what is NOT here: no `trusted-users` and no `trusted=` on the URI.
+    #
+    # `trusted-public-keys` IS here, and only ever from `trustedPublicKeys`,
+    # which defaults to empty. With it empty this adapter adds a source of
+    # bytes and zero new trust, exactly as it always did. With it set, the
+    # operator has extended trust to another host — deliberately, in the flake,
+    # where it is reviewable. Nothing in the transport can do that on its own:
+    # a peer cannot cause its key to be trusted, and this module never derives
+    # a key from a peer address.
+    nix.settings = lib.mkMerge [
+      (mkIf cfg.registerSubstituter {
+        substituters = [ substituterUrl ];
+        trusted-substituters = [ substituterUrl ];
+      })
+      (mkIf (cfg.trustedPublicKeys != [ ]) {
+        trusted-public-keys = cfg.trustedPublicKeys;
+      })
+    ];
+
+    # Keep the declared packages out of the garbage collector's reach by making
+    # them references of the system closure. Without this a `nix-collect-garbage`
+    # deletes exactly what this host advertises, and the peer surface starts
+    # 404ing paths whose narinfo it is still serving.
+    system.extraDependencies = cfg.servePackages;
 
     environment.systemPackages = [ cfg.package ];
+
+    # ── The seeder ─────────────────────────────────────────────────────────
+    #
+    # A SEPARATE unit, and the separation is the whole mitigation. Minting a
+    # narinfo needs two things the daemon is deliberately denied: the Ed25519
+    # signing key, and the Nix database (`nix store sign` / `nix path-info`
+    # reach nix-daemon over AF_UNIX, which the daemon's
+    # RestrictAddressFamilies excludes on purpose). Folding this into
+    # oligarchy-p2pd would hand a signing key to the process that parses
+    # hostile input from the network.
+    #
+    # It runs as root, writes ${cfg.stateDir}/declared, and exits.
+    systemd.services.oligarchy-p2p-seed =
+      mkIf (cfg.servePackages != [ ] && cfg.signingKeyFile != null) {
+        description = "Sign and publish the P2P substituter's declared packages";
+        documentation = [ "https://github.com/ALH477/Oligarchy" ];
+        wantedBy = [ "multi-user.target" ];
+
+        # BEFORE the daemon, so a fresh boot has the declared narinfos in place
+        # before anything can ask for one — `AppState::resolve` memoises negative
+        # answers, and Nix caches a 404 for an hour on top of that.
+        #
+        # `before` and NOT `requiredBy`/`bindsTo`: a seeding failure must never
+        # take the substituter down. The same reason a bad peer entry is a log
+        # line rather than a fatal error.
+        before = [ "oligarchy-p2pd.service" ];
+        after = [ "systemd-tmpfiles-setup.service" "nix-daemon.socket" ];
+
+        # Re-run when the declared set changes, not only at boot.
+        restartTriggers = [ declaredClosure configFile ];
+
+        path = [ config.nix.package ];
+
+        # `[Unit]`, NOT `[Service]`. Condition* directives live in the unit
+        # section; systemd ignores an unknown key in `[Service]` with only a
+        # log line, so putting it in serviceConfig would silently disable the
+        # check and make the unit FAIL at every boot where the key has not been
+        # decrypted yet, instead of being skipped.
+        #
+        # The key may arrive from sops, which decrypts during activation. If it
+        # is not there yet, do nothing rather than fail loudly every boot; the
+        # daemon logs the empty declared tier either way.
+        unitConfig.ConditionPathExists = cfg.signingKeyFile;
+
+        serviceConfig = {
+          Type = "oneshot";
+          # Required, not cosmetic. switch-to-configuration only restarts units
+          # that are ACTIVE; a oneshot without this is inactive the moment it
+          # finishes, so restartTriggers would have nothing to restart and
+          # declared/ would silently go stale across every rebuild.
+          RemainAfterExit = true;
+          User = "root";
+          UMask = "0022";
+
+          ExecStart = concatStringsSep " " [
+            "${cfg.package}/bin/oligarchy-p2pd"
+            "--config /etc/oligarchy/p2p/config.json"
+            "seed"
+            "--store-paths ${declaredClosure}/store-paths"
+            "--key-file ${cfg.signingKeyFile}"
+          ];
+
+          Environment = [ "RUST_LOG=${cfg.logLevel}" ];
+
+          # Modest, but this one legitimately writes the Nix database and reads a
+          # secret, so it cannot inherit the daemon's posture.
+          NoNewPrivileges = true;
+          ProtectHome = true;
+          ProtectKernelTunables = true;
+          ProtectKernelModules = true;
+          ProtectControlGroups = true;
+          RestrictRealtime = true;
+          RestrictSUIDSGID = true;
+          LockPersonality = true;
+          SystemCallArchitectures = "native";
+        };
+      };
 
     systemd.services.oligarchy-p2pd = {
       description = "Oligarchy P2P substituter (Nix binary-cache adapter)";
       documentation = [ "https://github.com/ALH477/Oligarchy" ];
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" "nss-lookup.target" ];
+
+      # Restart when the declared set changes. `AppState::resolve` memoises
+      # NEGATIVE answers for 60s, and Nix caches the resulting 404 for an hour
+      # per substituter — so a package added by a rebuild could otherwise be
+      # unavailable through the adapter long after it was published.
+      restartTriggers = optional (cfg.servePackages != [ ]) declaredClosure;
 
       # `nix-store --dump` for serveFromStore. Deliberately the OLD CLI: it
       # serialises a directory and consults nothing else, so the daemon needs no
@@ -595,6 +917,15 @@ in
         PrivateUsers = true;
         ProtectSystem = "strict";
         ReadWritePaths = [ cfg.stateDir ];
+        # Nested read-only inside a read-write tree. `declared/` is generated
+        # by root and only served by us; without this the daemon could delete
+        # what it is meant to publish, and the root-writes/daemon-reads split
+        # would be a convention rather than an enforcement.
+        # The `-` prefix is load-bearing: without it systemd refuses to start
+        # the unit at all when the path is absent, so a missing or removed
+        # declared/ would take the whole substituter down. An optional feature
+        # must never be able to do that.
+        ReadOnlyPaths = optional (cfg.servePackages != [ ]) "-${cfg.stateDir}/declared";
         ProtectHome = true;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;

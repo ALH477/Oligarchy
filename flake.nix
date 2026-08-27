@@ -692,6 +692,11 @@
         # The claim that P2P is an enhancement and never a requirement, asserted
         # rather than stated: every peer lookup fails and the build still works.
         p2p-no-peer-fallback = oligarchy-p2p.checks.${system}.no-peer-fallback;
+        # Stage 5: a host seeds what it BUILT, not only what it fetched. The
+        # first gate here in which a peer supplies metadata it MINTED, so it is
+        # also the first that has to prove a consumer refuses that metadata
+        # when the key behind it is not trusted.
+        p2p-local-signing = oligarchy-p2p.checks.${system}.local-signing;
 
         # ════════════════════════════════════════════════════════════════════
         # Malware Shield build gate — scans the FULL system closure with pinned,

@@ -43,8 +43,18 @@ costs nothing in trust — provided the peer is never allowed to *become* trust.
 The adapter is on the untrusted side of the boundary and is built as if hostile.
 It runs unprivileged, cannot write the store, holds no keys, and nobody is in
 `nix.settings.trusted-users`. Every path it serves is signature-checked and
-hash-checked by `nix-daemon` afterwards. Peers supply **bytes and nothing else**
-— no metadata, no signatures, no policy.
+hash-checked by `nix-daemon` afterwards. With `servePackages` and
+`trustedPublicKeys` empty — the default — peers supply **bytes and nothing else**
+(no metadata, no signatures, no policy) and removing every peer changes
+throughput but not correctness.
+
+Setting either one changes that, and the amended rule is:
+
+> **P2P still provides availability. Trust comes from keys, and adding a key is
+> an operator decision made in the flake — nothing the transport can do.**
+
+See *Seeding what this host built*, below. A peer still cannot cause its own key
+to be trusted.
 
 Three facts make this work, all read from the Nix source and reproduced against
 a real store (see `docs/p2p-substituter-roadmap.md` §3):
@@ -89,6 +99,71 @@ design hold. Two reasons:
 It is also what makes a peer swarm possible at all: `nix-store --dump` is
 byte-canonical on every machine, so a locally-built path and a downloaded one
 produce the identical artifact. A compressed one would not.
+
+## Seeding what this host built
+
+Through stage 4 a host could only seed what it had **fetched**. The peer surface
+answers `GET /peer/v1/narinfo/<hp>` from disk only, and a receiver cannot verify
+a NAR without the signed `NarHash` that lives in a narinfo — so a locally-built
+path, which has a narinfo nowhere, could never be handed to anyone. A machine
+that *substituted* a rebuild was a good seeder and a machine that *compiled* it
+was useless. For a distro whose point is custom kernels and plugin artifacts
+that exist in no public cache, that is backwards.
+
+```nix
+# on the BUILDER
+custom.p2pCache = {
+  servePackages  = [ pkgs.my-thing ];
+  signingKeyFile = "/var/lib/oligarchy/p2p/cache.sec";
+  peer.enable    = true;
+};
+
+# on the CONSUMER — separate, and deliberate
+custom.p2pCache.trustedPublicKeys = [ "nixos-p2p-1:kBnLtBEr..." ];
+```
+
+```console
+nix key generate-secret --key-name "$(hostname)-p2p-1" > /var/lib/oligarchy/p2p/cache.sec
+chmod 0400 /var/lib/oligarchy/p2p/cache.sec
+nix key convert-secret-to-public < /var/lib/oligarchy/p2p/cache.sec   # paste into peers
+```
+
+Five things about this are deliberate.
+
+**The key never goes near the daemon.** Minting a narinfo needs the signing key
+*and* the Nix database, and `oligarchy-p2pd` is denied both on purpose — its
+`RestrictAddressFamilies` has no `AF_UNIX`, so it cannot open the nix-daemon
+socket at all. So minting runs in a separate root oneshot,
+`oligarchy-p2p-seed.service`, and `signingKeyFile` is not even named in
+`config.json`, which is the file the daemon reads. The process that parses
+hostile input from the network is not the process that holds the key. Folding
+the two units together would dissolve the only mitigation there is.
+
+**Nix does the crypto.** `nix store sign` signs and `nix path-info --sigs` reads
+the signature back, so `ValidPathInfo::fingerprint` is never reimplemented here
+and cannot drift from what Nix will actually verify. There is no ed25519 in this
+crate. (`--json-format 1` exists only on Determinate Nix 3.x — on nixpkgs' Nix
+it is a hard `unrecognised flag` — so `declared.rs` tries it and falls back.)
+
+**Only paths with no signature at all are signed.** Those are exactly the ones
+this host built. Signing the rest of a declared closure would put this host's
+name on glibc — permanently, in `/nix/var/nix/db`, where it travels through
+`nix copy` and ssh-ng and not merely through this adapter — for no gain. It also
+keeps the declared tier from shadowing anything, since a minted narinfo outranks
+the fetched one forever.
+
+**`declared/` is never evicted.** A fetched narinfo that gets swept can be
+fetched again; a minted one cannot, because nothing upstream has heard of the
+path. Evicting it would silently unpublish a package while the daemon carried on
+looking healthy.
+
+**`trustedPublicKeys` is the setting with teeth, and it is not scoped.** Nix has
+no way to restrict a key to a set of store paths. Trusting a seeder's key trusts
+that host for *every* path this machine will ever substitute, and `Priority: 30`
+puts the adapter ahead of cache.nixos.org for all of them. For an
+input-addressed path the signature is the entire trust anchor — the adapter's
+own `NarHash` check does not help, because whoever controls the bytes controls
+the narinfo too. Trust hosts you administer, on networks you control.
 
 ## Two listeners, and why
 
@@ -138,7 +213,8 @@ roadmap's Known gap 1.
 | `host/src/route.rs` | The URL space, and why a NAR request can re-find its narinfo |
 | `host/src/verify.rs` | The verification funnel and `verifying_stream` |
 | `host/src/upstream.rs` | Upstream caches, rustls only |
-| `host/src/cache.rs` | The artifact cache: temp+rename, LRU eviction, narinfo persistence |
+| `host/src/cache.rs` | The artifact cache: temp+rename, LRU eviction, narinfo persistence, and the non-evictable `declared/` tier |
+| `host/src/declared.rs` | Minting and signing narinfo for locally-built paths; runs only from the `seed` subcommand |
 | `host/src/resolve.rs` | The ordered source chain and the upstream fetch pipeline |
 | `host/src/decompress.rs` | xz / zstd, statically linked, no system libraries |
 | `host/src/nixstore.rs` | `nix-store --dump`, and why it is the old CLI |
@@ -162,6 +238,7 @@ nix build .#p2p-signature-refusal
 nix build .#p2p-artifact-cache
 nix build .#p2p-two-node
 nix build .#p2p-swarm
+nix build .#p2p-local-signing        # a host seeds what it BUILT; refused without the key
 nix build .#p2p-no-peer-fallback
 ```
 

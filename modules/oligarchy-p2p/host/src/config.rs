@@ -54,6 +54,18 @@ pub struct Config {
     /// Bytes per second, or 0 for unlimited.
     pub swarm_upload_bps: u32,
     pub swarm_download_bps: u32,
+
+    /// Whether this host publishes packages its operator declared in
+    /// `servePackages`.
+    ///
+    /// A bool and **nothing more**, deliberately. The path list and the signing
+    /// key reach `oligarchy-p2pd seed` as arguments on its own unit's
+    /// `ExecStart`; neither appears here, because this file is what the
+    /// *daemon* reads and the daemon must not so much as know where the key
+    /// lives. What it needs to know is only: that an empty `upstreams` is
+    /// intentional rather than a misconfiguration, and that a narinfo resolved
+    /// out of `declared/` has no upstream to fall through to.
+    pub serve_declared: bool,
 }
 
 impl Config {
@@ -81,8 +93,16 @@ impl Config {
                  reachable by the local nix-daemon and nothing else by design."
             );
         }
-        if self.upstreams.is_empty() {
-            bail!("no upstreams configured — the stage-1 adapter has nothing to proxy");
+        // A pure seeder is a legitimate configuration: a build host that
+        // publishes only what it built and proxies nothing. Anything else with
+        // no upstream can serve nothing, and every narinfo lookup would be a
+        // 404 Nix caches for an hour.
+        if self.upstreams.is_empty() && !self.serve_declared {
+            bail!(
+                "no upstreams configured and nothing declared in servePackages — \
+                 the adapter would have nothing to serve, and every narinfo \
+                 lookup would be a 404 Nix caches for an hour"
+            );
         }
         for u in &self.upstreams {
             // `?trusted=1` on a store URI makes Nix accept unsigned paths from
@@ -165,7 +185,8 @@ mod tests {
             "swarm_port": 6881,
             "min_artifact_size": "4M",
             "swarm_upload_bps": 0,
-            "swarm_download_bps": 0
+            "swarm_download_bps": 0,
+            "serve_declared": false
         })
     }
 
@@ -252,6 +273,18 @@ mod tests {
             v["peer_listen"] = a.into();
             assert!(load(v).is_ok(), "rejected {a}");
         }
+    }
+
+    #[test]
+    fn a_pure_seeder_needs_no_upstream() {
+        // A build host that publishes only what it built and proxies nothing
+        // is a legitimate configuration, and the `seed` unit that populates it
+        // loads this same config — so refusing it here would make the unit
+        // that exists for this case unable to start on exactly this case.
+        let mut c = base();
+        c["upstreams"] = serde_json::json!([]);
+        c["serve_declared"] = serde_json::json!(true);
+        load(c).expect("a pure seeder was refused");
     }
 
     #[test]

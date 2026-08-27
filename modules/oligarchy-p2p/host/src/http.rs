@@ -383,6 +383,15 @@ async fn nar(st: &AppState, hash_part: &str, name: &str, head_only: bool) -> Res
         }
     };
 
+    // A path this host published is not on cache.nixos.org — it was built
+    // here. Asking anyway is a guaranteed miss that leaks the hash part of a
+    // locally-built path to a public cache on every request, and under
+    // strictEgress it is egress that can never pay for itself.
+    if st.artifacts.is_declared(hash_part) {
+        tracing::warn!(hash_part, "declared path is not servable locally; not asking upstream");
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
     // A narinfo resolved from disk carries no upstream base. Recover one: any
     // configured upstream can serve the body, and `ni.url()` may be absolute
     // anyway.

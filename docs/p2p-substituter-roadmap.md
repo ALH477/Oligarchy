@@ -1,10 +1,13 @@
 # P2P Substituter — Design & Living Roadmap
 
-> **Status:** LIVING DOCUMENT. Stages 1-4 are landed and all six gates pass.
+> **Status:** LIVING DOCUMENT. Stages 1-5 are landed and all seven gates pass.
 > Stage 1's narinfo posture was WRONG and stage 2 corrects it — read Known gap 1
 > and §3.2 before changing anything about the URL or the compression. The module
 > is wired on the workstation host and **disabled by default**; §6 "Current
-> wiring" says why, and the reason changed at stage 2. Update the
+> wiring" says why, and the reason changed at stage 2. **§2 changed at stage 5**
+> — a host that sets `servePackages` signs metadata, and one that sets
+> `trustedPublicKeys` extends trust to a whole host for every path. Read §2
+> before touching either. Update the
 > stage table and the changelog at the bottom as work proceeds. The design
 > section above the line is the locked contract; the roadmap below the line is
 > the work tracker.
@@ -32,14 +35,42 @@ security story tractable and the MVP shippable.
 ## 2. Trust
 
 **P2P provides availability. Nix provides trust.** The adapter is on the
-untrusted side of the boundary and is designed as if hostile: it runs
+untrusted side of the boundary and is designed as if hostile: the daemon runs
 unprivileged, cannot write the store, holds no keys, and nobody is in
 `nix.settings.trusted-users`. Every path it serves is signature-checked and
 hash-checked by `nix-daemon` afterwards.
 
-Peers are **sources of bytes and nothing else.** They supply no metadata, no
-signatures and no policy. Removing every peer changes throughput and nothing
-about correctness.
+Through stage 4, peers were **sources of bytes and nothing else** — no
+metadata, no signatures, no policy — and removing every peer changed throughput
+and nothing about correctness.
+
+**Stage 5 amends that sentence, and the amendment is the whole cost of the
+stage.** `servePackages` lets a host publish paths it *built*, which Nix refuses
+unsigned, so the host signs them. Two things follow and both must be said
+plainly:
+
+- The daemon still holds no key. Signing happens in `oligarchy-p2p-seed.service`,
+  a separate root oneshot, so the process exposed to hostile input is not the
+  process holding the key. That separation is real — a compromised
+  `oligarchy-p2pd` still cannot sign anything — but it mitigates daemon
+  compromise, not the item below.
+- **A consumer that sets `trustedPublicKeys` extends trust to a whole host, for
+  every path.** Nix cannot scope a key to a set of store paths. Trusting a
+  seeder's key trusts it for everything that consumer will ever substitute, and
+  `Priority: 30` puts the adapter ahead of cache.nixos.org for all of it. For an
+  input-addressed path the signature is the entire anchor (§3), so a compromised
+  seeder can serve signed bytes for any path at all. `docs/plugins-roadmap.md`
+  reaches the same conclusion from the other direction: *"signing is an
+  authoring step, not a runtime one."*
+
+So the accurate form of the rule after stage 5:
+
+> **P2P still provides availability. Trust comes from keys, and adding a key is
+> an operator decision made in the flake — nothing the transport can do.**
+
+A peer cannot cause its key to be trusted; no module derives a key from a peer
+address; and both options default to `[ ]`, where every sentence in the
+paragraph above this one still holds exactly as written.
 
 ## 3. Verified facts about the binary cache protocol
 
@@ -244,8 +275,9 @@ One stage per commit. Each stage's gate must be green before the next starts.
 | 2 | Local artifact cache + `nix-store --dump` serving + the uncompressed-NAR canonicalisation | `nix build .#p2p-artifact-cache` — a corrupt body is refused *before* Nix sees a byte | **DONE** |
 | 3 | `ArtifactTransport` + `LanTransport` over the peer surface, static peers | `nix build .#p2p-two-node` — the repo's first multi-node test | **DONE** (mDNS deferred, gap 20) |
 | 4 | `BitTorrentTransport` (librqbit, `initial_peers`, `disable_trackers`) | `nix build .#p2p-swarm` and `.#p2p-no-peer-fallback` | **DONE** |
-| 5 | BEP44-shaped signed index records + the OCI index container | tampered record refused; unsigned record refused | not started |
-| 6 | Limits, eviction, `oligarchy-p2p-status`/`-test`, MCP `net` wiring | `.#mcp-self-audit` still green, daemon absent from `.mcp.json` | not started |
+| 5 | `servePackages` — a host seeds what it **built**, signed by its own key | `nix build .#p2p-local-signing` — a consumer accepts it only because the key is trusted, and refuses it when it is not | **DONE** |
+| 6 | BEP44-shaped signed index records + the OCI index container | tampered record refused; unsigned record refused | not started |
+| 7 | Limits, eviction, `oligarchy-p2p-status`/`-test`, MCP `net` wiring | `.#mcp-self-audit` still green, daemon absent from `.mcp.json` | not started |
 
 ### Current wiring (stage 3)
 
@@ -316,6 +348,62 @@ at step 3.
   `nix-store --dump`, and peer fetch. It re-announces the whole cache at startup,
   because a restart otherwise silently stops seeding everything while the daemon
   still looks healthy.
+
+### Current wiring (stage 5)
+
+A host can now seed what it **built**, not only what it fetched. Two options,
+both defaulting to empty, and they are deliberately on opposite sides:
+
+```nix
+# on the BUILDER
+custom.p2pCache = {
+  servePackages  = [ pkgs.my-thing ];
+  signingKeyFile = "/var/lib/oligarchy/p2p/cache.sec";   # runtime path, 0400
+  peer.enable    = true;
+};
+
+# on the CONSUMER — a separate, deliberate act
+custom.p2pCache.trustedPublicKeys = [ "nixos-p2p-1:kBnLtBEr..." ];
+```
+
+- **The feature is "mint a narinfo and put it where `get_narinfo` looks".**
+  Nothing else needed changing: `peer::have` was already store-aware, and
+  `peer::narinfo`/`nar`/`torrent` all gate on that single lookup. NAR bytes come
+  from `nix-store --dump` on demand via the existing `resolve::local`.
+- **`declared/` is a non-evictable tier, checked before `narinfo/`.** A fetched
+  narinfo that gets swept can be fetched again; a minted one cannot, because
+  nothing upstream has ever heard of the path. Evicting it would silently
+  unpublish a package while the daemon carried on looking healthy.
+- **Nix does the crypto.** `nix store sign` produces the signature and
+  `nix path-info --sigs` reads it back, so `ValidPathInfo::fingerprint` is never
+  reimplemented and cannot drift from what Nix will verify. There is no ed25519
+  in this crate.
+- **The key never goes near the daemon.** `oligarchy-p2p-seed.service` is a
+  separate root oneshot, and it has to be: minting needs the signing key *and*
+  the Nix database, and the daemon's `RestrictAddressFamilies` excludes
+  `AF_UNIX` precisely so it can never open the nix-daemon socket. The key path
+  is not in `config.json` either — that file is what the daemon reads. The
+  daemon's config carries one bool, `serve_declared`.
+- **Only unsigned paths are signed and published.** Those are exactly the
+  locally-built ones. Signing the rest of the closure would be permanent (it
+  writes `/nix/var/nix/db`, and the signature then travels through `nix copy`,
+  `nix path-info --sigs` and ssh-ng, not just this adapter) and would be the
+  maximum possible blast radius for the key. It also avoids shadowing: a
+  declared narinfo outranks the fetched tier forever, so minting one for a path
+  upstream also has would freeze that path's signature set.
+- **A pure seeder is now expressible** — `upstreams = [ ]` with
+  `servePackages` set. The assertion and `Config::validate` were both relaxed,
+  and they had to be: `seed` loads the same config, so refusing it would have
+  made the unit that populates `declared/` unable to start on exactly the
+  configuration it exists for.
+- **The daemon skips upstream for a declared path.** It was built here, so
+  cache.nixos.org cannot have it; asking anyway is a guaranteed miss that leaks
+  the hash part of a locally-built path to a public cache once per request.
+- Gate:
+
+  ```console
+  nix build .#p2p-local-signing   # the first gate where a peer MINTS metadata
+  ```
 
 ### Known gaps, by the stage that will hit them
 
@@ -398,8 +486,8 @@ at step 3.
     what a fixed set of household machines actually wants. When it lands it
     should be `mdns-sd` (pure Rust, no D-Bus, so no `AF_UNIX` in
     `RestrictAddressFamilies`) rather than shelling out to `avahi-browse`.
-21. **A peer can only serve metadata it has itself resolved, and that bounds
-    what it can seed.** The peer surface never goes upstream on a peer's behalf
+21. ~~**A peer can only serve metadata it has itself resolved, and that bounds
+    what it can seed.**~~ **CLOSED by stage 5 — see below.** The peer surface never goes upstream on a peer's behalf
     (rule 1 in `peer.rs`), so `GET /peer/v1/narinfo/<hp>` answers only from the
     on-disk narinfo cache. A host that holds a store path but never resolved its
     narinfo cannot hand it to a peer, even with `serveFromStore` on — because
@@ -411,12 +499,27 @@ at step 3.
     and a machine that compiled it is not — which is backwards from what the
     project eventually wants.
 
-    Fixing it means the seeder generating and signing its own narinfo, which
-    makes it a signing authority for those paths — a much larger question than a
-    transport, and the same one `docs/plugins-roadmap.md` is waiting on a cache
-    key for. Recorded, not designed. Until then, `custom.p2pCache` seeds what it
-    *fetched*, which is exactly the stated v1 value proposition (one host
-    rebuilds, the others fetch from it) and no more.
+    **CLOSED in stage 5**, by doing exactly what this entry said it would take:
+    the seeder generates and signs its own narinfo. `custom.p2pCache.servePackages`
+    names the packages, `signingKeyFile` names the key, and
+    `oligarchy-p2p-seed.service` — a **separate root oneshot**, because the
+    daemon is deliberately denied both a key and the Nix database — mints the
+    narinfo into a non-evictable `declared/` tier that `Cache::get_narinfo`
+    checks first. Every peer route then works unmodified; they all gate on that
+    one lookup, and `peer::have` was already store-aware.
+
+    Two scoping decisions kept the blast radius from being what this entry
+    feared. **Only paths with no signature at all are signed and published** —
+    the ones this host actually built — so `servePackages = [ pkgs.foo ]` does
+    not put this host's name on glibc, permanently, in the Nix database.
+    And the trust half is a separate option on the *consumer*
+    (`trustedPublicKeys`), so a seeder cannot make anyone trust it.
+
+    What this does **not** answer is the larger question the entry named: it
+    implements the mechanism and leaves the decision to whoever pastes the key.
+    §2 records what that decision costs. See also `docs/plugins-roadmap.md`
+    gap 1 — both subsystems were blocked on the same missing key, and a host
+    running this now has one.
 22. **`discover` asks every peer in series.** Fine for the handful of machines
     this is for; it is O(peers) round trips on the latency path of every
     substitution. Parallelise when the peer list can be long — which is to say,
@@ -481,6 +584,44 @@ at step 3.
 19. `librqbit` is at 8.1.1 here while crates.io already carries **9.0.1** — a
    major version has landed since the pin. `transport/bittorrent.rs` must be the
    only file in the crate that names a `librqbit` type.
+
+
+**Stage 5 — seeding what this host built**
+
+31. **A declared path joins a BitTorrent swarm only after it has been served
+    once.** NAR bytes are materialised lazily: `resolve::local` dumps from the
+    store on the first request and the startup re-announce walks `nar/`, not
+    `declared/`. So over `transport = "bittorrent"` a freshly declared package
+    is reachable by LAN HTTP immediately and by the swarm only after one fetch
+    plus a restart. Deliberate — eager materialisation would duplicate every
+    declared closure on disk at activation — but it means `minArtifactSize` and
+    the swarm do not apply to a declared path on day one.
+32. **Unpublishing does not call `transport.remove`.** Dropping a package from
+    `servePackages` unlinks its narinfo, so `/peer/v1/have` starts answering 404
+    — but if the artifact had been materialised and announced, the swarm still
+    carries the infohash. Compare `resolve.rs`, where eviction *is* wired to
+    `remove` for exactly this reason: a host that advertises an artifact it will
+    not produce is worse than one that never advertised it.
+33. **A materialised declared NAR is evictable.** It lands in `nar/` through the
+    ordinary `dump_into_cache` path and is swept under `maxCacheSize` like any
+    other entry, so a large declared package can be evicted and re-dumped
+    repeatedly. The metadata is safe; only the bytes churn. Whether `sweep`
+    should skip digests named by `declared/` is a real question and is not
+    answered.
+34. **Key rotation invalidates every consumer at once.** There is no key name
+    option, no overlap window and no second-key support: replacing
+    `signingKeyFile` means every peer's `trustedPublicKeys` is wrong until each
+    is edited by hand. Fine for the handful of machines this is for; it is not a
+    fleet story.
+35. **`servePackages` takes the default output only.** `types.pathInStore`
+    coerces a package to `$out`, so `foo.dev`/`foo.lib`/`foo.man` are not
+    published unless listed explicitly. Documented in the option, not enforced —
+    nothing warns that a multi-output package was half-seeded.
+36. **The declared set is a stable, guessable list.** The existing peer-surface
+    disclosure gap is about which paths a host happens to hold; this is
+    sharper — it is a deliberate, enumerable statement of what this machine
+    builds. Warned about at eval time, scoped to `peer.openFirewall`, and still
+    unauthenticated.
 
 ### Writing the repo's first multi-node VM test
 
@@ -594,3 +735,82 @@ design, so any gate aimed at one of them has to remove the other two.
   * And the `provide` call site was never added at all: a `str.replace` anchor
     had gone stale when the line it keyed on was promoted from `debug!` to
     `info!` in stage 2, so the edit silently did nothing.
+- **Stage 5** — `servePackages`: a host seeds what it **built**, closing gap 21.
+  107 unit tests. The mechanism turned out to be far smaller than the entry
+  feared — `peer::have` was already store-aware and every peer route gates on
+  one lookup, so the work was "mint a narinfo and put it where `get_narinfo`
+  looks" plus a non-evictable tier to keep it there. Nix does the crypto
+  (`nix store sign` + `nix path-info --sigs`), so the crate gained no ed25519
+  and cannot drift from `ValidPathInfo::fingerprint`.
+
+  The cost is not in the code, it is in §2, and an adversarial review of the
+  design is what made that legible. Three of its findings changed the design
+  before a line of the module was written:
+  * The first draft signed every path in the declared closure that lacked *our*
+    signature — which is all of nixpkgs. That is permanent (it writes
+    `/nix/var/nix/db` and travels through `nix copy` and ssh-ng, not just this
+    adapter) and it is the maximum blast radius for the key. Now only paths with
+    **no** signature are signed, which is exactly the set gap 21 was about, and
+    it incidentally removes the shadowing problem a declared-first lookup would
+    otherwise have created.
+  * `signingKeyFile` was going to appear in `config.json`. That file is what the
+    *daemon* reads, and the daemon must not know where the key lives. It carries
+    one bool now; the key and the path list reach `seed` on its own unit's
+    `ExecStart`.
+  * `trustedPublicKeys` is not a convenience mirroring `plugins.nix`. Nix cannot
+    scope a key to a path set, so it trusts a whole host for everything, ahead
+    of cache.nixos.org. The option description says so at length, and §2 was
+    amended rather than left standing — a locked contract the module contradicts
+    is worse than no contract.
+
+  Four bugs. The first two were found by re-reading the diff rather than by
+  any test, and they share a shape — the gate could not distinguish the broken
+  behaviour from the working one, so it passed:
+  * **The second seed run unpublished everything the first one published.**
+    `seed` computed one set — paths with no signature — and used it for both
+    "sign this" and "publish this". On a re-run the path already carries our
+    signature, so the set is empty, so nothing is published, so the prune step
+    removes the entry. Every `nixos-rebuild` after the first would silently
+    stop the host seeding, while the daemon, the unit and the journal all
+    looked correct. The gate did not catch it because it seeded once. Now
+    `plan_signing` and `plan_publishing` are separate pure functions with a
+    doc comment saying why one is not the complement of the other, five unit
+    tests over the four cases, and a gate leg that seeds twice and compares
+    the published bytes.
+
+  * **`ConditionPathExists` was in `[Service]`, where systemd ignores it.**
+    `Condition*` is a `[Unit]` directive; an unknown key in `[Service]` costs
+    only a log line, so the check silently did nothing — turning "wait quietly
+    until sops decrypts the key" into "fail at every boot". Also missed by the
+    gate, and for the same shape of reason as the one above: a *skipped* run and
+    a *failed* run both leave `declared/` empty, so asserting emptiness could
+    not tell them apart. The gate now asserts `ConditionResult=no` **and**
+    `Result=success`.
+
+  The other two were found by running it rather than reading it, and one is a
+  real fault in the shipped module rather than in the gate:
+  * `ReadOnlyPaths = "${stateDir}/declared"` without a `-` prefix makes systemd
+    **refuse to start the daemon** when the directory is absent. An optional
+    feature had acquired the power to take the substituter down — the exact
+    thing the peer-list handling is careful about. Caught by the gate's
+    remove-the-feature step, which is to say by the assertion that exists to
+    prove the gate is not vacuous.
+  * `nix path-info --json-format 1` is Determinate Nix 3.x only; on the Nix in
+    nixpkgs it is `unrecognised flag`, a hard failure. Pinning it — which the
+    review recommended, correctly, for the deprecation warning — would have made
+    seeding fail on every stock NixOS host. The emitter now tries the pinned
+    spelling and falls back. Found because the VM's Nix is the stable one; a
+    host-only test would have shipped it.
+
+  And the gate itself needed the vacuity lesson applied a fourth time, in a new
+  form. `useNixStoreImage = true` severs the shared `/nix/store` that made three
+  earlier gates vacuous — so this is the first gate here that can assert
+  `consumer.fail("test -e <path>")` and mean it. But the test framework copies
+  every derivation the **test script references** into each node's image
+  (`nixos/lib/testing/testScript.nix:73`), so interpolating the probe's path
+  into the script put the artifact on the consumer and undid the whole point.
+  The probe is now discovered at runtime from the builder's minted narinfo,
+  which is also how a real consumer learns it. The refusal leg additionally
+  asserts the adapter *served* the bytes during the failed substitution: without
+  that, "refused because untrusted" is indistinguishable from "refused because
+  unavailable", which is precisely how a gate here went vacuous before.
