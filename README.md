@@ -108,6 +108,7 @@ The Oligarchy endures.
 | Agent Surface                    | Local **read-only** MCP (the insecure OpenClaw gateway was executed); Blipply voice assistant consumes it over stdio |
 | Networking Fabric                | DeMoD Compute Fabric (DCF) — community node, identity service, tray controller        |
 | Distribution                     | Everything forged from pinned flakes — no GitHub chaos, only victory                    |
+| Scale                            | **68,372 lines of code across 278 files** — 35k Nix, 24k Rust, 4k Shell, 3k Kotlin. Roughly a fifth of the Nix and Rust is comments, on purpose: the reasons are load-bearing here, and most of them look removable until you know what broke last time. Breakdown in [`docs/architecture.md` §1a](docs/architecture.md) |
 
 You now wield **Abbey Road monitoring latency**, local agentic AI supremacy, and DCF real-time fabric on a laptop that annihilates games at max settings. Bow down.
 
