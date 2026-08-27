@@ -697,6 +697,15 @@
         # also the first that has to prove a consumer refuses that metadata
         # when the key behind it is not trusted.
         p2p-local-signing = oligarchy-p2p.checks.${system}.local-signing;
+        # Stage 6: Nix cannot scope a signing key to a set of store paths, so
+        # this adapter does. Same peer, same key, same signature — one package
+        # is granted and one is not, and only the scope check can tell them
+        # apart.
+        p2p-peer-scope = oligarchy-p2p.checks.${system}.peer-scope;
+        # Stage 6: the daemon's own assertions, and — the real content — that
+        # each one FAILS when its guarantee is broken. Every bug this subsystem
+        # shipped was one a passing test could not distinguish from working.
+        p2p-selftest = oligarchy-p2p.checks.${system}.selftest;
 
         # ════════════════════════════════════════════════════════════════════
         # Malware Shield build gate — scans the FULL system closure with pinned,

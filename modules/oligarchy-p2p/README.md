@@ -165,6 +165,96 @@ input-addressed path the signature is the entire trust anchor — the adapter's
 own `NarHash` check does not help, because whoever controls the bytes controls
 the narinfo too. Trust hosts you administer, on networks you control.
 
+## Bounding what a peer key may vouch for
+
+Trusting a peer's key is the one thing in this subsystem that extends trust, and
+**Nix cannot scope a signing key to a set of store paths.** Once a key is in
+`trusted-public-keys` it vouches for everything, and this adapter sits at
+`Priority: 30` — ahead of cache.nixos.org for every path. A compromised seeder
+could mint a narinfo for glibc, sign it, and be believed.
+
+Nix cannot bound that. This adapter can, because every narinfo a peer supplies
+passes through it:
+
+```nix
+custom.p2pCache = {
+  trustedPublicKeys = [ "nixos-p2p-1:kBn..." ];
+  acceptFromPeers   = [ "my-thing" ];    # mandatory; [ "*" ] is the opt-out
+};
+```
+
+Three things about the implementation are load-bearing.
+
+**The rule asks whether a peer key is involved, not whether a non-peer key is.**
+The intuitive formulation — "it carries a `cache.nixos.org-1` signature, so
+upstream vouched for it" — fails open. `Sig:` lines are attacker-supplied text,
+and `ValidPathInfo::checkSignatures` *counts* signatures that verify rather than
+requiring all of them to. So appending one junk `Sig: cache.nixos.org-1:AAAA`
+makes a narinfo look upstream-vouched while the real peer signature still gets
+the path registered. Distinguishing forged from real means implementing Ed25519,
+which this crate deliberately does not do — Nix does the crypto. Asking "is a
+peer key involved at all" needs no verification and cannot be gamed by *adding*
+signatures.
+
+**A version suffix has to start with a digit.** Matching `entry + "-"` is not a
+version test: it lets `glibc` reach `glibc-locales` and `linux` reach
+`linux-firmware`, both of which are in every system closure. Nix splits a name
+into pname and version at the first `-` followed by a non-letter, and so does
+`scope::in_scope`.
+
+**Four enforcement points, each closing something the others cannot.**
+`LanTransport::narinfo` returns the first parseable answer and stops, so the
+check has to be *in the loop* — otherwise one hostile peer answering
+out-of-scope denies a path while the honest peers below it are never asked.
+`resolve`'s peer arm refuses before persisting. `resolve`'s disk arm re-checks,
+because an entry that reached `narinfo/` is durable and would be served forever
+without the transport being consulted again. And `peer.rs` gates all four peer
+routes, so a host with a lax scope does not relay refused metadata onward and
+become a second hop into hosts that refused it directly.
+
+What this does **not** cover: the key stays in `trusted-public-keys` globally,
+so anything bypassing the adapter — a peer added directly to `substituters`, a
+`nix copy --from`, a remote builder — is unscoped. And the check now runs inside
+`oligarchy-p2pd`, which this design treats as hostile, so a daemon compromise is
+a scope bypass in a way it was not before. The clean version is the split
+already used for signing; it is recorded as a gap, not built.
+
+## Proving it, rather than reading it
+
+Every failure this subsystem has shipped had one shape: the broken state was
+indistinguishable from the working one. A declared tier that never populated, a
+`provide` never wired, a seed run that unpublished what the last one published,
+a `ConditionPathExists` in the wrong systemd section. Each time the daemon
+answered, the unit was active, the journal read normally — and a passing gate
+could not tell either.
+
+```console
+$ oligarchy-p2p-selftest
+  PASS  bind_is_loopback                127.0.0.1
+  PASS  no_trusted_in_nix_conf          2 file(s) clean
+  PASS  daemon_answers                  http://127.0.0.1:5111 serving /nix/store
+  PASS  declared_refuses_a_write        refused as uid 992 (permission denied)
+  PASS  declared_narinfos_are_coherent  1 published, all coherent
+  PASS  round_trip                      xk1n…: 232 bytes, sha256:0k8c…
+  PASS  peer_scope_is_bounded           1 peer key(s), scoped to: my-thing
+  SKIP  peers_reachable                 no peers configured
+```
+
+It runs as a **unit** sharing the daemon's sandbox verbatim, not as a bare
+command. `declared_refuses_a_write` proves `ReadOnlyPaths` is in effect by
+attempting a write — which only means anything inside the confinement it is
+testing, and from a root shell would succeed and report a false PASS. There it
+reports a loud SKIP instead.
+
+Two rules, taken from the MCP workspace's `mcp_self_audit`: **a check that
+inspected nothing is a FAIL**, and **a skipped check is reported, never
+omitted**. "Zero declared narinfos, all valid" is the exact sentence that hid a
+real bug.
+
+`nix build .#p2p-selftest` asserts it passes — and then breaks each guarantee in
+turn and asserts it *fails*. A selftest that cannot fail is the same mistake as
+a gate that cannot fail.
+
 ## Two listeners, and why
 
 The substituter surface is **loopback-only** and will proxy anything its
@@ -215,6 +305,8 @@ roadmap's Known gap 1.
 | `host/src/upstream.rs` | Upstream caches, rustls only |
 | `host/src/cache.rs` | The artifact cache: temp+rename, LRU eviction, narinfo persistence, and the non-evictable `declared/` tier |
 | `host/src/declared.rs` | Minting and signing narinfo for locally-built paths; runs only from the `seed` subcommand |
+| `host/src/scope.rs` | What a peer key may vouch for — the only place in the crate that knows what a key is |
+| `host/src/selftest.rs` | Assertions the daemon makes about itself, and why each one cannot be answered by reading config |
 | `host/src/resolve.rs` | The ordered source chain and the upstream fetch pipeline |
 | `host/src/decompress.rs` | xz / zstd, statically linked, no system libraries |
 | `host/src/nixstore.rs` | `nix-store --dump`, and why it is the old CLI |
@@ -239,6 +331,8 @@ nix build .#p2p-artifact-cache
 nix build .#p2p-two-node
 nix build .#p2p-swarm
 nix build .#p2p-local-signing        # a host seeds what it BUILT; refused without the key
+nix build .#p2p-peer-scope           # a peer key vouches only for the packages you named
+nix build .#p2p-selftest             # the daemon's assertions, and that each fails when broken
 nix build .#p2p-no-peer-fallback
 ```
 

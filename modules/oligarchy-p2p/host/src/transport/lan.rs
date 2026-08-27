@@ -47,6 +47,9 @@ pub fn is_lan_address(ip: &IpAddr) -> bool {
 pub struct LanTransport {
     peers: Vec<SocketAddr>,
     client: ureq_like::Client,
+    /// What a peer key may vouch for. Applied here, in the loop, rather than
+    /// only by the caller — see `narinfo`.
+    scope: crate::scope::PeerScope,
 }
 
 impl LanTransport {
@@ -55,7 +58,11 @@ impl LanTransport {
     /// Dropping rather than failing: a peer list is operational data that can
     /// drift, and refusing to start because one entry went public would take
     /// the substituter down over a transport that is meant to be optional.
-    pub fn new(peers: &[String], connect_timeout: Duration) -> Result<Self> {
+    pub fn new(
+        peers: &[String],
+        connect_timeout: Duration,
+        scope: crate::scope::PeerScope,
+    ) -> Result<Self> {
         let mut ok = Vec::new();
         for p in peers {
             let addr: SocketAddr = p
@@ -74,6 +81,7 @@ impl LanTransport {
         Ok(Self {
             peers: ok,
             client: ureq_like::Client::new(connect_timeout),
+            scope,
         })
     }
 
@@ -197,18 +205,31 @@ impl ArtifactTransport for LanTransport {
             let url = format!("http://{p}/peer/v1/narinfo/{hash_part}");
             match self.client.get_text(&url, deadline, 1 << 20) {
                 Ok(Some(text)) => {
-                    // A peer supplies metadata, so the caller re-checks that it
-                    // names the path that was asked for. The SIGNATURE is Nix's
-                    // problem and is untouched; this only stops a peer
-                    // answering a different question than the one asked.
+                    // A peer supplies metadata, so two things are re-checked
+                    // before it is handed on: that it names the path that was
+                    // asked for, and that a peer key is not vouching for
+                    // something outside the scope its operator granted. The
+                    // signature itself is Nix's problem and is untouched — we
+                    // never verify one, only notice whose name is on it.
                     match crate::narinfo::NarInfo::parse(&text) {
-                        Ok(ni) if ni.hash_part() == hash_part => return Some(text),
-                        Ok(ni) => tracing::warn!(
+                        Ok(ni) if ni.hash_part() != hash_part => tracing::warn!(
                             peer = %p,
                             asked = hash_part,
                             got = ni.hash_part(),
                             "REFUSED a peer narinfo for a different store path"
                         ),
+                        // The scope check belongs HERE, in the loop, and not
+                        // only in the caller. This returns the FIRST parseable
+                        // answer and stops. If the caller refused it
+                        // afterwards, one hostile peer could answer every query
+                        // with an out-of-scope narinfo and the honest peers
+                        // further down this list would never be asked — a
+                        // remotely triggerable denial of service against any
+                        // path it chose. Refusing here keeps looking.
+                        Ok(ni) if self.scope.check(&ni).is_err() => {
+                            crate::scope::warn_refusal(&p.to_string(), hash_part, ni.store_path());
+                        }
+                        Ok(_) => return Some(text),
                         Err(e) => tracing::warn!(peer = %p, error = %e, "unparseable peer narinfo"),
                     }
                 }
@@ -284,7 +305,7 @@ impl LanTransport {
 /// HTTP on a LAN, so a few dozen lines of `TcpStream` is the smaller thing to
 /// own. No TLS, deliberately: peers are private-range only and the payload is
 /// verified against a signed hash regardless.
-mod ureq_like {
+pub(crate) mod ureq_like {
     use anyhow::{bail, Context, Result};
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{SocketAddr, TcpStream};
@@ -462,6 +483,7 @@ mod tests {
         let t = LanTransport::new(
             &["192.168.1.2:5112".into(), "8.8.8.8:5112".into()],
             Duration::from_secs(1),
+            Default::default(),
         )
         .unwrap();
         let st = t.status();
@@ -471,6 +493,9 @@ mod tests {
 
     #[test]
     fn a_malformed_peer_is_a_configuration_error() {
-        assert!(LanTransport::new(&["not-an-address".into()], Duration::from_secs(1)).is_err());
+        assert!(
+            LanTransport::new(&["not-an-address".into()], Duration::from_secs(1), Default::default())
+                .is_err()
+        );
     }
 }

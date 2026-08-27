@@ -320,18 +320,28 @@ deliberately denied, so it runs in a **separate root oneshot**
 (`oligarchy-p2p-seed.service`); the key is not named in the daemon's config and
 the daemon never opens it.
 
-The consumer half, `trustedPublicKeys`, is the only setting in this subsystem
-that extends trust, and it is not scoped: Nix cannot restrict a key to a set of
-paths, so trusting a seeder trusts that host for everything this machine will
-ever substitute. Both options default to `[ ]`, where the "peers are sources of
-bytes and nothing else" rule holds exactly as written.
+The consumer half, `trustedPublicKeys`, is the setting that extends trust. Nix
+cannot restrict a key to a set of paths — but every narinfo a peer supplies
+passes through this adapter, so `acceptFromPeers` bounds what a peer key may
+speak for, and is mandatory whenever a key is trusted. Enforced in four places:
+the transport loop (so one hostile peer cannot deny a path by answering first),
+before persisting, on the durable read path, and on the peer surface so a lax
+host does not relay onward. Every option defaults to `[ ]`, where the "peers are
+sources of bytes and nothing else" rule holds exactly as written.
 
-Staged: stage 5 is wired on `nixosConfigurations.nixos` only and **disabled
+`oligarchy-p2p-selftest` exists because this subsystem's failures are
+systematically invisible — three stages running, the bug was one a passing gate
+could not distinguish from correct behaviour. It runs as a unit sharing the
+daemon's sandbox, so `declared_refuses_a_write` tests the real confinement, and
+its gate breaks each guarantee in turn to prove the checks can fail.
+
+Staged: stage 6 is wired on `nixosConfigurations.nixos` only and **disabled
 by default**, with `transport` defaulting to `"none"` and `servePackages` /
 `trustedPublicKeys` to `[ ]`. Gates:
 `nix build .#p2p-substituter-protocol`, `.#p2p-signature-refusal`,
 `.#p2p-artifact-cache`, `.#p2p-two-node` (the repo's first multi-node VM
-test), `.#p2p-swarm`, `.#p2p-no-peer-fallback` and `.#p2p-local-signing`.
+test), `.#p2p-swarm`, `.#p2p-no-peer-fallback`, `.#p2p-local-signing`,
+`.#p2p-peer-scope` and `.#p2p-selftest`.
 
 ## 6. `vm-manager/` — VMs
 
@@ -672,6 +682,8 @@ nix build .#p2p-two-node             # a host whose only source is a peer gets t
 nix build .#p2p-swarm                # artifacts move over BitTorrent; small ones stay out
 nix build .#p2p-no-peer-fallback     # no peers, and the build still works
 nix build .#p2p-local-signing        # a host seeds what it BUILT; refused without the key
+nix build .#p2p-peer-scope           # a peer key vouches only for the packages you named
+nix build .#p2p-selftest             # the daemon's assertions, and that each fails when broken
 nix build .#plugins-tier2-runtime
 
 # eval-only check (full toplevel is already in checks; slow gates left out)

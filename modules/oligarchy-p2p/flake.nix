@@ -75,6 +75,16 @@
         #     refusal leg would again pass for the wrong reason.
         #  3. Its name is unique to this gate, so it cannot collide with
         #     anything already in a developer's store.
+        # The decoy. Identical to seedProbe in every respect the scope check
+        # does not look at: same builder, same key, same signature, same
+        # transport, genuinely published, genuinely present. It differs in its
+        # NAME and nothing else, which is what makes the refusal leg of
+        # `peer-scope` attributable to the scope check and to nothing else.
+        scopeDecoy = nodePkgs.runCommand "p2p-scope-decoy" { } ''
+          mkdir -p $out
+          echo "a path the consumer never granted this peer" > $out/marker
+        '';
+
         seedProbe = nodePkgs.runCommand "p2p-seed-probe" { } ''
           mkdir -p $out
           echo "oligarchy p2p local signing probe" > $out/marker
@@ -975,8 +985,11 @@
                   transport = "lan";
                   peers = [ "192.168.1.1:5112" ];
                   peerTimeout = 30;
-                  # The builder's key, declared the way an operator would.
+                  # The builder's key, declared the way an operator would —
+                  # and bounded, because a trusted peer key vouches for every
+                  # path unless the adapter is told what it may speak for.
                   trustedPublicKeys = [ gatePublicKey ];
+                  acceptFromPeers = [ "p2p-seed-probe" ];
                   logLevel = "oligarchy_p2pd=debug";
                 };
                 # Sever the shared host store. Without this the probe is on this
@@ -1198,6 +1211,353 @@
                   "--store-paths /tmp/empty-paths --key-file /tmp/cache.sec"
               )
               builder.fail(f"test -e /var/lib/oligarchy/p2p/declared/{hp}.narinfo")
+            '';
+          };
+
+          # ── Gate 8: a peer key does not vouch for everything ───────────────
+          #
+          # Stage 5 gave a consumer `trustedPublicKeys`, and Nix cannot scope a
+          # signing key to a set of store paths — so that key vouched for EVERY
+          # path the consumer would ever substitute, with the adapter at
+          # priority 30, ahead of cache.nixos.org. A compromised seeder could
+          # mint glibc and win. Nix cannot bound that; the adapter can, because
+          # every peer narinfo passes through it.
+          #
+          # THE GATE'S WHOLE DESIGN is that the two artifacts differ in nothing
+          # but their name. Same seeder, same key, same signature, same
+          # transport, same request path, both published, both genuinely
+          # present. One is in `acceptFromPeers` and one is not. If the scope
+          # check is removed, the refusal leg cannot fail for any other reason.
+          peer-scope = nodePkgs.testers.runNixOSTest {
+            name = "oligarchy-p2p-peer-scope";
+
+            nodes = {
+              builder = { pkgs, ... }: {
+                imports = [ ./modules/p2p-cache.nix ];
+                custom.p2pCache = {
+                  enable = true;
+                  registerSubstituter = false;
+                  upstreams = [ ];
+                  serveFromStore = true;
+                  # BOTH are published, and honestly so. The seeder is not the
+                  # attacker here — it is doing exactly what it was told.
+                  servePackages = [ seedProbe scopeDecoy ];
+                  signingKeyFile = "/tmp/cache.sec";
+                  peer.enable = true;
+                  peer.openFirewall = [ "eth1" ];
+                  logLevel = "oligarchy_p2pd=debug";
+                };
+                environment.systemPackages = [ pkgs.curl ];
+                nix.settings.experimental-features = [ "nix-command" "flakes" ];
+                virtualisation.memorySize = 2048;
+                virtualisation.diskSize = 8192;
+              };
+
+              consumer = { pkgs, ... }: {
+                imports = [ ./modules/p2p-cache.nix ];
+                custom.p2pCache = {
+                  enable = true;
+                  registerSubstituter = false;
+                  upstreams = [ "http://127.0.0.1:9" ];
+                  upstreamTimeout = 2;
+                  serveFromStore = true;
+                  transport = "lan";
+                  peers = [ "192.168.1.1:5112" ];
+                  peerTimeout = 30;
+                  trustedPublicKeys = [ gatePublicKey ];
+                  # ONE of the two. This single line is the subject.
+                  acceptFromPeers = [ "p2p-seed-probe" ];
+                  logLevel = "oligarchy_p2pd=debug";
+                };
+                virtualisation.useNixStoreImage = true;
+                environment.systemPackages = [ pkgs.curl ];
+                nix.settings.experimental-features = [ "nix-command" "flakes" ];
+                nix.settings.substituters = nixpkgs.lib.mkForce [ ];
+                virtualisation.memorySize = 2048;
+                virtualisation.diskSize = 8192;
+              };
+            };
+
+            testScript = ''
+              # Paths are discovered at RUNTIME and never interpolated here:
+              # with useNixStoreImage the framework copies every derivation the
+              # SCRIPT references into each node's image, which would put both
+              # artifacts on the consumer and make the whole gate vacuous.
+
+              start_all()
+              builder.wait_for_unit("multi-user.target")
+              consumer.wait_for_unit("multi-user.target")
+
+              builder.succeed("printf '%s' '${gateSecretKey}' > /tmp/cache.sec")
+              builder.succeed("chmod 0400 /tmp/cache.sec")
+              builder.succeed("systemctl start oligarchy-p2p-seed")
+              builder.wait_for_unit("oligarchy-p2pd.service")
+
+              # ── Both are published, by the same key, and are equals ────────
+              published = builder.succeed("ls /var/lib/oligarchy/p2p/declared").split()
+              assert len(published) == 2, f"expected two declared narinfos, got {published}"
+
+              info = {}
+              for f in published:
+                  hp = f.removesuffix(".narinfo")
+                  text = builder.succeed(f"cat /var/lib/oligarchy/p2p/declared/{hp}.narinfo")
+                  fields = dict(l.split(": ", 1) for l in text.strip().split("\n"))
+                  assert "Sig: p2p-gate-1:" in text, text
+                  name = fields["StorePath"].split("/")[-1].split("-", 1)[1]
+                  info[name] = {
+                      "hp": hp,
+                      "path": fields["StorePath"],
+                      "narhash": fields["NarHash"].split(":")[1],
+                      "size": int(fields["NarSize"]),
+                  }
+
+              probe = info["p2p-seed-probe"]
+              decoy = info["p2p-scope-decoy"]
+
+              # Equals in every respect the check does not look at.
+              assert "192.168.1.1/24" in builder.succeed("ip -4 addr show eth1")
+              consumer.wait_until_succeeds(
+                  "curl -sf --max-time 5 http://192.168.1.1:5112/peer/v1/info", timeout=60
+              )
+              # The builder serves BOTH to a peer; it is not the one refusing.
+              for k in (probe, decoy):
+                  builder.succeed(
+                      f"curl -sf --max-time 5 "
+                      f"http://192.168.1.1:5112/peer/v1/narinfo/{k['hp']} > /dev/null"
+                  )
+
+              # Neither is present on the consumer: useNixStoreImage severed the
+              # shared store, so `test -e` means something here.
+              consumer.fail(f"test -e {probe['path']}")
+              consumer.fail(f"test -e {decoy['path']}")
+
+              # ── IN SCOPE: accepted, fetched, verified ─────────────────────
+              got = consumer.succeed(
+                  f"curl -sf --max-time 30 http://127.0.0.1:5111/{probe['hp']}.narinfo"
+              )
+              assert "Sig: p2p-gate-1:" in got, got
+              consumer.succeed(
+                  f"curl -sf --max-time 60 -o /tmp/ok.nar "
+                  f"http://127.0.0.1:5111/nar/{probe['hp']}/{probe['narhash']}.nar"
+              )
+              assert consumer.succeed(
+                  "nix hash file --type sha256 --base32 /tmp/ok.nar"
+              ).strip() == probe["narhash"]
+
+              # ── OUT OF SCOPE: refused ────────────────────────────────────
+              # Same peer, same key, same signature, same route. Only the name
+              # differs, so nothing but the scope check can explain this.
+              consumer.fail(
+                  f"curl -sf --max-time 30 http://127.0.0.1:5111/{decoy['hp']}.narinfo"
+              )
+              j = consumer.succeed("journalctl -u oligarchy-p2pd --no-pager")
+              assert "REFUSED a peer narinfo" in j, j
+              assert "p2p-scope-decoy" in j, j
+
+              # And it was not merely hidden: it must not have been PERSISTED,
+              # or the disk tier would serve it forever without ever consulting
+              # the transport again.
+              consumer.fail(f"test -e /var/lib/oligarchy/p2p/narinfo/{decoy['hp']}.narinfo")
+
+              # A real substitution refuses too, not just the raw fetch.
+              consumer.succeed("rm -f /root/.cache/nix/binary-cache-v*.sqlite*")
+              consumer.fail(
+                  f"nix-store --realise {decoy['path']} --store /tmp/nope "
+                  f"--option substituters http://127.0.0.1:5111 "
+                  f"--option require-sigs true "
+                  f"--option trusted-public-keys '${gatePublicKey}'"
+              )
+
+              # ── The DURABLE half: a poisoned entry already on disk ────────
+              # Enforcement in the peer arm alone is not enough — an entry that
+              # reached narinfo/ is served by the disk tier on every later
+              # request, transport never consulted. Plant one by hand and assert
+              # the read path refuses it AND drops it.
+              consumer.succeed("systemctl stop oligarchy-p2pd")
+              poison = builder.succeed(
+                  f"cat /var/lib/oligarchy/p2p/declared/{decoy['hp']}.narinfo"
+              )
+              consumer.succeed(
+                  f"install -m 0644 /dev/stdin "
+                  f"/var/lib/oligarchy/p2p/narinfo/{decoy['hp']}.narinfo <<'EOF'\n{poison}EOF"
+              )
+              consumer.succeed(f"test -e /var/lib/oligarchy/p2p/narinfo/{decoy['hp']}.narinfo")
+              consumer.succeed("systemctl start oligarchy-p2pd")
+              consumer.wait_for_unit("oligarchy-p2pd.service")
+
+              consumer.fail(
+                  f"curl -sf --max-time 20 http://127.0.0.1:5111/{decoy['hp']}.narinfo"
+              )
+              consumer.fail(
+                  f"test -e /var/lib/oligarchy/p2p/narinfo/{decoy['hp']}.narinfo"
+              )
+
+              # ── And this host does not RELAY what it refused ──────────────
+              # A lax or poisoned host must not become a second hop for the
+              # rest of the LAN.
+              consumer.fail(
+                  f"curl -sf --max-time 5 "
+                  f"http://127.0.0.1:5112/peer/v1/narinfo/{decoy['hp']}"
+              )
+            '';
+          };
+
+          # ── Gate 9: the daemon can prove things about itself ───────────────
+          #
+          # Every failure this subsystem shipped had one shape: the broken state
+          # was indistinguishable from the working one. A declared tier that
+          # never populated, a `provide` never wired, a seed run that
+          # unpublished what the last one published, a `ConditionPathExists` in
+          # the wrong systemd section. In each case the daemon answered, the
+          # unit was active, and the journal read normally — and a passing gate
+          # could not tell either, which is why three of them shipped green.
+          #
+          # `plugind selftest` exists for this reason in the plugin runtime.
+          # This is the same idea, and this gate's real content is the SECOND
+          # half: break each guarantee in turn and assert the selftest notices.
+          # A selftest that cannot fail is the same mistake as a gate that
+          # cannot fail.
+          selftest = nodePkgs.testers.runNixOSTest {
+            name = "oligarchy-p2p-selftest";
+            nodes.machine = { pkgs, ... }: {
+              imports = [ ./modules/p2p-cache.nix ];
+              custom.p2pCache = {
+                enable = true;
+                registerSubstituter = false;
+                upstreams = [ ];
+                serveFromStore = true;
+                servePackages = [ seedProbe ];
+                signingKeyFile = "/tmp/cache.sec";
+                peer.enable = true;
+                logLevel = "oligarchy_p2pd=debug";
+              };
+              environment.systemPackages = [ pkgs.curl ];
+              nix.settings.experimental-features = [ "nix-command" "flakes" ];
+              virtualisation.memorySize = 2048;
+              virtualisation.diskSize = 8192;
+            };
+
+            testScript = ''
+              machine.wait_for_unit("multi-user.target")
+              machine.succeed("printf '%s' '${gateSecretKey}' > /tmp/cache.sec")
+              machine.succeed("chmod 0400 /tmp/cache.sec")
+              machine.succeed("systemctl start oligarchy-p2p-seed")
+              machine.wait_for_unit("oligarchy-p2pd.service")
+
+              # ── It passes, and every check reports a verdict ──────────────
+              out = machine.succeed("oligarchy-p2p-selftest")
+              for name in [
+                  "bind_is_loopback",
+                  "no_trusted_in_nix_conf",
+                  "daemon_answers",
+                  "declared_refuses_a_write",
+                  "declared_narinfos_are_coherent",
+                  "round_trip",
+                  "peer_scope_is_bounded",
+                  "peers_reachable",
+              ]:
+                  assert name in out, f"{name} missing from the report:\n{out}"
+              assert "FAILED" not in out, out
+
+              # The write-denial check must have actually RUN, not been skipped
+              # — it is the one that only means anything inside the sandbox, and
+              # a SKIP here would be the report certifying nothing.
+              assert "PASS  declared_refuses_a_write" in out, out
+              # And the round trip must have really fetched something.
+              assert "PASS  round_trip" in out, out
+
+              # ── Now break each guarantee and assert it is noticed ─────────
+
+              # 1. The write denial, in two legs, because it has TWO
+              #    independent causes and a single break cannot tell them apart.
+              #    declared/ is root-owned 0755, so POSIX alone refuses the
+              #    daemon user; ReadOnlyPaths refuses it again at the mount.
+              #
+              #    Leg A defeats POSIX only. If the selftest still passes, the
+              #    read-only mount is doing real work — which is precisely the
+              #    claim "configured" cannot support and only "attempted" can.
+              machine.succeed("chmod 0777 /var/lib/oligarchy/p2p/declared")
+              machine.succeed("oligarchy-p2p-selftest")
+
+              #    Leg B defeats both. Now the write must succeed and the
+              #    selftest must notice. /run, not /etc: on NixOS
+              #    /etc/systemd/system is a store symlink and read-only, and
+              #    /run/systemd/system takes precedence over it.
+              machine.succeed(
+                  "mkdir -p /run/systemd/system/oligarchy-p2p-selftest.service.d && "
+                  "printf '[Service]\nReadOnlyPaths=\n' > "
+                  "/run/systemd/system/oligarchy-p2p-selftest.service.d/break.conf && "
+                  "systemctl daemon-reload"
+              )
+              broken = machine.fail("oligarchy-p2p-selftest")
+              assert "FAIL  declared_refuses_a_write" in broken, broken
+              assert "can rewrite what it publishes" in broken, broken
+              machine.succeed(
+                  "rm -rf /run/systemd/system/oligarchy-p2p-selftest.service.d && "
+                  "systemctl daemon-reload"
+              )
+              machine.succeed("chmod 0755 /var/lib/oligarchy/p2p/declared")
+              machine.succeed("oligarchy-p2p-selftest")
+
+              # 2. A corrupt declared narinfo.
+              hp = machine.succeed(
+                  "ls /var/lib/oligarchy/p2p/declared"
+              ).strip().removesuffix(".narinfo")
+              machine.succeed(f"cp /var/lib/oligarchy/p2p/declared/{hp}.narinfo /tmp/good")
+              machine.succeed(
+                  f"printf 'StorePath: /nix/store/{hp}-wrong\nNarHash: sha256:x\n' > "
+                  f"/var/lib/oligarchy/p2p/declared/{hp}.narinfo"
+              )
+              broken = machine.fail("oligarchy-p2p-selftest")
+              assert "FAIL  declared_narinfos_are_coherent" in broken, broken
+              machine.succeed(f"cp /tmp/good /var/lib/oligarchy/p2p/declared/{hp}.narinfo")
+              machine.succeed("oligarchy-p2p-selftest")
+
+              # 3. Publishing nothing. "servePackages is set and declared/ is
+              #    empty" is the exact state that looks healthy from every other
+              #    angle — it must be a FAIL, not a vacuous pass over zero
+              #    entries.
+              machine.succeed(f"mv /var/lib/oligarchy/p2p/declared/{hp}.narinfo /tmp/moved")
+              broken = machine.fail("oligarchy-p2p-selftest")
+              assert "FAIL  declared_narinfos_are_coherent" in broken, broken
+              assert "EMPTY" in broken, broken
+              machine.succeed(f"mv /tmp/moved /var/lib/oligarchy/p2p/declared/{hp}.narinfo")
+
+              # 4. The daemon is down. `status` reported cheerfully in this
+              #    state; the selftest must not.
+              machine.succeed("systemctl stop oligarchy-p2pd")
+              broken = machine.fail("oligarchy-p2p-selftest")
+              assert "FAIL  daemon_answers" in broken, broken
+              machine.succeed("systemctl start oligarchy-p2pd")
+              machine.wait_for_unit("oligarchy-p2pd.service")
+
+              # 5. `trusted=` on a substituter — the one change that would undo
+              #    the whole subsystem, silently: Nix accepts unsigned paths,
+              #    exit 0, no warning.
+              #
+              #    Bind-mounted rather than edited: /etc/nix/nix.conf is a store
+              #    symlink and read-only. The selftest runs in a fresh mount
+              #    namespace per invocation, so it inherits this.
+              machine.succeed(
+                  "cat /etc/nix/nix.conf > /tmp/evil.conf && "
+                  "printf 'substituters = http://127.0.0.1:5111?trusted=1\n' >> /tmp/evil.conf && "
+                  "mount --bind /tmp/evil.conf /etc/nix/nix.conf"
+              )
+              broken = machine.fail("oligarchy-p2p-selftest")
+              assert "FAIL  no_trusted_in_nix_conf" in broken, broken
+              assert "trusted=" in broken, broken
+              machine.succeed("umount /etc/nix/nix.conf")
+              machine.succeed("oligarchy-p2p-selftest")
+
+              # ── status also tells the truth about a dead daemon now ───────
+              machine.succeed("systemctl stop oligarchy-p2pd")
+              st = machine.succeed("oligarchy-p2p-status")
+              assert "NOT RESPONDING" in st, st
+              machine.succeed("systemctl start oligarchy-p2pd")
+              machine.wait_for_unit("oligarchy-p2pd.service")
+              st = machine.succeed("oligarchy-p2p-status")
+              assert "(up)" in st, st
+              assert "1 package(s) published" in st, st
             '';
           };
 

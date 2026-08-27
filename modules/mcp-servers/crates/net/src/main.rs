@@ -49,6 +49,17 @@ impl Server {
             .unwrap_or_else(|e| format!("[error] {e}"))
     }
 
+    #[tool(description = "Oligarchy P2P substituter status: whether the local \
+                          adapter is answering, its upstreams, transport, peer \
+                          reachability, cache usage, how many packages this \
+                          host publishes to peers, and how peer keys are \
+                          scoped. Read-only.")]
+    fn p2p_status(&self) -> String {
+        audit::tool(ASPECT, "p2p_status", "");
+        runner::run(ASPECT, "oligarchy-p2pd", &["status"], QUICK_TIMEOUT)
+            .unwrap_or_else(|e| format!("[error] {e}"))
+    }
+
     #[tool(description = "DeMoD IP blocker service status.")]
     fn ip_blocker_status(&self) -> String {
         audit::tool(ASPECT, "ip_blocker_status", "");

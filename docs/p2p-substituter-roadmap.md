@@ -1,6 +1,6 @@
 # P2P Substituter — Design & Living Roadmap
 
-> **Status:** LIVING DOCUMENT. Stages 1-5 are landed and all seven gates pass.
+> **Status:** LIVING DOCUMENT. Stages 1-6 are landed and all nine gates pass.
 > Stage 1's narinfo posture was WRONG and stage 2 corrects it — read Known gap 1
 > and §3.2 before changing anything about the URL or the compression. The module
 > is wired on the workstation host and **disabled by default**; §6 "Current
@@ -63,14 +63,31 @@ plainly:
   reaches the same conclusion from the other direction: *"signing is an
   authoring step, not a runtime one."*
 
-So the accurate form of the rule after stage 5:
+**Stage 6 bounds the second bullet, which is the only part that was ever
+fixable here.** Nix cannot scope a key — but every narinfo a peer supplies
+passes through this adapter, so the adapter can. `acceptFromPeers` names the
+packages a peer key may speak for; anything else it signs is refused before Nix
+sees it, and the option is **mandatory** whenever a peer key is trusted. So the
+accurate form of the rule after stage 6:
 
-> **P2P still provides availability. Trust comes from keys, and adding a key is
-> an operator decision made in the flake — nothing the transport can do.**
+> **P2P still provides availability. Trust comes from keys, adding a key is an
+> operator decision made in the flake, and what that key may speak for is
+> bounded by name in the adapter — because Nix has no way to bound it.**
 
 A peer cannot cause its key to be trusted; no module derives a key from a peer
-address; and both options default to `[ ]`, where every sentence in the
-paragraph above this one still holds exactly as written.
+address; and every option involved defaults to `[ ]`, where every sentence in
+the paragraphs above still holds exactly as written.
+
+**What stage 6 does not fix, stated plainly.** The scoping is a property of this
+code path, not of the machine. The key remains in `trusted-public-keys`
+globally, so an operator who adds a peer directly to `substituters`, or runs
+`nix copy --from`, or uses a remote builder, is outside it. And the check now
+lives in `oligarchy-p2pd` — the process this document calls hostile — so a
+daemon compromise is a scope bypass in a way it was not before stage 5. The
+architecturally clean version is the split already used for signing: a
+privileged component re-signs in-scope paths with a key the consumer trusts, and
+the peer key never enters `trusted-public-keys` at all. That is a larger change;
+it is recorded, not built.
 
 ## 3. Verified facts about the binary cache protocol
 
@@ -276,8 +293,9 @@ One stage per commit. Each stage's gate must be green before the next starts.
 | 3 | `ArtifactTransport` + `LanTransport` over the peer surface, static peers | `nix build .#p2p-two-node` — the repo's first multi-node test | **DONE** (mDNS deferred, gap 20) |
 | 4 | `BitTorrentTransport` (librqbit, `initial_peers`, `disable_trackers`) | `nix build .#p2p-swarm` and `.#p2p-no-peer-fallback` | **DONE** |
 | 5 | `servePackages` — a host seeds what it **built**, signed by its own key | `nix build .#p2p-local-signing` — a consumer accepts it only because the key is trusted, and refuses it when it is not | **DONE** |
-| 6 | BEP44-shaped signed index records + the OCI index container | tampered record refused; unsigned record refused | not started |
-| 7 | Limits, eviction, `oligarchy-p2p-status`/`-test`, MCP `net` wiring | `.#mcp-self-audit` still green, daemon absent from `.mcp.json` | not started |
+| 6 | `acceptFromPeers` — bound what a peer key may vouch for; `selftest`; MCP `net` wiring | `nix build .#p2p-peer-scope` and `.#p2p-selftest` — the second breaks each guarantee in turn and asserts it is noticed | **DONE** |
+| 7 | BEP44-shaped signed index records + the OCI index container | tampered record refused; unsigned record refused | not started |
+| 8 | Limits and eviction under pressure, bandwidth caps | cache stays inside its budget under sustained load | not started |
 
 ### Current wiring (stage 3)
 
@@ -403,6 +421,94 @@ custom.p2pCache.trustedPublicKeys = [ "nixos-p2p-1:kBnLtBEr..." ];
 
   ```console
   nix build .#p2p-local-signing   # the first gate where a peer MINTS metadata
+  ```
+
+### Current wiring (stage 6)
+
+Two things, both about the same problem from opposite ends: stage 5 created a
+trust that could not be bounded, and this subsystem's failures could not be
+seen.
+
+**`acceptFromPeers` bounds what a peer key may vouch for.**
+
+```nix
+custom.p2pCache = {
+  trustedPublicKeys = [ "nixos-p2p-1:kBn..." ];
+  acceptFromPeers   = [ "my-thing" ];      # mandatory; "*" is the opt-out
+};
+```
+
+- **The rule is "does any `Sig:` name a peer key", not "does any `Sig:` name a
+  key outside the peer set".** The second is the intuitive formulation and it
+  fails open: signatures are attacker-supplied text, so appending a junk
+  `Sig: cache.nixos.org-1:AAAA` makes the narinfo look upstream-vouched, while
+  Nix — which *counts* verifying signatures rather than requiring all of them —
+  still accepts the path on the strength of the real peer signature. Telling a
+  forged signature from a real one means doing Ed25519, which this crate
+  deliberately does not do. Asking whether a peer key is involved needs no
+  verification and cannot be gamed by adding signatures.
+  `appending_a_junk_upstream_signature_does_not_lift_the_scope` is the test.
+- **A version suffix must start with a digit.** `starts_with(entry + "-")` is
+  not a version test: it lets `glibc` reach `glibc-locales` and `linux` reach
+  `linux-firmware`, both real nixpkgs paths in every system closure. Nix splits
+  pname from version at the first `-` followed by a non-letter, and so does
+  this. The cost is a deliberate false negative on an unversioned package's
+  extra outputs, which errs closed.
+- **The check is in the transport loop, not only in the caller.**
+  `LanTransport::narinfo` returns the first parseable answer and stops. Refusing
+  afterwards would let one hostile peer answer every query out-of-scope while
+  the honest peers further down the list were never asked — a remotely
+  triggerable denial of service against any path it chose.
+- **Four enforcement points, because one is not enough.** The transport loop
+  (above); `AppState::resolve`'s peer arm, before persisting or memoising; its
+  disk arm, because an entry that reached `narinfo/` is durable and would
+  otherwise be served forever without consulting the transport again; and
+  `peer.rs`, so a lax or poisoned host does not relay onward and become a second
+  hop into hosts that refused it directly. `declared/` is exempt everywhere —
+  those are narinfos this host minted for its own operator's packages.
+- Refusals are logged loudly for the first 16 and at `debug` after. A refusal is
+  remotely triggerable and Nix mass-queries closures of thousands of paths, so
+  one `warn` per path is journal amplification an attacker controls.
+
+**`selftest` makes the invisible failures visible.**
+
+```console
+$ oligarchy-p2p-selftest
+  PASS  bind_is_loopback                one is 127.0.0.1
+  PASS  no_trusted_in_nix_conf          2 file(s) clean
+  PASS  daemon_answers                  http://127.0.0.1:5111 serving /nix/store
+  PASS  declared_refuses_a_write        refused as uid 992 (permission denied)
+  PASS  declared_narinfos_are_coherent  1 published, all coherent
+  PASS  round_trip                      xk1n…: 232 bytes, sha256:0k8c…
+  PASS  peer_scope_is_bounded           1 peer key(s), scoped to: my-thing
+  SKIP  peers_reachable                 no peers configured
+```
+
+- It runs as a **unit**, not a bare command, and shares `sandbox` verbatim with
+  the daemon. `declared_refuses_a_write` attempts a real write and expects it to
+  fail; that only means anything inside the daemon's confinement as the daemon's
+  user, and from a root shell it would succeed and report a false PASS — so
+  there it reports a loud SKIP instead.
+- Two rules borrowed from `mcp_self_audit`: **a check that inspected nothing is
+  a FAIL**, and **a skipped check is reported, never omitted**. "Zero declared
+  narinfos, all valid" is the exact sentence that hid a real bug in stage 5.
+- `round_trip` is the one that ties the parts together: it asks our own HTTP
+  surface for a narinfo, fetches the NAR it names, and hashes it.
+
+**`status` was lying.** It never contacted the daemon — every line was config
+echo, so it printed a cheerful report on a host where the daemon was dead. It
+now probes, reports the declared tier and the peer scope, and — a live bug —
+uses `Cache::open` instead of `Cache::new`, which swept `tmp/` and could delete
+a slot a concurrent fetch was writing.
+
+**MCP:** `oligarchy-p2pd` was already on the `net` allowlist, so this is one
+`p2p_status` tool. `selftest` is deliberately not exposed: it writes.
+
+- Gates:
+
+  ```console
+  nix build .#p2p-peer-scope   # same peer, same key — only the name differs
+  nix build .#p2p-selftest     # and it FAILS when each guarantee is broken
   ```
 
 ### Known gaps, by the stage that will hit them
@@ -623,6 +729,56 @@ custom.p2pCache.trustedPublicKeys = [ "nixos-p2p-1:kBnLtBEr..." ];
     builds. Warned about at eval time, scoped to `peer.openFirewall`, and still
     unauthenticated.
 
+
+**Stage 6 — bounding a peer key, and seeing failures**
+
+37. **Name scoping cannot express "the closure this peer published".** A
+    seeder publishes only *unsigned* paths — the ones it built — so for a
+    single custom package that is usually one or two names. But a large local
+    rebuild (a patched kernel, a toolchain bump) produces many locally-built
+    paths with names the consumer cannot predict, and there is no way to write
+    "everything in that closure". The honest options are then a long list or
+    `"*"`, which is the unscoped behaviour the feature exists to avoid. The
+    seeder already computes `pkgs.closureInfo`; publishing that list on the peer
+    surface and letting a consumer pin it would fix this — but a peer defining
+    its own scope is circular unless the list is pinned in the consumer's flake.
+    Recorded, not designed.
+38. **The check lives in the process this document calls hostile.** Before
+    stage 5 a daemon compromise bought an attacker nothing: Nix checked
+    signatures against keys the daemon could not influence. Now the daemon
+    holds the only bound on what a trusted peer key may vouch for, so a daemon
+    RCE *is* the scope bypass. §2 says this; it is repeated here because it is
+    the kind of property that gets forgotten when someone moves the check "for
+    tidiness". The clean fix is the signing split: never put the peer key in
+    `trusted-public-keys`, and have a privileged component re-sign in-scope
+    paths with a key the consumer already trusts.
+39. **The name in a narinfo is supplied by the peer.** `in_scope` reads
+    `StorePath`, and the transport binds only its *hash part* to the request.
+    So a peer answering a query for glibc's hash part can claim the name
+    `my-thing` and pass the scope check. Nix catches the substitution itself —
+    `goodStorePath` requires the name to match what was asked for — but the
+    adapter will have cached and (before the `peer.rs` gate) relayed it, and the
+    path is unavailable through this adapter until the entry is dropped. The
+    scope is a bound on what a peer may *claim*, and only Nix binds the claim to
+    reality.
+40. **Nix's own 30-day positive narinfo cache outlives a tightening.** A path
+    accepted while the scope was `"*"` — or before stage 6 — is cached by Nix,
+    outside this daemon, for `narinfo-cache-positive-ttl`. Narrowing
+    `acceptFromPeers` does not evict it; only
+    `rm -f /root/.cache/nix/binary-cache-v*.sqlite*` does, which is why the
+    gates all do that by hand.
+41. **A refused peer can still consume cache budget.** Dropping a poisoned
+    `narinfo/` entry leaves any `nar/` bytes fetched for it unreferenced until
+    the size sweep reclaims them.
+42. **No revocation without a rebuild.** Removing a peer key or narrowing a
+    scope requires `nixos-rebuild`. For a known-compromised seeder there is no
+    faster lever than stopping the unit.
+43. **`selftest` cannot check what it was told to publish.** It runs as the
+    daemon user, which has no Nix database access by design, so it can verify
+    that `declared/` is coherent but not that it matches `servePackages`. An
+    empty tier is caught; a tier missing one of three packages is not. Closing
+    that means a check in the seed unit's context.
+
 ### Writing the repo's first multi-node VM test
 
 Three things cost a cycle each, and all three are properties of the test
@@ -814,3 +970,70 @@ design, so any gate aimed at one of them has to remove the other two.
   asserts the adapter *served* the bytes during the failed substitution: without
   that, "refused because untrusted" is indistinguishable from "refused because
   unavailable", which is precisely how a gate here went vacuous before.
+- **Stage 6** — bounding what a peer key may vouch for, and giving the daemon a
+  way to fail out loud. 133 unit tests, two new gates.
+
+  Stage 5 shipped a trust it could not bound and documented the problem instead
+  of fixing it. `trustedPublicKeys` put a key in `trusted-public-keys`, Nix
+  cannot scope a key to a set of store paths, and the adapter sits at
+  `Priority: 30` — so a compromised seeder could mint glibc and win the race.
+  The fix is the observation that **every narinfo a peer supplies passes through
+  this adapter**, so what Nix cannot bound, this can.
+
+  The rule took two attempts and the first was wrong in the failing-open
+  direction. "Scope it unless some signature names a key outside the peer set"
+  treats a `cache.nixos.org-1` line as evidence upstream vouched for the path —
+  but `Sig:` is attacker-supplied text and `checkSignatures` *counts* verifying
+  signatures rather than requiring all of them, so one junk line disables the
+  check while the real peer signature still gets the path registered. Telling
+  forged from real means doing Ed25519, which this crate deliberately does not
+  do. The shipped rule asks whether a peer key is involved at all: no
+  verification needed, and adding signatures can only make a narinfo *more*
+  scoped. The bypass is kept as a test.
+
+  The name match took two attempts as well, and the second was caught by an
+  assertion I had written before the code. `starts_with(entry + "-")` is not a
+  version test: `glibc` reaches `glibc-locales`, `linux` reaches
+  `linux-firmware`, and both are in every system closure. Nix splits pname from
+  version at the first `-` followed by a non-letter; so does this now.
+
+  An adversarial review of the design found three real gaps beyond those, all
+  fixed here:
+  * **One hostile peer could deny any path.** `LanTransport::narinfo` returns
+    the first parseable answer and stops, so refusing in the caller meant the
+    honest peers further down the list were never asked. The check moved into
+    the loop.
+  * **A lax host became a laundering relay.** All four `peer.rs` routes answer
+    from `Cache::get_narinfo` with no scope check, so a host running `"*"` — or
+    carrying an entry from before a tightening — would serve refused metadata
+    onward to hosts that had refused it directly. One gate now covers all four.
+  * **Refusals are remotely triggerable journal amplification.** Nix
+    mass-queries closures; a hostile peer answering every request out-of-scope
+    got one `warn` per path. Loud for the first 16, `debug` after.
+
+  The observability half is the same lesson from the other side. Three stages
+  running, the bug was something a passing gate could not distinguish from
+  correct behaviour, and I had been treating that as a testing problem. It is
+  not: `status` never contacted the daemon at all — every line was config echo,
+  so it printed a cheerful report on a host where the daemon was dead. It also
+  used `Cache::new`, which sweeps `tmp/`, so a routine status call could delete
+  a slot a concurrent fetch was writing; `check` had been fixed for that and
+  `status` was missed.
+
+  `selftest` follows `plugind selftest` and does not report configuration — it
+  exercises things. It runs as a **unit** sharing the daemon's sandbox verbatim,
+  because `declared_refuses_a_write` proves `ReadOnlyPaths` by attempting a
+  write, which only means anything inside the confinement it is testing. Two
+  rules from `mcp_self_audit`: a check that inspected nothing is a FAIL, and a
+  skipped check is reported rather than omitted — "zero declared narinfos, all
+  valid" is the exact sentence that hid a stage-5 bug.
+
+  The gate's real content is that it **breaks each guarantee in turn** and
+  asserts the selftest notices: defeat the directory mode, defeat
+  `ReadOnlyPaths`, corrupt a declared narinfo, empty the tier, stop the daemon,
+  add `?trusted=1`. The first of those started as one leg and became two,
+  because the first attempt did not fail: `declared/` is root-owned `0755`, so
+  POSIX refuses the daemon user regardless of `ReadOnlyPaths`. Splitting it —
+  defeat the mode alone, then both — proves the read-only mount does
+  independent work, which is exactly the claim "configured" cannot support and
+  only "attempted" can.

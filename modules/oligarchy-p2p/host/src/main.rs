@@ -25,6 +25,8 @@ mod nixstore;
 mod peer;
 mod resolve;
 mod route;
+mod scope;
+mod selftest;
 mod torrent;
 mod transport;
 mod upstream;
@@ -64,6 +66,19 @@ enum Cmd {
     /// from the daemon: this needs a signing key and the Nix database, and
     /// `daemon` is allowed neither. Neither the key nor the path list is in
     /// the config file — they arrive here and nowhere else.
+    /// Assert, on this host, that the things this daemon claims are true.
+    ///
+    /// Not a config dump — `check` is that. This exercises the real surface and
+    /// reports what happened: whether anything is listening, whether the
+    /// declared tier is coherent, whether `ReadOnlyPaths` actually refuses a
+    /// write, and whether a published artifact round-trips through our own HTTP
+    /// and hashes to what its narinfo promised. Non-zero exit if any check
+    /// fails.
+    ///
+    /// Available in release builds on purpose, for the same reason
+    /// `plugind selftest` is: every failure this subsystem has shipped was one
+    /// a passing test could not distinguish from working.
+    Selftest,
     Seed {
         /// `${closureInfo}/store-paths` for `custom.p2pCache.servePackages`.
         #[arg(long)]
@@ -121,6 +136,15 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Status => status(&cfg),
+        Cmd::Selftest => {
+            let checks = selftest::run(&cfg);
+            let (report, ok) = selftest::render(&checks);
+            print!("{report}");
+            if !ok {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Cmd::Seed { store_paths, key_file } => seed(&cfg, &store_paths, &key_file),
         Cmd::Daemon => {
             let rt = tokio::runtime::Builder::new_multi_thread()
@@ -170,7 +194,21 @@ fn seed(cfg: &config::Config, store_paths: &std::path::Path, key_file: &PathBuf)
 
 fn status(cfg: &config::Config) -> Result<()> {
     let url = format!("http://{}:{}", cfg.bind_address, cfg.port);
-    println!("substituter : {url}");
+
+    // ASK the daemon rather than describing the config, because "is it up" is
+    // the question someone running this actually has. Printing the configured
+    // URL and stopping there produced a cheerful report on a host where the
+    // daemon was dead — every line was true and the machine was serving
+    // nothing.
+    let live = transport::lan::ureq_like::Client::new(Duration::from_secs(3))
+        .get_text(&format!("{url}/nix-cache-info"), Duration::from_secs(3), 64 * 1024);
+    match &live {
+        Ok(Some(body)) if body.contains(&format!("StoreDir: {}", cfg.store_dir)) => {
+            println!("substituter : {url}  (up)")
+        }
+        Ok(Some(_)) => println!("substituter : {url}  (ANSWERING, but not for {})", cfg.store_dir),
+        Ok(None) | Err(_) => println!("substituter : {url}  (NOT RESPONDING)"),
+    }
     println!("upstreams   : {}", cfg.upstreams.join(", "));
 
     // Built here rather than asked of the running daemon: `status` has to work
@@ -179,6 +217,7 @@ fn status(cfg: &config::Config) -> Result<()> {
         "lan" => Box::new(transport::lan::LanTransport::new(
             &cfg.peers,
             Duration::from_secs(cfg.peer_timeout_secs),
+            scope::PeerScope::new(&cfg.peer_public_keys, &cfg.accept_from_peers),
         )?),
         _ => Box::new(transport::NullTransport),
     };
@@ -194,9 +233,13 @@ fn status(cfg: &config::Config) -> Result<()> {
         Some(a) => format!("{a}:{}", cfg.peer_port),
         None => "disabled".to_string(),
     });
-    match cache::Cache::new(std::path::Path::new(&cfg.state_dir), 0)
-        .and_then(|c| c.total_bytes())
-    {
+    // `open`, NOT `new`. `new` sweeps tmp/, and the doc comment on it says only
+    // the daemon may do that — a sweep under a running fetch deletes the slot
+    // being written and turns a good fetch into a rename of a file that is no
+    // longer there. `check` was fixed for this and `status` was missed, so a
+    // routine status call could break a download in flight.
+    let cache = cache::Cache::open(std::path::Path::new(&cfg.state_dir), 0);
+    match cache.as_ref().map_err(|e| e.to_string()).and_then(|c| c.total_bytes().map_err(|e| e.to_string())) {
         Ok(b) => println!(
             "cache       : {:.1} MiB of {} used",
             b as f64 / (1024.0 * 1024.0),
@@ -204,9 +247,24 @@ fn status(cfg: &config::Config) -> Result<()> {
         ),
         Err(e) => println!("cache       : unreadable ({e})"),
     }
+    // The declared tier, because "publishing nothing" was invisible from here
+    // and visible only from `check`.
+    if cfg.serve_declared {
+        match cache.as_ref().map_err(|e| e.to_string()).and_then(|c| c.list_declared().map_err(|e| e.to_string())) {
+            Ok(v) if v.is_empty() => {
+                println!("declared    : NOTHING PUBLISHED — check oligarchy-p2p-seed.service")
+            }
+            Ok(v) => println!("declared    : {} package(s) published", v.len()),
+            Err(e) => println!("declared    : unreadable ({e})"),
+        }
+    }
+    let sc = scope::PeerScope::new(&cfg.peer_public_keys, &cfg.accept_from_peers);
+    if sc.is_active() {
+        println!("peer trust  : {}", sc.describe());
+    }
     println!();
-    println!("Verify from the outside with:");
-    println!("  curl -s {url}/nix-cache-info");
+    println!("Assert all of this rather than reading it:");
+    println!("  oligarchy-p2p-selftest");
     Ok(())
 }
 
@@ -266,12 +324,23 @@ async fn daemon(cfg: config::Config) -> Result<()> {
     let peer_deadline = Duration::from_secs(cfg.peer_timeout_secs);
     let mut swarm_port = None;
 
+    // Resolved once. `is_active()` is false on every host that has not trusted
+    // a peer key, which is all of stages 1-4, and the check is then inert.
+    let peer_scope = scope::PeerScope::new(&cfg.peer_public_keys, &cfg.accept_from_peers);
+    if peer_scope.is_active() {
+        tracing::info!(scope = %peer_scope.describe(), "peer keys are bounded");
+    }
+
     let transport: std::sync::Arc<dyn transport::ArtifactTransport> = match cfg.transport.as_str() {
-        "lan" => std::sync::Arc::new(transport::lan::LanTransport::new(&cfg.peers, peer_deadline)?),
+        "lan" => std::sync::Arc::new(transport::lan::LanTransport::new(
+            &cfg.peers,
+            peer_deadline,
+            peer_scope.clone(),
+        )?),
 
         "bittorrent" => {
             use std::num::NonZeroU32;
-            let lan = transport::lan::LanTransport::new(&cfg.peers, peer_deadline)?;
+            let lan = transport::lan::LanTransport::new(&cfg.peers, peer_deadline, peer_scope.clone())?;
             let scratch = state_dir.join("swarm");
 
             let opts = librqbit::SessionOptions {
@@ -325,6 +394,7 @@ async fn daemon(cfg: config::Config) -> Result<()> {
         transport.clone(),
         Duration::from_secs(cfg.peer_timeout_secs),
         swarm_port,
+        peer_scope,
     ));
 
     // Bind before announcing readiness, so `systemctl start` returning means a

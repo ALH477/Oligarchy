@@ -122,14 +122,39 @@ fn info(st: &AppState) -> Response {
     (StatusCode::OK, h, body).into_response()
 }
 
+/// The narinfo this host is willing to hand a peer, as text and parsed.
+///
+/// **One gate for all four routes.** Every route below answers from
+/// `Cache::get_narinfo`, and until this existed none of them consulted the
+/// scope. That made a host with a lax `acceptFromPeers` — or one carrying a
+/// poisoned entry from before a config was tightened — into a laundering relay:
+/// it would accept metadata a peer key vouched for out of scope and then serve
+/// it onward to the rest of the LAN as ordinary locally-held metadata, giving a
+/// hostile peer a second hop into hosts that had refused it directly.
+///
+/// `declared/` is exempt, and must be: those are narinfos THIS host minted and
+/// signed for the packages its own operator declared, and `get_narinfo` reads
+/// that tier first. The keys in `peer_scope` belong to other hosts.
+fn peer_readable(st: &AppState, hash_part: &str) -> Option<(String, crate::narinfo::NarInfo)> {
+    let text = st.artifacts.get_narinfo(hash_part)?;
+    let ni = crate::narinfo::NarInfo::parse(&text).ok()?;
+    if !st.artifacts.is_declared(hash_part) {
+        if let Err(r) = st.peer_scope.check(&ni) {
+            tracing::warn!(hash_part, store_path = ni.store_path(), "not relaying: {r}");
+            return None;
+        }
+    }
+    Some((text, ni))
+}
+
 /// Serve upstream's narinfo verbatim, but **only from what we already hold**.
 ///
 /// Rule 1: `AppState::resolve` would happily go upstream. A peer must not be
 /// able to drive that, so this reads the on-disk copy directly.
 async fn narinfo(st: &AppState, hash_part: &str) -> Response {
-    match st.artifacts.get_narinfo(hash_part) {
+    match peer_readable(st, hash_part) {
         None => StatusCode::NOT_FOUND.into_response(),
-        Some(text) => {
+        Some((text, _)) => {
             let mut h = HeaderMap::new();
             h.insert(
                 header::CONTENT_TYPE,
@@ -147,10 +172,7 @@ async fn narinfo(st: &AppState, hash_part: &str) -> Response {
 /// peer that says yes and then fails verification costs one retry, which is the
 /// designed-for case anyway.
 async fn have(st: &AppState, hash_part: &str, nar_hash: &str) -> Response {
-    let Some(text) = st.artifacts.get_narinfo(hash_part) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(ni) = crate::narinfo::NarInfo::parse(&text) else {
+    let Some((_text, ni)) = peer_readable(st, hash_part) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if ni.nar_hash().to_nix32() != nar_hash {
@@ -169,10 +191,7 @@ async fn have(st: &AppState, hash_part: &str, nar_hash: &str) -> Response {
 
 /// Hand over the canonical NAR — verified, and only from local sources.
 async fn nar(st: &AppState, hash_part: &str, nar_hash: &str, head_only: bool) -> Response {
-    let Some(text) = st.artifacts.get_narinfo(hash_part) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(ni) = crate::narinfo::NarInfo::parse(&text) else {
+    let Some((_text, ni)) = peer_readable(st, hash_part) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     // The requested digest must be the one this narinfo names. Otherwise a peer
@@ -221,10 +240,7 @@ async fn nar(st: &AppState, hash_part: &str, nar_hash: &str, head_only: bool) ->
 /// Hand over the canonical `.torrent`, built on demand from a verified local
 /// copy. Same rule as every other route here: local sources only.
 async fn torrent(st: &AppState, hash_part: &str, nar_hash: &str) -> Response {
-    let Some(text) = st.artifacts.get_narinfo(hash_part) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let Ok(ni) = crate::narinfo::NarInfo::parse(&text) else {
+    let Some((_text, ni)) = peer_readable(st, hash_part) else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if ni.nar_hash().to_nix32() != nar_hash {

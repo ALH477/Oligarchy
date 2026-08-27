@@ -66,6 +66,16 @@ pub struct Config {
     /// intentional rather than a misconfiguration, and that a narinfo resolved
     /// out of `declared/` has no upstream to fall through to.
     pub serve_declared: bool,
+
+    /// Public keys this host trusts *because they belong to peers*, verbatim
+    /// from `trustedPublicKeys`.
+    ///
+    /// Not used to verify anything — Nix does that. Used only to recognise
+    /// which signatures are a peer's, so `accept_from_peers` can bound what
+    /// they are allowed to vouch for.
+    pub peer_public_keys: Vec<String>,
+    /// The packages a peer key may speak for. See `scope.rs`.
+    pub accept_from_peers: Vec<String>,
 }
 
 impl Config {
@@ -125,6 +135,18 @@ impl Config {
         if self.store_dir.is_empty() {
             bail!("store_dir must be set");
         }
+        // Fail closed rather than open. The module asserts this too, but the
+        // two can drift and the consequence of drift is a peer key that
+        // vouches for every path on the machine.
+        if !self.peer_public_keys.is_empty() && self.accept_from_peers.is_empty() {
+            bail!(
+                "peer_public_keys is set but accept_from_peers is empty. Nix \
+                 cannot scope a key to a set of paths, so a trusted peer key \
+                 vouches for EVERY store path this host substitutes unless \
+                 this adapter bounds it. Name the packages, or \"*\" to accept \
+                 anything those keys sign."
+            );
+        }
         crate::cache::parse_size(&self.max_cache_size)?;
         if !matches!(self.transport.as_str(), "none" | "lan" | "bittorrent") {
             bail!(
@@ -156,6 +178,13 @@ impl Config {
     }
 
     /// Upstream base with any trailing slash removed, so joining is unambiguous.
+    /// A valid config for tests that need one. Kept beside `validate` so the
+    /// two cannot drift: anything this returns must pass.
+    #[cfg(test)]
+    pub fn sample() -> Self {
+        serde_json::from_value(tests::base()).expect("the sample config must be valid")
+    }
+
     pub fn upstream_bases(&self) -> Vec<&str> {
         self.upstreams.iter().map(|u| u.trim_end_matches('/')).collect()
     }
@@ -165,7 +194,7 @@ impl Config {
 mod tests {
     use super::*;
 
-    fn base() -> serde_json::Value {
+    pub(super) fn base() -> serde_json::Value {
         serde_json::json!({
             "bind_address": "127.0.0.1",
             "port": 5111,
@@ -186,7 +215,9 @@ mod tests {
             "min_artifact_size": "4M",
             "swarm_upload_bps": 0,
             "swarm_download_bps": 0,
-            "serve_declared": false
+            "serve_declared": false,
+            "peer_public_keys": [],
+            "accept_from_peers": []
         })
     }
 
@@ -285,6 +316,22 @@ mod tests {
         c["upstreams"] = serde_json::json!([]);
         c["serve_declared"] = serde_json::json!(true);
         load(c).expect("a pure seeder was refused");
+    }
+
+    #[test]
+    fn refuses_a_peer_key_with_no_scope() {
+        // The dangerous configuration must not be expressible by accident.
+        let mut c = base();
+        c["peer_public_keys"] = serde_json::json!(["nixos-p2p-1:AAAA=="]);
+        assert!(load(c).is_err(), "a peer key with unbounded scope was accepted");
+    }
+
+    #[test]
+    fn accepts_a_peer_key_with_a_scope() {
+        let mut c = base();
+        c["peer_public_keys"] = serde_json::json!(["nixos-p2p-1:AAAA=="]);
+        c["accept_from_peers"] = serde_json::json!(["my-thing"]);
+        load(c).expect("a scoped peer key was refused");
     }
 
     #[test]

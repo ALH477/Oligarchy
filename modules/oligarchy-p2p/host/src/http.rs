@@ -40,6 +40,9 @@ pub struct AppState {
     /// Advertised to peers in `/peer/v1/info` so they know where to dial for
     /// BitTorrent. `None` when no swarm is configured, which is the default.
     pub swarm_port: Option<u16>,
+    /// What a peer key is allowed to vouch for. Inert unless the operator
+    /// trusted one.
+    pub peer_scope: crate::scope::PeerScope,
     cache: Mutex<NarInfoCache>,
 }
 
@@ -85,6 +88,7 @@ impl AppState {
         transport: std::sync::Arc<dyn ArtifactTransport>,
         peer_timeout: Duration,
         swarm_port: Option<u16>,
+        peer_scope: crate::scope::PeerScope,
     ) -> Self {
         Self {
             upstream,
@@ -97,6 +101,7 @@ impl AppState {
             transport,
             peer_timeout,
             swarm_port,
+            peer_scope,
             cache: Mutex::new(NarInfoCache {
                 map: Default::default(),
                 // Short. A narinfo is immutable for a given store path, but a
@@ -125,6 +130,29 @@ impl AppState {
         if let Some(text) = self.artifacts.get_narinfo(hash_part) {
             match NarInfo::parse(&text) {
                 Ok(ni) => {
+                    // Re-check the scope on the way OUT, not only on the way
+                    // in. A narinfo that reached `narinfo/` is durable — this
+                    // arm serves it on every later request without consulting
+                    // the transport again — so a peer-arm check alone would
+                    // leave a poisoned entry answering forever. Anything
+                    // refused here is deleted, not merely skipped.
+                    //
+                    // `declared/` is exempt: those are narinfos THIS host
+                    // minted and signed, and `get_narinfo` reads that tier
+                    // first. Scoping our own packages would be nonsense, and
+                    // the keys in `peer_scope` are other hosts' anyway.
+                    if !self.artifacts.is_declared(hash_part) {
+                        if let Err(r) = self.peer_scope.check(&ni) {
+                            tracing::warn!(
+                                hash_part,
+                                store_path = ni.store_path(),
+                                "REFUSED a cached narinfo and dropped it: {r}"
+                            );
+                            let _ = self.artifacts.remove_narinfo(hash_part);
+                            self.cache.lock().unwrap().put(hash_part.to_string(), None);
+                            return Ok(None);
+                        }
+                    }
                     let found = Some((String::new(), ni));
                     self.cache.lock().unwrap().put(hash_part.to_string(), found.clone());
                     return Ok(found);
@@ -149,6 +177,20 @@ impl AppState {
                 tokio::task::spawn_blocking(move || t.narinfo(&hp, d)).await.map(|r| r)
             {
                 if let Ok(ni) = NarInfo::parse(&text) {
+                    // Before persisting and before memoising. A peer key that
+                    // vouches for a path outside its granted scope is the
+                    // whole attack: Nix cannot bound a key to a path set, the
+                    // adapter is Priority 30 and asked before cache.nixos.org,
+                    // so an unscoped compromised seeder wins every race. Refuse
+                    // and fall through to upstream, which has the real one.
+                    if let Err(r) = self.peer_scope.check(&ni) {
+                        tracing::warn!(
+                            hash_part,
+                            store_path = ni.store_path(),
+                            "REFUSED a peer narinfo: {r}"
+                        );
+                        return self.resolve_upstream(hash_part).await;
+                    }
                     tracing::info!(hash_part, "narinfo from a peer");
                     if let Err(e) = self.artifacts.put_narinfo(hash_part, &text) {
                         tracing::warn!(hash_part, error = %e, "could not persist peer narinfo");
@@ -160,6 +202,13 @@ impl AppState {
             }
         }
 
+        self.resolve_upstream(hash_part).await
+    }
+
+    /// The last tier, split out so a refused peer narinfo falls through to it
+    /// rather than 404ing. A scope refusal means "not from that peer", not
+    /// "nowhere" — and upstream is precisely where the genuine article lives.
+    async fn resolve_upstream(&self, hash_part: &str) -> anyhow::Result<Option<(String, NarInfo)>> {
         let rel = format!("{hash_part}.narinfo");
         let found = match self.upstream.get_text(&rel, self.narinfo_timeout).await? {
             None => None,

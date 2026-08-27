@@ -165,7 +165,6 @@ impl Cache {
     // daemon: minting requires a signing key and the Nix database, and the
     // daemon is deliberately allowed neither.
 
-    #[cfg(test)]
     pub fn declared_dir(&self) -> &Path {
         &self.declared_dir
     }
@@ -227,6 +226,17 @@ impl Cache {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e).with_context(|| format!("unpublishing {hash_part}")),
+        }
+    }
+
+    /// Drop a fetched narinfo. Used when one is found to be unservable after
+    /// the fact — a scope refusal on the read path — because leaving it there
+    /// means answering with it again on the next request.
+    pub fn remove_narinfo(&self, hash_part: &str) -> Result<()> {
+        match fs::remove_file(self.narinfo_path(hash_part)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e).with_context(|| format!("dropping narinfo {hash_part}")),
         }
     }
 
