@@ -202,6 +202,33 @@ impl Cache {
         Ok(())
     }
 
+    /// What the last `seed` run said it published.
+    ///
+    /// `selftest` runs as the daemon user, which has no Nix database access by
+    /// design, so it can check that `declared/` is internally coherent but not
+    /// that it matches `servePackages` — it does not know what it was told to
+    /// publish. An empty tier is caught; a tier missing one of three packages
+    /// was not. The seed run records its own count here so drift after the fact
+    /// becomes visible.
+    ///
+    /// A dotfile, so `list_declared` skips it.
+    pub fn expected_declared(&self) -> Option<usize> {
+        std::fs::read_to_string(self.declared_dir.join(".expected"))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
+
+    pub fn set_expected_declared(&self, n: usize) -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let f = self.declared_dir.join(".expected");
+        std::fs::write(&f, format!("{n}\n"))
+            .with_context(|| format!("writing {}", f.display()))?;
+        std::fs::set_permissions(&f, fs::Permissions::from_mode(0o644))?;
+        Ok(())
+    }
+
     /// The hash parts currently published.
     pub fn list_declared(&self) -> Result<Vec<String>> {
         let mut out = Vec::new();
@@ -229,15 +256,35 @@ impl Cache {
         }
     }
 
-    /// Drop a fetched narinfo. Used when one is found to be unservable after
-    /// the fact — a scope refusal on the read path — because leaving it there
-    /// means answering with it again on the next request.
+    /// Drop a fetched narinfo, and any artifact only it referred to.
+    ///
+    /// Used when a narinfo turns out to be unservable after the fact — a scope
+    /// refusal on the read path — because leaving it there means answering with
+    /// it again on the next request.
+    ///
+    /// The NAR goes too. It is reachable only through a narinfo (the artifact
+    /// tier is keyed by `NarHash` and carries no store path of its own), so
+    /// dropping the metadata and keeping the bytes leaves them consuming the
+    /// cache budget until the size sweep happens to reclaim them — which lets a
+    /// peer whose metadata we refused still cost us disk.
     pub fn remove_narinfo(&self, hash_part: &str) -> Result<()> {
+        // Read the digest out before unlinking; afterwards there is no way to
+        // learn which artifact this named.
+        let orphan = self
+            .get_narinfo(hash_part)
+            .and_then(|t| crate::narinfo::NarInfo::parse(&t).ok())
+            .map(|ni| self.path_for(&ni.nar_hash()));
         match fs::remove_file(self.narinfo_path(hash_part)) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e).with_context(|| format!("dropping narinfo {hash_part}")),
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| format!("dropping narinfo {hash_part}")),
         }
+        if let Some(nar) = orphan {
+            // Best effort: a NAR another narinfo still refers to would be
+            // re-fetched, and failing here must not stop the refusal.
+            let _ = fs::remove_file(nar);
+        }
+        Ok(())
     }
 
     pub fn path_for(&self, nar_hash: &Sha256Digest) -> PathBuf {
@@ -413,6 +460,33 @@ mod tests {
         for bad in ["", "G", "twenty", "1.5G", "-1", "99999999999999999999T"] {
             assert!(parse_size(bad).is_err(), "accepted {bad:?}");
         }
+    }
+
+    #[test]
+    fn dropping_a_narinfo_takes_its_artifact_with_it() {
+        // A NAR is reachable only through a narinfo — the artifact tier is
+        // keyed by NarHash and carries no store path — so keeping the bytes
+        // after refusing the metadata lets a peer we refused still cost us
+        // disk until the size sweep happens to notice.
+        let d = tempfile::tempdir().unwrap();
+        let c = Cache::new(d.path(), 1 << 30).unwrap();
+        let hp = "18bbdvag5v2f3d4y37pdbkzvh7s71cw4";
+        let nh = "0k8cwb9i02mp6zi35ip898zwnd16xj89mbipw1fvrklpd9qmm7xv";
+        c.put_narinfo(
+            hp,
+            &format!(
+                "StorePath: /nix/store/{hp}-thing\nURL: nar/{hp}/{nh}.nar\n\
+                 Compression: none\nNarHash: sha256:{nh}\nNarSize: 3\nReferences: \n"
+            ),
+        )
+        .unwrap();
+        let digest = Sha256Digest::from_nix32(nh).unwrap();
+        fs::write(c.path_for(&digest), b"abc").unwrap();
+        assert!(c.get(&digest, 3).is_some());
+
+        c.remove_narinfo(hp).unwrap();
+        assert!(c.get_narinfo(hp).is_none());
+        assert!(c.get(&digest, 3).is_none(), "the artifact outlived its metadata");
     }
 
     #[test]

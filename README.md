@@ -104,6 +104,7 @@ The Oligarchy endures.
 | Host impact                      | Zero. Crush Doom Eternal at 300+ FPS while the DSP resurrects 40× per second            |
 | AI Stack                         | Ollama + ROCm / CUDA / CPU (whichever silicon you conscript), `ai-stack` CLI, presets  |
 | Plugin Runtime                   | Tiered sandboxed plugins — wasm / native+lua / microVM, one ABI, **per-plugin** W^X. The FX Bazaar's foundation, and it is built |
+| P2P Substituter                  | Nix fetches build artifacts from your own machines over the LAN — no fork, no patch, and **no new trust**: peers supply bytes, Nix still checks every signature. Off by default |
 | Agent Surface                    | Local **read-only** MCP (the insecure OpenClaw gateway was executed); Blipply voice assistant consumes it over stdio |
 | Networking Fabric                | DeMoD Compute Fabric (DCF) — community node, identity service, tray controller        |
 | Distribution                     | Everything forged from pinned flakes — no GitHub chaos, only victory                    |
@@ -266,6 +267,7 @@ Every control is a declarative NixOS option, default-off unless noted. See [`doc
 | Secure Boot | `custom.secureBoot.enable` | off | lanzaboote signed chain + optional TPM2 LUKS |
 | Secrets | `custom.secrets` (sops-nix) | **on** | Age key lives at `/var/lib/sops-nix/key.txt` (never in-store); encrypted `*.enc.env` only |
 | Plugin runtime W^X | `custom.plugins` | off | Every plugin is confined by a tier it declares, and `MemoryDenyWriteExecute` is decided **per plugin** rather than once for the machine — so the one effect that genuinely needs a JIT gets W+X and nothing else inherits it. `jit = "self"` outside a microVM is refused six ways (anonymous `PROT_EXEC`, `memfd`, `ptrace`, `userfaultfd`, plain-file dual mapping, `mprotect`). Install is signed-only and **nobody is in `nix.settings.trusted-users`** — that is root-equivalent, and the whole point was not to need it. Five KVM-backed build gates prove it on a booted kernel, not on paper |
+| P2P substituter trust | `custom.p2pCache` | off | Nix fetches artifacts from your own machines without a fork, a patch, or **any new trust**: the daemon is unprivileged, holds no key, cannot write the store, and every path is signature- and hash-checked by `nix-daemon` afterwards. `?trusted=1` — which makes Nix accept unsigned paths *silently*, exit 0, no warning — is refused in three places. A host may also seed what it **built**, which needs a signing key; that key is read by a separate root oneshot and never by the network-facing daemon. And because Nix cannot scope a key to a set of paths, `acceptFromPeers` bounds what a peer key may vouch for — mandatory whenever one is trusted. Nine KVM-backed gates, one of which breaks each guarantee in turn to prove the checks can fail |
 | Steam/game sandbox | `steam-noswap.slice` + `systemd-run` launch wrapper | **on** | `MemorySwapMax=0` isolates games from swap/zram; `NoNewPrivileges`, `ProtectHome`/`Hostname`/`Clock`/`Kernel*`/`ControlGroups`, `RestrictSUIDSGID`, `LockPersonality` shrink blast radius. Excludes anything that breaks Proton/Wine (namespaces, W+X memory) or GameMode's realtime scheduling — see `docs/security-hardening.md` Phase 7 |
 
 `oligarchy-security status` (also `oligarchy-ctl status`, the DCF tray, and the MCP `security_status` tool) reports live posture.
@@ -304,10 +306,24 @@ Every control is a declarative NixOS option, default-off unless noted. See [`doc
    ```bash
    nix build .#malwareScan            # YARA-sweep the entire system closure
    nix build .#mcp-self-audit         # prove the agent surface cannot open a socket
+
+   # The plugin runtime — ask the kernel, not the documentation
    nix build .#plugins-wx-enforcement # boot a kernel; prove the W^X split holds
+   nix build .#plugins-policy-refusal # prove policy refuses at INSTALL, not at load
    nix build .#plugins-signed-install # prove an unsigned plugin cannot be installed
-   nix build .#plugins-tier1-runtime  # run a real plugin; ask the kernel, not the docs
+   nix build .#plugins-tier1-runtime  # run a real plugin, probe its sandbox from inside
    nix build .#plugins-tier2-runtime  # needs *nested* KVM
+
+   # The P2P substituter — nine gates, because peers are not trusted
+   nix build .#p2p-substituter-protocol # a real substitution, end to end
+   nix build .#p2p-signature-refusal    # prove the adapter never becomes a trust authority
+   nix build .#p2p-artifact-cache       # the cache is real, verified, and used
+   nix build .#p2p-two-node             # a host whose ONLY source is a peer gets the path
+   nix build .#p2p-swarm                # artifacts move over BitTorrent; small ones stay out
+   nix build .#p2p-no-peer-fallback     # no peers, and the build still works
+   nix build .#p2p-local-signing        # seed what this host BUILT; refused without the key
+   nix build .#p2p-peer-scope           # a peer key vouches only for the packages you named
+   nix build .#p2p-selftest             # the daemon's own assertions — AND that each can fail
    ```
 
 ## State Sanctioned Usage – Rule Your Domain

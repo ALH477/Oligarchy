@@ -179,9 +179,15 @@ passes through it:
 ```nix
 custom.p2pCache = {
   trustedPublicKeys = [ "nixos-p2p-1:kBn..." ];
-  acceptFromPeers   = [ "my-thing" ];    # mandatory; [ "*" ] is the opt-out
+  acceptFromPeers   = [ pkgs.my-thing ];  # mandatory; [ "*" ] is the opt-out
 };
 ```
+
+**Prefer a package to a name.** `pkgs.my-thing` renders to its exact store path
+at evaluation time — no build required — so two machines on the same pinned
+flake agree exactly. A bare name like `"my-thing"` also works and survives
+version bumps, but it is matched against a name the *peer* supplied, so it
+bounds what a peer may **claim**; a path entry does not have that weakness.
 
 Three things about the implementation are load-bearing.
 
@@ -214,10 +220,19 @@ become a second hop into hosts that refused it directly.
 
 What this does **not** cover: the key stays in `trusted-public-keys` globally,
 so anything bypassing the adapter — a peer added directly to `substituters`, a
-`nix copy --from`, a remote builder — is unscoped. And the check now runs inside
-`oligarchy-p2pd`, which this design treats as hostile, so a daemon compromise is
-a scope bypass in a way it was not before. The clean version is the split
-already used for signing; it is recorded as a gap, not built.
+`nix copy --from`, a remote builder — is unscoped.
+
+The check also runs inside `oligarchy-p2pd`, which this design treats as
+hostile. That costs less than it sounds: **Nix verifies signatures, it does not
+trust key names.** Corrupt a `Sig:` line's base64 while leaving
+`cache.nixos.org-1:` in front and you get `error: signature is not valid`. A
+compromised daemon holds no trusted private key, so it can serve only what is
+genuinely signed — daemon RCE buys denial of service and request visibility, not
+forgery. The scope's placement matters only against an attacker holding *both* a
+trusted peer key and execution here, which is two compromises. The clean version
+— re-sign in-scope paths with a key the consumer already trusts, so the peer key
+never enters `trusted-public-keys` — is recorded as a gap and deliberately not
+built.
 
 ## Proving it, rather than reading it
 

@@ -39,16 +39,32 @@
 //! does not match the one it asked for, so this is a bound on what a peer may
 //! *claim*, and only Nix binds the claim to reality.
 //!
-//! **This check runs in a process the design calls hostile.** Before this
-//! existed, compromising `oligarchy-p2pd` bought an attacker nothing: Nix
-//! checked signatures against keys the daemon could not influence. Now the
-//! daemon holds the only bound on what a trusted peer key may vouch for, so a
-//! daemon compromise is a scope bypass. The architecturally clean version is
-//! the split already used for signing — never put the peer key in
+//! **This check runs in a process the design calls hostile — but that matters
+//! less than it first appears, and the difference is worth stating precisely.**
+//!
+//! Compromising `oligarchy-p2pd` does *not* on its own let an attacker forge a
+//! store path. Nix verifies a signature cryptographically; it does not trust a
+//! key *name*. Corrupting the base64 of a `Sig:` line while leaving
+//! `cache.nixos.org-1:` in front of it yields `error: signature is not valid`,
+//! reproduced on real hardware. A compromised daemon holds no trusted private
+//! key, so everything it can serve is either genuinely signed — in which case
+//! it is genuine — or refused by nix-daemon. What it gains is denial of service
+//! and visibility into which paths this host asks for.
+//!
+//! So the placement of this check matters in exactly one case: an attacker who
+//! holds **both** a trusted peer's private key **and** code execution in this
+//! daemon. With the key alone, this check stops them; with the daemon alone,
+//! Nix stops them; with both, neither does. That is two compromises, not one,
+//! and it is a materially smaller claim than "a daemon RCE is remote root".
+//!
+//! The architecturally clean version — never put the peer key in
 //! `trusted-public-keys`, and have a privileged component re-sign in-scope
-//! paths with a key the consumer already trusts. That is a larger change; it is
-//! recorded as gap 38 and is the reason this file should not be described as
-//! closing the hole rather than narrowing it.
+//! paths with a key the consumer already trusts — would close even that. It is
+//! recorded as gap 38 and deliberately not built: it requires implementing
+//! Ed25519 verification and Nix's fingerprint format here, and an IPC channel
+//! from a daemon whose `RestrictAddressFamilies` excludes `AF_UNIX` precisely
+//! so it can never reach nix-daemon. Paying that to defend against a
+//! two-compromise scenario is the wrong trade today.
 
 use crate::narinfo::NarInfo;
 

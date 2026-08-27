@@ -384,6 +384,12 @@ pub fn seed(
             sum.unpublished += 1;
         }
     }
+    // Record what we published, so `selftest` can tell "3 of 3" from "1 of 3".
+    // It runs as the daemon user and has no Nix database access, so without
+    // this it cannot know what it was told to publish.
+    if let Err(e) = cache.set_expected_declared(published.len()) {
+        tracing::warn!(error = %e, "could not record the declared count");
+    }
     Ok(sum)
 }
 

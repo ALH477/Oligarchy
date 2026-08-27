@@ -77,7 +77,20 @@ let
     # are allowed to vouch for. Nix cannot scope a key to a set of paths; this
     # adapter can, because every peer narinfo passes through it.
     peer_public_keys = cfg.trustedPublicKeys;
-    accept_from_peers = cfg.acceptFromPeers;
+    # `toString` renders a package to its outPath, so an entry written as
+    # `pkgs.my-thing` reaches the daemon as an exact /nix/store path — the
+    # tightest grant available, and one a peer cannot satisfy by choosing a
+    # convenient name.
+    #
+    # `unsafeDiscardStringContext` is REQUIRED here, not a shortcut. A path
+    # string from `toString` carries build context, so writing it into this
+    # file would make the package a dependency of the config, and therefore of
+    # the system closure — the consumer would BUILD the very artifact it is
+    # configuring itself to fetch from a peer. That is backwards on a real host
+    # and it silently voids the point of the option: naming a path you do not
+    # have is the whole idea.
+    accept_from_peers =
+      map (p: builtins.unsafeDiscardStringContext (toString p)) cfg.acceptFromPeers;
   });
 
   # The transitive closure of the declared packages, realised at build time.
@@ -520,9 +533,9 @@ in
     };
 
     acceptFromPeers = mkOption {
-      type = types.listOf types.str;
+      type = types.listOf (types.either types.str types.package);
       default = [ ];
-      example = literalExpression ''[ "my-thing" "my-lib" ]'';
+      example = literalExpression ''[ pkgs.my-thing "my-lib" ]'';
       description = ''
         Which packages a trusted peer key is allowed to vouch for.
 
@@ -535,21 +548,43 @@ in
         Nix cannot bound it. This adapter can, because every narinfo a peer
         supplies passes through it. Entries take three forms:
 
+        - **a package** — `pkgs.my-thing`, rendered to its exact store path.
+          This is the form to prefer. Both machines evaluating the same pinned
+          flake compute the same path, so the grant is exact, needs no guessing
+          about names or versions, and — unlike a name — cannot be satisfied by
+          a peer choosing a convenient label. No build is required to write it:
+          an output path is known at evaluation time;
         - a bare package name, matched exactly or with a version suffix, so
           `my-thing` accepts `my-thing-1.2.3` and `my-thing-1.2.3-dev`. The
           suffix must begin with a digit, which is what stops `glibc` reaching
-          `glibc-locales` and `linux` reaching `linux-firmware`;
-        - a full `/nix/store/...` path, matched exactly — the tightest grant,
-          and usable when a flake pins the version;
+          `glibc-locales` and `linux` reaching `linux-firmware`. Convenient when
+          the version moves, looser than a path;
         - `"*"`, which accepts anything those keys sign. That is the
           unscoped behaviour, chosen deliberately and warned about.
 
-        Two limits worth knowing. The scoping is enforced **by this adapter**,
+        A peer publishes only the paths it *built* — everything else in a
+        closure already carries an upstream signature and is not scoped — so
+        for one custom package this is usually one or two entries. A large local
+        rebuild produces more, and they must be listed; there is no way to say
+        "the whole closure that peer published" without letting the peer define
+        its own scope.
+
+        Three limits worth knowing. The scoping is enforced **by this adapter**,
         so it binds only paths obtained through it — an operator who adds a peer
         directly to {option}`nix.settings.substituters`, or runs
-        `nix copy --from`, is outside it. And the name is supplied by the peer;
-        Nix independently requires the substituted path's name to match the one
-        it asked for, but this option is a bound on what a peer may *claim*.
+        `nix copy --from`, is outside it. A *name* entry is matched against a
+        name the peer supplied, so it bounds what a peer may **claim**; a
+        package or store-path entry does not have that weakness, which is the
+        main reason to prefer one. And tightening this list does not evict what
+        Nix already accepted: Nix caches a narinfo for
+        `narinfo-cache-positive-ttl` (30 days) outside this daemon, so after
+        narrowing a scope run
+
+        ```
+        rm -f /root/.cache/nix/binary-cache-v*.sqlite*
+        ```
+
+        or the previously accepted path stays available until it expires.
       '';
     };
 

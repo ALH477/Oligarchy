@@ -308,10 +308,36 @@ fn declared_narinfos_are_coherent(cfg: &Config) -> (Check, Option<(String, NarIn
             }
         }
     }
-    if bad.is_empty() {
-        (Check::pass(N, format!("{} published, all coherent", listed.len())), sample)
-    } else {
-        (Check::fail(N, bad.join("; ")), sample)
+    if !bad.is_empty() {
+        return (Check::fail(N, bad.join("; ")), sample);
+    }
+    // Coherent is not the same as complete. This runs as the daemon user, with
+    // no Nix database access by design, so it cannot ask what `servePackages`
+    // said — but the seed run left its own count behind, and a tier that has
+    // silently lost entries since is exactly the drift nothing else notices.
+    match cache.expected_declared() {
+        Some(want) if want != listed.len() => (
+            Check::fail(
+                N,
+                format!(
+                    "{} published but the last seed run recorded {want} — \
+                     entries have been lost since; check oligarchy-p2p-seed.service",
+                    listed.len()
+                ),
+            ),
+            sample,
+        ),
+        Some(want) => (
+            Check::pass(N, format!("{want} published, all coherent, count matches the seed run")),
+            sample,
+        ),
+        None => (
+            Check::pass(
+                N,
+                format!("{} published, all coherent (no seed record to compare)", listed.len()),
+            ),
+            sample,
+        ),
     }
 }
 
@@ -482,6 +508,37 @@ mod tests {
         assert_eq!(peer_scope_is_bounded(&cfg).verdict, Verdict::Warn);
         cfg.accept_from_peers = vec!["my-thing".into()];
         assert_eq!(peer_scope_is_bounded(&cfg).verdict, Verdict::Pass);
+    }
+
+    #[test]
+    fn a_tier_that_lost_entries_is_caught() {
+        // Coherent is not complete. "1 published, all valid" reads as healthy
+        // on a host that was told to publish three — the drift nothing else
+        // notices, because this process cannot ask what it was told to do.
+        let d = tempfile::tempdir().unwrap();
+        let mut cfg = crate::config::Config::sample();
+        cfg.state_dir = d.path().to_string_lossy().into_owned();
+        cfg.serve_declared = true;
+        let c = Cache::open(d.path(), 0).unwrap();
+        let hp = "18bbdvag5v2f3d4y37pdbkzvh7s71cw4";
+        let nh = "0k8cwb9i02mp6zi35ip898zwnd16xj89mbipw1fvrklpd9qmm7xv";
+        c.put_declared(
+            hp,
+            &format!(
+                "StorePath: /nix/store/{hp}-thing\nURL: nar/{hp}/{nh}.nar\n\
+                 Compression: none\nNarHash: sha256:{nh}\nNarSize: 3\n\
+                 References: \nSig: k-1:AAAA==\n"
+            ),
+        )
+        .unwrap();
+
+        c.set_expected_declared(1).unwrap();
+        assert_eq!(declared_narinfos_are_coherent(&cfg).0.verdict, Verdict::Pass);
+
+        c.set_expected_declared(3).unwrap();
+        let got = declared_narinfos_are_coherent(&cfg).0;
+        assert_eq!(got.verdict, Verdict::Fail, "{}", got.detail);
+        assert!(got.detail.contains("recorded 3"), "{}", got.detail);
     }
 
     #[test]

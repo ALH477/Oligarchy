@@ -837,6 +837,17 @@ formality.
    calculation from a cache strangers install from. Do not read stage 5 as
    permission to skip the offline key here.
 
+   **Stage 6 of that subsystem is worth borrowing from, though.** It ran into
+   the same wall the FX Bazaar will: **Nix cannot scope a signing key to a set
+   of store paths.** Trusting a cache key trusts it for *everything* the host
+   will ever substitute — so a compromised plugin cache is not confined to
+   plugins. `custom.p2pCache.acceptFromPeers` bounds this in the adapter,
+   because every narinfo passes through it; a plain `substituters` entry has no
+   such chokepoint, so `custom.plugins.trustedPublicKeys` **cannot** be bounded
+   the same way. That asymmetry should inform how the Bazaar's key is scoped —
+   one key per publisher, rotated, and never the same key that signs anything
+   outside the plugin namespace.
+
 2. **Determinate: resolved, no action needed.** `/etc/nix/nix.conf` carries
    `!include nix.custom.conf`, and `nix config show` on the running host
    confirms the NixOS-generated `trusted-public-keys` / `substituters` /

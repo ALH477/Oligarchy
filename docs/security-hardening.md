@@ -243,6 +243,89 @@ assuming it's unrelated.
 
 ---
 
+## Phase 8 — P2P substituter (optional; enable last, and in this order)
+
+`custom.p2pCache` is off by default and nothing else depends on it. It has four
+switches that each widen the posture by a different amount, so turn them on one
+at a time and stop wherever the benefit runs out. Most sites should stop at
+step 2.
+
+**1. The adapter alone.** `enable = true`, `transport = "none"`, no peer
+surface. This is a verifying local cache in front of `cache.nixos.org`: it adds
+a loopback listener and *no* new trust. Verify:
+
+```bash
+oligarchy-p2p-selftest          # asserts, rather than reports
+oligarchy-p2p-status            # says (up) or NOT RESPONDING, honestly
+```
+
+The one thing that would undo the whole design is `?trusted=1` on a substituter
+URI — Nix then accepts unsigned paths *silently*, exit 0, no warning. Guarded by
+a module assertion, by daemon config validation, and by `no_trusted_in_nix_conf`
+in the selftest. Do not add it, and do not "temporarily" test with it.
+
+**2. The peer surface.** `peer.enable = true` plus `peer.openFirewall` naming
+the interfaces your peers are on — never `trustedInterfaces`. This is
+**unauthenticated**: anyone who can reach the port can enumerate which store
+paths this host holds, which discloses roughly what it builds and runs. Scope it
+with the interface list, and think twice on `tailscale0` if the tailnet is not
+solely yours. Peers are still only sources of bytes: everything they hand over
+is signature- and hash-checked by `nix-daemon` afterwards.
+
+**3. Seeding what this host built.** `servePackages` + `signingKeyFile`. This
+puts an Ed25519 signing key on the machine — read by a separate root oneshot,
+`oligarchy-p2p-seed.service`, and never by the network-facing daemon. Generate
+it by hand and keep it `0400`; seeding refuses a key anyone else can read.
+
+```bash
+nix key generate-secret --key-name "$(hostname)-p2p-1" > /var/lib/oligarchy/p2p/cache.sec
+chmod 0400 /var/lib/oligarchy/p2p/cache.sec
+nix key convert-secret-to-public < /var/lib/oligarchy/p2p/cache.sec
+```
+
+Only paths with **no signature at all** are signed — the ones this host actually
+built. The rest of a closure keeps cache.nixos.org's signature and is not
+re-signed, which matters: the extra signature would be permanent in
+`/nix/var/nix/db` and would travel through `nix copy` and ssh-ng, far outside
+this adapter.
+
+**4. Trusting a peer's key — the only step that extends trust.** On the
+*consumer*, `trustedPublicKeys` plus `acceptFromPeers`. The second is mandatory
+and the reason is structural: **Nix cannot scope a signing key to a set of store
+paths.** A trusted key vouches for everything the host will ever substitute, and
+the adapter is `Priority: 30`, ahead of cache.nixos.org for all of it. The
+adapter bounds it because every peer narinfo passes through it — Nix cannot.
+
+```nix
+custom.p2pCache = {
+  trustedPublicKeys = [ "otherhost-p2p-1:..." ];
+  acceptFromPeers   = [ pkgs.my-thing ];   # prefer a package: exact store path
+};
+```
+
+Prefer a package to a bare name. A package renders to an exact store path at
+evaluation time, so two machines on the same pinned flake agree exactly; a name
+is matched against a name the *peer* supplied, so it bounds what a peer may
+**claim**. `[ "*" ]` accepts anything those keys sign — a real choice, warned
+about at eval, and appropriate only for hosts you administer.
+
+Narrowing this list later does **not** evict what Nix already accepted: Nix
+caches a narinfo for 30 days outside this daemon. After tightening a scope, run
+`rm -f /root/.cache/nix/binary-cache-v*.sqlite*`.
+
+Verify the whole thing on real hardware:
+
+```bash
+oligarchy-p2p-selftest          # non-zero exit if any guarantee is broken
+journalctl -u oligarchy-p2pd -f # "narinfo from a peer" / "fetched from a peer"
+```
+
+Backing out is a one-line revert plus `nixos-rebuild`: nothing in boot or
+`nixos-rebuild` depends on the adapter, `cache.nixos.org` stays configured
+behind it, and a dead daemon is a transfer failure Nix routes around.
+
+---
+
 ## Tests
 
 ```bash

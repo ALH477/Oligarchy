@@ -22,6 +22,66 @@ nothing to "run" beyond `nixos-rebuild switch`.
 | DSP | Real-time coprocessor guest via KVM/QEMU + NETJACK, isolated CPU core `isolcpus=0` |
 | AI | Local Ollama on ROCm (AMD) / CUDA (Optimus) / CPU fallback; `ai-stack` CLI with presets |
 | MCP | 9 dedicated, read-only Rust MCP servers — one per OS aspect — plus the `ports-sec` auditor |
+| Scale | ~68k lines of code across 278 files (35k Nix, 24k Rust) — see §1a |
+
+### 1a. Scale
+
+**68,372 lines of code across 278 tracked files** — 60,893 excluding blanks.
+
+| language | files | lines | non-blank |
+|---|---|---|---|
+| Nix | 107 | 34,614 | 30,646 |
+| Rust | 98 | 23,884 | 21,547 |
+| Shell | 37 | 4,302 | 3,771 |
+| Kotlin (the Android companion) | 23 | 3,481 | 3,161 |
+| Python | 7 | 905 | 747 |
+| C, Lua, WIT, Plymouth script | 6 | 1,186 | 1,021 |
+| **total** | **278** | **68,372** | **60,893** |
+
+Git-tracked source only. Not counted: generated lockfiles (`Cargo.lock` 12.3k,
+`flake.lock` 2.7k), markup and config (`assets/demods_codex.html` 2.7k, plus
+TOML/JSON/YAML/XML), Markdown, and anything the tree *packages* rather than
+contains — the DCF-Talk Lua stack, for instance, is built by
+`modules/demod-talk/` from an external input, which is why "pure-Lua chat
+stack" and 155 lines of Lua are not a contradiction.
+
+Two figures are worth more than the total.
+
+**19% of the Nix and Rust is whole-line comments** — 9,712 of 52,193 non-blank
+lines, and roughly even between the two languages (Nix 18%, Rust 20%). That is
+not incidental. Most of the load-bearing decisions in this tree look arbitrary
+or removable until you know what broke last time, so the reason lives next to
+the code rather than only in a roadmap. Budget for it when reading: a 400-line
+module here is often 300 lines of mechanism.
+
+**14% of the Rust is inside `#[cfg(test)]`** — 3.4k of 24k, across 238 `#[test]`
+functions in 21 crates — and that undercounts the testing, because the expensive
+assertions are not in the crates at all. They are NixOS VM gates
+(`nix build .#plugins-*`, `.#p2p-*`) which boot a real kernel to check what a
+unit test structurally cannot: that a seccomp filter was honoured, that a
+systemd sandbox is in effect, that a peer refuses what it should.
+
+The ten largest subsystems by code:
+
+| | lines |
+|---|---|
+| `home/` (Home Manager, themes, Hyprland, waybar) | 17,140 |
+| `modules/oligarchy-p2p/` | 9,881 |
+| `modules/oligarchy-plugins/` | 9,035 |
+| `modules/hypr-controller/` | 4,119 |
+| `modules/blipply-assistant/` | 3,406 |
+| `modules/mcp-servers/` | 3,209 |
+| `(root)` (`flake.nix`, `configuration.nix`) | 2,528 |
+| `modules/oligarchy-forge/` | 2,221 |
+| `modules/security/` | 2,111 |
+| `modules/greeting/` | 1,503 |
+
+`home/` being the largest is worth knowing before reading it: it is broad rather
+than deep — a theme/palette system multiplied across many desktop apps — and
+almost none of it is load-bearing for the security or DSP claims elsewhere in
+this document. The two sub-flakes below it are the opposite: dense, heavily
+gated, and where the interesting invariants live. Line count alone points a
+reader at the wrong place to start.
 
 ## 2. Flake composition
 
@@ -671,10 +731,13 @@ nix build .#malwareScan
 nix build .#mcp-self-audit
 
 # plugin runtime gates — all need KVM, tier2 needs *nested* KVM
-nix build .#plugins-wx-enforcement
-nix build .#plugins-policy-refusal
-nix build .#plugins-signed-install
-nix build .#plugins-tier1-runtime
+nix build .#plugins-wx-enforcement   # the two W^X mirrors agree, on a booted kernel
+nix build .#plugins-policy-refusal   # policy refuses at INSTALL time, not at load time
+nix build .#plugins-signed-install   # an unprivileged user installs a signed plugin, and only a signed one
+nix build .#plugins-tier1-runtime    # a real .so probes its own sandbox from inside
+nix build .#plugins-tier2-runtime    # a self-JIT plugin gets W+X inside a microVM and only there
+
+# P2P substituter gates — all boot a VM; two-node/swarm/peer-scope boot two
 nix build .#p2p-substituter-protocol # real substitution through the P2P adapter
 nix build .#p2p-signature-refusal    # the adapter never becomes a trust authority
 nix build .#p2p-artifact-cache       # the local artifact cache is real and verified
@@ -684,7 +747,6 @@ nix build .#p2p-no-peer-fallback     # no peers, and the build still works
 nix build .#p2p-local-signing        # a host seeds what it BUILT; refused without the key
 nix build .#p2p-peer-scope           # a peer key vouches only for the packages you named
 nix build .#p2p-selftest             # the daemon's assertions, and that each fails when broken
-nix build .#plugins-tier2-runtime
 
 # eval-only check (full toplevel is already in checks; slow gates left out)
 nix flake check

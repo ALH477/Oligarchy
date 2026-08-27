@@ -1265,8 +1265,12 @@
                   peers = [ "192.168.1.1:5112" ];
                   peerTimeout = 30;
                   trustedPublicKeys = [ gatePublicKey ];
-                  # ONE of the two. This single line is the subject.
-                  acceptFromPeers = [ "p2p-seed-probe" ];
+                  # ONE of the two, and named as a PACKAGE rather than a
+                  # string: this renders to the probe's exact store path at
+                  # eval time, which is the form that cannot be satisfied by a
+                  # peer choosing a convenient name. This single line is the
+                  # subject of the whole gate.
+                  acceptFromPeers = [ seedProbe ];
                   logLevel = "oligarchy_p2pd=debug";
                 };
                 virtualisation.useNixStoreImage = true;

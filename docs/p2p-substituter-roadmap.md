@@ -81,13 +81,19 @@ the paragraphs above still holds exactly as written.
 **What stage 6 does not fix, stated plainly.** The scoping is a property of this
 code path, not of the machine. The key remains in `trusted-public-keys`
 globally, so an operator who adds a peer directly to `substituters`, or runs
-`nix copy --from`, or uses a remote builder, is outside it. And the check now
-lives in `oligarchy-p2pd` — the process this document calls hostile — so a
-daemon compromise is a scope bypass in a way it was not before stage 5. The
-architecturally clean version is the split already used for signing: a
-privileged component re-signs in-scope paths with a key the consumer trusts, and
-the peer key never enters `trusted-public-keys` at all. That is a larger change;
-it is recorded, not built.
+`nix copy --from`, or uses a remote builder, is outside it.
+
+The check also lives in `oligarchy-p2pd`, the process this document calls
+hostile — but **that costs less than it appears, and an earlier draft of this
+paragraph overstated it.** Nix verifies signatures cryptographically and does
+not trust a key *name*: corrupting a `Sig:` line's base64 while leaving
+`cache.nixos.org-1:` in front of it yields `error: signature is not valid`,
+reproduced on real hardware. A compromised daemon holds no trusted private key,
+so it can serve only what is genuinely signed — or be refused. Daemon RCE buys
+denial of service and request visibility, not forgery. The scope's placement
+matters only against an attacker holding **both** a trusted peer key and code
+execution here: two compromises. See gap 38 for why the clean fix is recorded
+rather than built.
 
 ## 3. Verified facts about the binary cache protocol
 
@@ -732,27 +738,59 @@ a slot a concurrent fetch was writing.
 
 **Stage 6 — bounding a peer key, and seeing failures**
 
-37. **Name scoping cannot express "the closure this peer published".** A
-    seeder publishes only *unsigned* paths — the ones it built — so for a
-    single custom package that is usually one or two names. But a large local
-    rebuild (a patched kernel, a toolchain bump) produces many locally-built
-    paths with names the consumer cannot predict, and there is no way to write
-    "everything in that closure". The honest options are then a long list or
-    `"*"`, which is the unscoped behaviour the feature exists to avoid. The
-    seeder already computes `pkgs.closureInfo`; publishing that list on the peer
-    surface and letting a consumer pin it would fix this — but a peer defining
-    its own scope is circular unless the list is pinned in the consumer's flake.
-    Recorded, not designed.
-38. **The check lives in the process this document calls hostile.** Before
-    stage 5 a daemon compromise bought an attacker nothing: Nix checked
-    signatures against keys the daemon could not influence. Now the daemon
-    holds the only bound on what a trusted peer key may vouch for, so a daemon
-    RCE *is* the scope bypass. §2 says this; it is repeated here because it is
-    the kind of property that gets forgotten when someone moves the check "for
-    tidiness". The clean fix is the signing split: never put the peer key in
-    `trusted-public-keys`, and have a privileged component re-sign in-scope
-    paths with a key the consumer already trusts.
-39. **The name in a narinfo is supplied by the peer.** `in_scope` reads
+37. **Name scoping cannot express "the closure this peer published".**
+    **Narrowed, not closed.** `acceptFromPeers` now accepts a **package**,
+    rendered to its exact store path — so `acceptFromPeers = [ pkgs.my-thing ]`
+    is an exact grant needing no guess about names or versions, computed at
+    evaluation time without building anything. Two machines on the same pinned
+    flake derive the same path, which is the common case here and the one worth
+    optimising for.
+
+    What remains: a large local rebuild (a patched kernel, a toolchain bump)
+    produces many locally-built paths, and each must be listed. There is still
+    no way to say "everything in that closure" — the seeder computes
+    `pkgs.closureInfo`, but letting it publish that list and having the consumer
+    accept it is circular, since a peer would then define its own scope. A
+    consumer that can *evaluate* the same flake can name the roots; one that
+    cannot is left with `"*"`.
+38. **The check lives in the process this document calls hostile — and the
+    first version of this entry overstated what that costs.** It said "a daemon
+    RCE *is* the scope bypass, and therefore remote root at the next rebuild".
+    That is wrong, and the correction is worth having in writing.
+
+    **Nix verifies a signature; it does not trust a key name.** Corrupting the
+    base64 of a `Sig:` line while leaving `cache.nixos.org-1:` in front of it
+    yields `error: signature is not valid` — reproduced on real hardware, and
+    the reason the whole subsystem works. A compromised daemon holds no trusted
+    private key, so everything it can serve is either genuinely signed, and
+    therefore genuine, or refused by nix-daemon. Daemon RCE buys denial of
+    service and visibility into which paths this host requests. It does not buy
+    forgery.
+
+    So the placement matters in exactly one case: an attacker holding **both**
+    a trusted peer's private key **and** code execution in this daemon. With
+    the key alone the scope check stops them; with the daemon alone Nix stops
+    them; with both, neither does. Two compromises, not one.
+
+    The clean fix — never put the peer key in `trusted-public-keys`, and have a
+    privileged component re-sign in-scope paths with a key the consumer already
+    trusts — would close even that. **Deliberately not built.** It needs Ed25519
+    verification and Nix's fingerprint format reimplemented here (three traps:
+    `References` must be full store paths where a narinfo carries basenames,
+    sorted, and `NarHash` normalised to nix32), plus an IPC channel out of a
+    daemon whose `RestrictAddressFamilies` excludes `AF_UNIX` precisely so it
+    can never reach nix-daemon. Paying that — and reversing "Nix does the
+    crypto" — to defend a two-compromise scenario is the wrong trade today. It
+    becomes the right one if this ever faces peers the operator does not
+    administer.
+39. **A NAME entry is matched against a name the peer supplied.**
+    **Narrowed by gap 37's fix**: a package or full-store-path entry is compared
+    against the whole path, and the transport already binds the hash part to
+    what was requested, so such an entry cannot be satisfied by a peer choosing
+    a convenient label. The weakness below applies only to bare-name entries,
+    which is now the documented reason to prefer a package.
+
+    Original: `in_scope` reads
     `StorePath`, and the transport binds only its *hash part* to the request.
     So a peer answering a query for glibc's hash part can claim the name
     `my-thing` and pass the scope check. Nix catches the substitution itself —
@@ -761,23 +799,31 @@ a slot a concurrent fetch was writing.
     path is unavailable through this adapter until the entry is dropped. The
     scope is a bound on what a peer may *claim*, and only Nix binds the claim to
     reality.
-40. **Nix's own 30-day positive narinfo cache outlives a tightening.** A path
+40. **Nix's own 30-day positive narinfo cache outlives a tightening.**
+    Documented in the `acceptFromPeers` option with the remediation
+    (`rm -f /root/.cache/nix/binary-cache-v*.sqlite*`), which is all this side
+    can do about it. A path
     accepted while the scope was `"*"` — or before stage 6 — is cached by Nix,
     outside this daemon, for `narinfo-cache-positive-ttl`. Narrowing
     `acceptFromPeers` does not evict it; only
     `rm -f /root/.cache/nix/binary-cache-v*.sqlite*` does, which is why the
     gates all do that by hand.
-41. **A refused peer can still consume cache budget.** Dropping a poisoned
-    `narinfo/` entry leaves any `nar/` bytes fetched for it unreferenced until
-    the size sweep reclaims them.
+41. ~~**A refused peer can still consume cache budget.**~~ **CLOSED.**
+    `Cache::remove_narinfo` reads the `NarHash` out before unlinking and drops
+    the artifact too. A NAR is reachable only through a narinfo — the artifact
+    tier is keyed by digest and carries no store path — so metadata and bytes
+    now go together. `dropping_a_narinfo_takes_its_artifact_with_it` guards it.
 42. **No revocation without a rebuild.** Removing a peer key or narrowing a
     scope requires `nixos-rebuild`. For a known-compromised seeder there is no
     faster lever than stopping the unit.
-43. **`selftest` cannot check what it was told to publish.** It runs as the
-    daemon user, which has no Nix database access by design, so it can verify
-    that `declared/` is coherent but not that it matches `servePackages`. An
-    empty tier is caught; a tier missing one of three packages is not. Closing
-    that means a check in the seed unit's context.
+43. **`selftest` cannot check what it was told to publish.** **Narrowed.** It
+    still has no Nix database access — that is the point of running it as the
+    daemon user — so it cannot read `servePackages`. But the seed run now
+    records the count it published to `declared/.expected`, and `selftest`
+    compares, so a tier that has *lost* entries since is caught rather than
+    reading as "coherent". What is still not caught is a seed run that published
+    too few in the first place; that needs a check in the seed unit's context,
+    where the intent is known.
 
 ### Writing the repo's first multi-node VM test
 
@@ -1037,3 +1083,51 @@ design, so any gate aimed at one of them has to remove the other two.
   defeat the mode alone, then both — proves the read-only mount does
   independent work, which is exactly the claim "configured" cannot support and
   only "attempted" can.
+- **Stage 6a — closing the stage-6 gaps.** 135 unit tests. Four of the seven
+  gaps stage 6 opened are now closed or narrowed, and one of them was closed by
+  discovering it was smaller than I had written.
+
+  **Gap 38 was overstated, and the correction is the most useful thing here.**
+  The entry said a daemon RCE *is* the scope bypass, and therefore remote root
+  at the next rebuild. That is wrong. Nix verifies a signature cryptographically
+  and does not trust a key *name* — corrupting a `Sig:` line's base64 while
+  leaving `cache.nixos.org-1:` in front of it yields `error: signature is not
+  valid`, reproduced on real hardware rather than reasoned about. A compromised
+  daemon holds no trusted private key, so it can serve only what is genuinely
+  signed, or be refused. Daemon RCE buys denial of service and request
+  visibility, not forgery. The scope's placement matters against an attacker
+  holding **both** a trusted peer key and execution in the daemon: two
+  compromises, not one. That materially changes the cost/benefit of the "clean
+  fix" — re-signing in a privileged component — which needs Ed25519 and Nix's
+  fingerprint format reimplemented here plus an IPC channel out of a daemon that
+  has no `AF_UNIX` on purpose. Recorded as deliberately not built, with the
+  condition under which it becomes right: peers the operator does not administer.
+
+  **`acceptFromPeers` now takes packages** (gaps 37, 39). `[ pkgs.my-thing ]`
+  renders to an exact store path at evaluation time — no build — so two machines
+  on the same pinned flake agree exactly, and the grant cannot be satisfied by a
+  peer choosing a convenient name, which a bare-name entry can. Names still work
+  and still survive version bumps; the option now says which to prefer and why.
+
+  That fix carried a trap worth recording: `toString` on a package produces a
+  path string **with build context**, so writing it into the generated config
+  would have made the package a dependency of the system closure — the consumer
+  would build the very artifact it was configuring itself to fetch from a peer,
+  silently voiding the option and, in the gate, putting the artifact on the
+  node that was supposed not to have it. `unsafeDiscardStringContext` is
+  load-bearing: naming a path you do not have is the entire idea.
+
+  **Gap 41 closed**: `remove_narinfo` reads the digest out before unlinking and
+  drops the artifact too, so a peer whose metadata was refused no longer leaves
+  bytes consuming the cache budget until the size sweep notices.
+
+  **Gap 43 narrowed**: `seed` records the count it published to
+  `declared/.expected`, and `selftest` compares. It still cannot read
+  `servePackages` — it runs as the daemon user with no Nix database access, by
+  design — but a tier that has *lost* entries since the last seed run is now a
+  FAIL rather than reading as "coherent". Publishing too few in the first place
+  still needs a check where the intent is known.
+
+  **Gap 40** is not fixable from this side; the remediation
+  (`rm -f /root/.cache/nix/binary-cache-v*.sqlite*` after narrowing a scope) is
+  documented in the option instead of left implicit.
