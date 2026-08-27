@@ -1,6 +1,6 @@
 # P2P Substituter — Design & Living Roadmap
 
-> **Status:** LIVING DOCUMENT. Stages 1-2 are landed and all three gates pass.
+> **Status:** LIVING DOCUMENT. Stages 1-3 are landed and all four gates pass.
 > Stage 1's narinfo posture was WRONG and stage 2 corrects it — read Known gap 1
 > and §3.2 before changing anything about the URL or the compression. The module
 > is wired on the workstation host and **disabled by default**; §6 "Current
@@ -242,39 +242,49 @@ One stage per commit. Each stage's gate must be green before the next starts.
 | 0 | Validation spikes; no repo changes | all five answered, four risks retired | **DONE** |
 | 1 | Sub-flake + loopback adapter, pass-through proxy, no transport | `nix build .#p2p-substituter-protocol` and `.#p2p-signature-refusal` | **DONE** |
 | 2 | Local artifact cache + `nix-store --dump` serving + the uncompressed-NAR canonicalisation | `nix build .#p2p-artifact-cache` — a corrupt body is refused *before* Nix sees a byte | **DONE** |
-| 3 | `ArtifactTransport` + `LanTransport` (Avahi `_oligarchy-p2p._tcp`) | `p2p-two-node` — the repo's first multi-node test | not started |
+| 3 | `ArtifactTransport` + `LanTransport` over the peer surface, static peers | `nix build .#p2p-two-node` — the repo's first multi-node test | **DONE** (mDNS deferred, gap 20) |
 | 4 | `BitTorrentTransport` (librqbit, `initial_peers`, `disable_trackers`) | two-node swarm + `p2p-no-peer-fallback` | not started |
 | 5 | BEP44-shaped signed index records + the OCI index container | tampered record refused; unsigned record refused | not started |
 | 6 | Limits, eviction, `oligarchy-p2p-status`/`-test`, MCP `net` wiring | `.#mcp-self-audit` still green, daemon absent from `.mcp.json` | not started |
 
-### Current wiring (stage 2)
+### Current wiring (stage 3)
 
 - Input: `oligarchy-p2p.url = "path:./modules/oligarchy-p2p"`, with
   `inputs.nixpkgs.follows = "nixpkgs"`.
 - Module: `oligarchy-p2p.nixosModules.default`, imported **only** by
-  `nixosConfigurations.nixos`. The other three hosts and the ISO never see the
-  option, so nothing needs a `mkForce` disable.
-- **`custom.p2pCache.enable` is still false, but for a different reason than at
-  stage 1.** Stage 1's reason — a pass-through narinfo going stale inside Nix's
-  thirty-day cache — is gone (Known gap 1, closed). What remains is that
-  `priority = 30` puts the adapter ahead of cache.nixos.org for every path, so
-  enabling it re-routes all substitution on the machine through a local daemon.
-  That is the design and it fails safe, but it is an operator's decision.
+  `nixosConfigurations.nixos`. `custom.p2pCache.enable` is still false, and
+  `transport` still defaults to `"none"` — a host that enables the adapter does
+  not thereby join a swarm.
 - The resolver chain, in order:
 
   ```
   1. local cache      <stateDir>/nar/<narhash>.nar   verified IN FULL, then served
   2. local Nix store  nix-store --dump               verified IN FULL, then served
-  3. upstream HTTP    decompress + verify + tee      streamed with one-chunk lookahead
+  3. peers            LanTransport                   fetched, verified IN FULL, then served
+  4. upstream HTTP    decompress + verify + tee      streamed with one-chunk lookahead
   ```
 
-- Gates, exposed as `packages` rather than `checks`, matching the `malwareScan`
-  / `mcp-self-audit` / `plugins-*` precedent:
+  Narinfo resolution has the same shape: memory → disk → **peers** → upstream.
+  Without the peer leg the transport is useless offline, because a NAR cannot be
+  verified without the signed `NarHash` and that lives in a narinfo.
+
+- **Two listeners, and the separation is the design.** The substituter surface
+  is loopback-only and will proxy anything upstream holds. The peer surface
+  (`custom.p2pCache.peer`, default off, port 5112) binds a real interface and
+  answers a deliberately smaller question — *do you already have this?* It never
+  triggers an upstream fetch on a peer's behalf and serves nothing it has not
+  verified. Reach is per-interface via `peer.openFirewall`, empty by default.
+- **Peers are private-range only** — RFC1918, CGNAT/tailnet, link-local —
+  checked in code, not left to the firewall. This is the same set
+  `strict-egress.nix` already allows statically, which is why a LAN swarm needs
+  no firewall change on the egress side.
+- Gates:
 
   ```console
   nix build .#p2p-substituter-protocol   # a real substitution, end to end
   nix build .#p2p-signature-refusal      # the one that matters
   nix build .#p2p-artifact-cache         # the cache is real, and is verified
+  nix build .#p2p-two-node               # a leecher whose ONLY source is a peer
   ```
 
 ### Known gaps, by the stage that will hit them
@@ -347,7 +357,56 @@ One stage per commit. Each stage's gate must be green before the next starts.
     with the peer transport, which will make concurrent serving normal rather
     than incidental.
 
-**Before the transport lands (stage 3+)**
+**Stage 3 leftovers**
+
+20. **mDNS discovery is not implemented; peers are a static list.** The stage
+    was specified with Avahi `_oligarchy-p2p._tcp` browsing. It is deferred
+    rather than done because the load-bearing half — the transport, the peer
+    surface and the verification — is what the two-node gate proves, and adding
+    a multicast dependency to that gate would have made a flaky discovery
+    mechanism able to fail a test about byte transfer. Static peers are also
+    what a fixed set of household machines actually wants. When it lands it
+    should be `mdns-sd` (pure Rust, no D-Bus, so no `AF_UNIX` in
+    `RestrictAddressFamilies`) rather than shelling out to `avahi-browse`.
+21. **A peer can only serve metadata it has itself resolved, and that bounds
+    what it can seed.** The peer surface never goes upstream on a peer's behalf
+    (rule 1 in `peer.rs`), so `GET /peer/v1/narinfo/<hp>` answers only from the
+    on-disk narinfo cache. A host that holds a store path but never resolved its
+    narinfo cannot hand it to a peer, even with `serveFromStore` on — because
+    without `NarHash` the *receiver* has nothing to verify against.
+
+    The sharp edge: **a locally-BUILT path has no narinfo anywhere.** Nothing
+    ever resolved one, so it can never be seeded. Substituting a closure warms
+    everything it touches, so a machine that fetched a rebuild is a good seeder
+    and a machine that compiled it is not — which is backwards from what the
+    project eventually wants.
+
+    Fixing it means the seeder generating and signing its own narinfo, which
+    makes it a signing authority for those paths — a much larger question than a
+    transport, and the same one `docs/plugins-roadmap.md` is waiting on a cache
+    key for. Recorded, not designed. Until then, `custom.p2pCache` seeds what it
+    *fetched*, which is exactly the stated v1 value proposition (one host
+    rebuilds, the others fetch from it) and no more.
+22. **`discover` asks every peer in series.** Fine for the handful of machines
+    this is for; it is O(peers) round trips on the latency path of every
+    substitution. Parallelise when the peer list can be long — which is to say,
+    when there is a real transport.
+23. **A peer that accepts a connection and stalls costs `peerTimeout` per
+    request.** The socket read timeout bounds each read, not the whole
+    transfer, so a peer trickling one byte per timeout window can hold a fetch
+    open. It cannot corrupt anything — the verifier still decides — but it can
+    make the adapter slower than going upstream. A total-transfer deadline
+    belongs with stage 4.
+24. **No peer is ever marked bad.** A peer that fails verification is retried on
+    the next request. With a static, hand-written peer list that is the right
+    behaviour; with discovery it is not.
+25. **`provide`/`remove` are absent from `ArtifactTransport` on purpose.** For
+    the LAN transport, being reachable is the announcement, so both would be
+    no-ops — and a trait method whose only implementation does nothing teaches
+    the wrong thing about what a transport owes. Stage 4 adds them, where
+    announcing to a swarm and dropping a torrent on eviction are real.
+
+**Before BitTorrent lands (stage 4+)**
 
 16. `strict-egress` puts RFC1918 / 100.64.0.0/10 / link-local in its *static*
    allow set, so a LAN or tailnet swarm needs no firewall change. A **public**
@@ -366,6 +425,36 @@ One stage per commit. Each stage's gate must be green before the next starts.
 19. `librqbit` is at 8.1.1 here while crates.io already carries **9.0.1** — a
    major version has landed since the pin. `transport/bittorrent.rs` must be the
    only file in the crate that names a `librqbit` type.
+
+### Writing the repo's first multi-node VM test
+
+Three things cost a cycle each, and all three are properties of the test
+harness rather than of the code under test. Recorded because
+`docs/plugins-roadmap.md` gap #8 proposes a second multi-node test and will hit
+the same ones.
+
+**Node addresses are assigned in alphabetical order of the node name**, not
+declaration order. With `nodes = { seeder = …; leecher = …; }` the *leecher*
+gets `192.168.1.1` and the seeder `192.168.1.2` — the opposite of how the file
+reads. Pointing a peer at the wrong one costs a sixty-second
+`wait_until_succeeds` timeout with nothing to say why. The gate now binds the
+address to a name and *asserts* it (`ip -4 addr show eth1`) before depending on
+it, so a change in allocation fails with a sentence.
+
+**All nodes share the host's `/nix/store`.** A node's own closure is what its
+Nix *database* knows, but the store directory contains everything every node
+needs. So `test -e /nix/store/…-hello` succeeds on a node that has never heard
+of hello, and any feature that reads the store directly — `serveFromStore`
+here — will answer from it. "This node does not have it" has to be expressed as
+`nix path-info` failing, plus turning off whatever reads the raw directory.
+
+**The test driver lints and type-checks the script before booting anything.** An
+f-string with no placeholders is a hard error; shadowing an injected global
+(`log`) is a type error. Both fail at *driver build* time, which is fast, but
+the message points at a generated file rather than at the flake. A program with
+its own braces and heredoc (the hostile peer) belongs in `writeText`, not inline
+in a Python f-string inside a Nix indented string — three levels of quoting is
+one too many.
 
 ### A test fixture that made two gates vacuous
 
@@ -425,3 +514,16 @@ design, so any gate aimed at one of them has to remove the other two.
   `serveFromStore` was quietly satisfying the very requests they meant to fail,
   and once more because the replacement fixture used a content-addressed path,
   for which Nix requires no signature (see §3 and the section above).
+- **Stage 3** — the `ArtifactTransport` trait, the `LanTransport`, and the peer
+  surface, plus the repo's first multi-node VM gate. 71 unit tests. No product
+  bugs this stage; the design held. The gate, however, was vacuous twice and
+  both reasons are environmental rather than logical: **NixOS test nodes share
+  the host's `/nix/store`**, so the leecher could see `hello` on disk and
+  `serveFromStore` would have answered locally without the peer ever being
+  consulted; and the adversarial leg originally corrupted the *seeder's* cache,
+  which proves the seeder is honest — the seeder verifies before serving a peer,
+  so it refuses first and the leecher never sees bad bytes. Testing that a
+  leecher refuses a lying peer needs an actually hostile peer, so the gate now
+  ships one. That is the third instance in this subsystem of the same rule: a
+  test whose subject can be satisfied by something else is not testing its
+  subject.

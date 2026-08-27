@@ -15,6 +15,7 @@ use crate::cache::Cache;
 use crate::decompress::Codec;
 use crate::narinfo::NarInfo;
 use crate::resolve::{self, Source};
+use crate::transport::{ArtifactRef, ArtifactTransport};
 use crate::route::{self, Route};
 use crate::upstream::Upstream;
 use crate::verify::Verifier;
@@ -34,6 +35,8 @@ pub struct AppState {
     pub narinfo_timeout: Duration,
     pub cache_downloaded: bool,
     pub serve_from_store: bool,
+    pub transport: std::sync::Arc<dyn ArtifactTransport>,
+    pub peer_timeout: Duration,
     cache: Mutex<NarInfoCache>,
 }
 
@@ -76,6 +79,8 @@ impl AppState {
         narinfo_timeout: Duration,
         cache_downloaded: bool,
         serve_from_store: bool,
+        transport: std::sync::Arc<dyn ArtifactTransport>,
+        peer_timeout: Duration,
     ) -> Self {
         Self {
             upstream,
@@ -85,6 +90,8 @@ impl AppState {
             narinfo_timeout,
             cache_downloaded,
             serve_from_store,
+            transport,
+            peer_timeout,
             cache: Mutex::new(NarInfoCache {
                 map: Default::default(),
                 // Short. A narinfo is immutable for a given store path, but a
@@ -119,6 +126,31 @@ impl AppState {
                 }
                 Err(e) => {
                     tracing::warn!(hash_part, error = %e, "unparseable cached narinfo; refetching");
+                }
+            }
+        }
+
+        // Peers, before upstream. Without this the transport is useless
+        // offline: a NAR cannot be verified without the signed NarHash, and
+        // that lives in a narinfo. The peer's copy is upstream's bytes verbatim
+        // — signature intact — and `LanTransport::narinfo` re-checks that it
+        // names the path we asked for. Nix still verifies the signature; we are
+        // a courier, not an authority.
+        {
+            let t = self.transport.clone();
+            let hp = hash_part.to_string();
+            let d = self.peer_timeout;
+            if let Ok(Some(text)) =
+                tokio::task::spawn_blocking(move || t.narinfo(&hp, d)).await.map(|r| r)
+            {
+                if let Ok(ni) = NarInfo::parse(&text) {
+                    tracing::info!(hash_part, "narinfo from a peer");
+                    if let Err(e) = self.artifacts.put_narinfo(hash_part, &text) {
+                        tracing::warn!(hash_part, error = %e, "could not persist peer narinfo");
+                    }
+                    let found = Some((String::new(), ni));
+                    self.cache.lock().unwrap().put(hash_part.to_string(), found.clone());
+                    return Ok(found);
                 }
             }
         }
@@ -281,7 +313,43 @@ async fn nar(st: &AppState, hash_part: &str, name: &str, head_only: bool) -> Res
         }
     }
 
-    // ── Source 3: upstream, streamed with lookahead and teed into the cache ─
+    // ── Source 3: peers ────────────────────────────────────────────────────
+    // Fetched to disk and verified IN FULL before anything is served, unlike
+    // the upstream path below. Peers are on a LAN, so the latency that makes
+    // buffering unacceptable for a WAN download does not apply — and peers are
+    // the untrusted source that most deserves the stronger guarantee.
+    if st.transport.name() != "none" {
+        if let Ok(art) = ArtifactRef::from_narinfo(&ni) {
+            let t = st.transport.clone();
+            let cache = st.artifacts.clone();
+            let d = st.peer_timeout;
+            let a = art.clone();
+            let got = tokio::task::spawn_blocking(move || {
+                let peers = t.discover(&a, d);
+                if peers.is_empty() {
+                    return None;
+                }
+                let slot = cache.slot(&a.nar_hash).ok()?;
+                t.fetch(&a, &peers, slot, d).ok()
+            })
+            .await
+            .ok()
+            .flatten();
+
+            if let Some(path) = got {
+                match tokio::fs::File::open(&path).await {
+                    Ok(f) => {
+                        tracing::info!(hash_part, source = "peer", bytes = len, "serving verified");
+                        let body = Body::from_stream(tokio_util::io::ReaderStream::new(f));
+                        return (StatusCode::OK, h, body).into_response();
+                    }
+                    Err(e) => tracing::warn!(error = %e, "peer artifact vanished; falling through"),
+                }
+            }
+        }
+    }
+
+    // ── Source 4: upstream, streamed with lookahead and teed into the cache ─
     let codec = match Codec::parse(ni.compression()) {
         Ok(c) => c,
         Err(e) => {

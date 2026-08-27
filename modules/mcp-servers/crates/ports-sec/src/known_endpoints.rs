@@ -172,6 +172,34 @@ pub const KNOWN: &[KnownEndpoint] = &[
         proto: Proto::Udp,
         remote_endpoints: &[],
     },
+    // Opt-in, default off (custom.p2pCache, modules/oligarchy-p2p). The Nix
+    // binary-cache adapter Nix talks to as a substituter. LOOPBACK ONLY, and
+    // enforced in three places (module assertion, daemon config validation, and
+    // immediately before bind) because this surface will proxy anything its
+    // upstreams hold — on a routable address it would be an open cache proxy
+    // for the whole of cache.nixos.org.
+    KnownEndpoint {
+        name: "oligarchy-p2p-substituter",
+        host: "127.0.0.1",
+        port: Some(5111),
+        proto: Proto::Tcp,
+        remote_endpoints: &["cache.nixos.org"],
+    },
+    // Opt-in, default off (custom.p2pCache.peer). The peer surface: a SECOND,
+    // separate listener that lets other Oligarchy hosts fetch artifacts this
+    // one already holds. LAN-exposed by design, which is why it is a different
+    // listener with a deliberately smaller route set — it never triggers an
+    // upstream fetch on a peer's behalf, and it serves nothing it has not
+    // verified. Unauthenticated: anyone who can reach it can enumerate which
+    // store paths this host has. Reach is governed per-interface by
+    // custom.p2pCache.peer.openFirewall, which is empty by default.
+    KnownEndpoint {
+        name: "oligarchy-p2p-peer",
+        host: "0.0.0.0",
+        port: Some(5112),
+        proto: Proto::Tcp,
+        remote_endpoints: &[],
+    },
     // Opt-in, default off (services.dcf-hypr-agent, modules/hypr-controller).
     // NOT part of the read-only MCP surface: the bridge relays Hyprland
     // dispatch commands AND a byte-for-byte oligarchy-ctl passthrough, i.e.

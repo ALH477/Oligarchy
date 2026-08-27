@@ -33,6 +33,17 @@ pub struct Config {
     pub cache_downloaded: bool,
     /// Answer from the local Nix store when we already hold the path.
     pub serve_from_store: bool,
+
+    /// `"none"` or `"lan"`. No sniffing and no fallback between transports:
+    /// the one place a config becomes an execution strategy.
+    pub transport: String,
+    /// Peers as `ip:port`, private ranges only.
+    pub peers: Vec<String>,
+    /// Seconds a peer has to answer before we give up and go upstream.
+    pub peer_timeout_secs: u64,
+    /// Serve the peer surface on this address, or `null` to serve nobody.
+    pub peer_listen: Option<String>,
+    pub peer_port: u16,
 }
 
 impl Config {
@@ -85,6 +96,28 @@ impl Config {
             bail!("store_dir must be set");
         }
         crate::cache::parse_size(&self.max_cache_size)?;
+        if !matches!(self.transport.as_str(), "none" | "lan") {
+            bail!("unknown transport {:?}; expected \"none\" or \"lan\"", self.transport);
+        }
+        if let Some(a) = &self.peer_listen {
+            let ip: IpAddr = a
+                .parse()
+                .with_context(|| format!("peer_listen {a:?} is not an IP"))?;
+            // The peer surface is the one listener that is allowed off
+            // loopback, so it is the one that has to justify itself. A wildcard
+            // is permitted — reachability is governed by the firewall, per the
+            // repo's per-interface `openFirewall` convention — but a public
+            // unicast address is not: this protocol has no authentication and
+            // serves artifacts, and the LAN transport does not leave the local
+            // network.
+            if !(ip.is_unspecified() || crate::transport::lan::is_lan_address(&ip)) {
+                bail!(
+                    "peer_listen {ip} is a routable address. The peer surface is \
+                     unauthenticated and LAN-scoped; bind a private address or \
+                     0.0.0.0 and control reach with the firewall."
+                );
+            }
+        }
         Ok(())
     }
 
@@ -109,7 +142,12 @@ mod tests {
             "state_dir": "/var/lib/oligarchy/p2p",
             "max_cache_size": "20G",
             "cache_downloaded": true,
-            "serve_from_store": true
+            "serve_from_store": true,
+            "transport": "none",
+            "peers": [],
+            "peer_timeout_secs": 10,
+            "peer_listen": null,
+            "peer_port": 5112
         })
     }
 
@@ -156,6 +194,32 @@ mod tests {
         let mut v = base();
         v["max_cache_size"] = "twenty gigs".into();
         assert!(load(v).is_err());
+    }
+
+    #[test]
+    fn refuses_an_unknown_transport() {
+        // No sniffing, no silent fallback to "none": a typo in the module must
+        // be a startup failure, not a machine that quietly has no peers.
+        let mut v = base();
+        v["transport"] = "bittorrent".into();
+        assert!(load(v).is_err());
+    }
+
+    #[test]
+    fn refuses_a_routable_peer_listen_address() {
+        let mut v = base();
+        v["peer_listen"] = "203.0.113.7".into();
+        let e = load(v).unwrap_err().to_string();
+        assert!(e.contains("routable"), "{e}");
+    }
+
+    #[test]
+    fn allows_a_wildcard_or_private_peer_listen() {
+        for a in ["0.0.0.0", "192.168.1.10", "::"] {
+            let mut v = base();
+            v["peer_listen"] = a.into();
+            assert!(load(v).is_ok(), "rejected {a}");
+        }
     }
 
     #[test]

@@ -19,7 +19,8 @@ cache, and hands them back through the standard protocol.
    │            ▼  ordered, first success wins                │
    │   1. local cache   verified IN FULL, then served         │
    │   2. local store   verified IN FULL, then served         │
-   │   3. upstream      decompressed, streamed w/ lookahead,  │
+   │   3. peers         fetched, verified IN FULL, served     │
+   │   4. upstream      decompressed, streamed w/ lookahead,  │
    │                    teed into the cache                   │
    │            │                                             │
    │            ▼  EVERY path converges here, no bypass       │
@@ -88,6 +89,30 @@ It is also what makes a peer swarm possible at all: `nix-store --dump` is
 byte-canonical on every machine, so a locally-built path and a downloaded one
 produce the identical artifact. A compressed one would not.
 
+## Two listeners, and why
+
+The substituter surface is **loopback-only** and will proxy anything its
+upstreams hold. Exposing it to a network would publish an open cache proxy for
+the whole of cache.nixos.org.
+
+So peers get a **separate listener** with a deliberately smaller route set
+(`custom.p2pCache.peer`, default off, port 5112). It answers one question — *do
+you already have this?* — never triggers an upstream fetch on a peer's behalf,
+and serves nothing it has not verified. Reach is per-interface via
+`peer.openFirewall`, which is empty by default, so enabling the surface does not
+by itself expose anything.
+
+Peer addresses are restricted to private ranges **in code**: RFC1918,
+CGNAT/tailnet, link-local. That is the same set `strict-egress.nix` already
+allows statically, which is why a LAN swarm needs no firewall change on the
+egress side — and why accepting a routable peer would quietly step outside a
+control the operator thinks they have.
+
+Peers supply metadata as well as bytes, and must: a NAR cannot be verified
+without the signed `NarHash`, and that lives in a narinfo. What comes back is
+upstream's narinfo verbatim — signature intact — with a re-check that it names
+the path that was asked for. Nix still verifies the signature. We are a courier.
+
 ## Use it
 
 ```nix
@@ -116,6 +141,9 @@ roadmap's Known gap 1.
 | `host/src/resolve.rs` | The ordered source chain and the upstream fetch pipeline |
 | `host/src/decompress.rs` | xz / zstd, statically linked, no system libraries |
 | `host/src/nixstore.rs` | `nix-store --dump`, and why it is the old CLI |
+| `host/src/peer.rs` | The peer surface: the three rules that keep it from becoming a proxy |
+| `host/src/transport/mod.rs` | The `ArtifactTransport` trait and `NullTransport` |
+| `host/src/transport/lan.rs` | LAN peers over plain HTTP, and the private-range check |
 | `modules/p2p-cache.nix` | `custom.p2pCache.*`, the unit, the assertions |
 | `pkgs/oligarchy-p2pd/default.nix` | `buildInputs = [ ]`, and that is load-bearing |
 
@@ -129,6 +157,7 @@ nix flake check                     # + nixpkgs-fmt
 nix build .#p2p-substituter-protocol
 nix build .#p2p-signature-refusal
 nix build .#p2p-artifact-cache
+nix build .#p2p-two-node
 ```
 
 By hand, against the real cache:

@@ -36,6 +36,11 @@ let
     max_cache_size = cfg.maxCacheSize;
     cache_downloaded = cfg.cacheDownloaded;
     serve_from_store = cfg.serveFromStore;
+    transport = cfg.transport;
+    peers = cfg.peers;
+    peer_timeout_secs = cfg.peerTimeout;
+    peer_listen = if cfg.peer.enable then cfg.peer.listenAddress else null;
+    peer_port = cfg.peer.port;
   });
 
   # Every substituter this host will consult, from wherever it was declared.
@@ -125,6 +130,100 @@ in
         Advertised as `StoreDir` in `nix-cache-info`. Nix refuses a cache whose
         StoreDir does not match its own, so this must track the real store.
       '';
+    };
+
+    transport = mkOption {
+      type = types.enum [ "none" "lan" ];
+      default = "none";
+      description = ''
+        Where the adapter looks for artifacts before falling back to
+        `upstreams`.
+
+        - `none` — no peers. The adapter is a verifying cache in front of
+          upstream and behaves exactly as it did before peers existed. This is
+          the default, and it is what makes "P2P is an enhancement, never a
+          requirement" structural rather than aspirational.
+        - `lan` — other Oligarchy hosts named in `peers`, over plain HTTP.
+
+        There is no sniffing and no silent fallback between transports: an
+        unrecognised value is a startup failure, not a machine that quietly has
+        no peers.
+      '';
+    };
+
+    peers = mkOption {
+      type = types.listOf types.str;
+      default = [ ];
+      example = [ "192.168.1.20:5112" "100.64.0.3:5112" ];
+      description = ''
+        Peers as `ip:port`, pointing at their `peer.port`.
+
+        **Private ranges only** — RFC1918, CGNAT/tailnet (100.64.0.0/10) and
+        link-local. A routable address is dropped with a loud log line rather
+        than being refused at startup, because an optional transport must not be
+        able to take the substituter down.
+
+        This is the same set `modules/security/strict-egress.nix` already puts
+        in its *static* allow list, which is why a LAN swarm needs no firewall
+        change on the egress side. Peers reached over Tailscale work for the
+        same reason.
+      '';
+    };
+
+    peerTimeout = mkOption {
+      type = types.int;
+      default = 10;
+      description = ''
+        Seconds a peer has to answer before the adapter gives up and goes
+        upstream. Kept well under Nix's `stalled-download-timeout` (300s) so an
+        unreachable peer costs a pause, not a failed build.
+      '';
+    };
+
+    peer = {
+      enable = mkEnableOption ''
+        the peer surface — a SECOND listener, on a real interface, that lets
+        other hosts fetch artifacts this one already holds.
+
+        Separate from the substituter listener on purpose. That one is
+        loopback-only and will proxy anything its upstreams have; exposing it
+        would publish an open cache proxy for the whole of cache.nixos.org. The
+        peer surface answers a smaller question — *do you already have this?* —
+        and never triggers an upstream fetch on a peer's behalf
+      '';
+
+      listenAddress = mkOption {
+        type = types.str;
+        default = "0.0.0.0";
+        description = ''
+          Address for the peer surface. A wildcard is fine and is the default:
+          what makes it reachable is `peer.openFirewall`, which opens the port
+          on named interfaces only. Following the same per-interface convention
+          as `services.demod-talk` and `services.dcf-hypr-agent`, a routable
+          unicast address is refused outright.
+        '';
+      };
+
+      port = mkOption {
+        type = types.port;
+        default = 5112;
+        description = "Port for the peer surface. Register it in known_endpoints.rs.";
+      };
+
+      openFirewall = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "enp0s31f6" "tailscale0" ];
+        description = ''
+          Interfaces on which to open `peer.port`. **Empty by default**, so
+          enabling the peer surface does not by itself expose anything — you
+          name the interfaces, exactly as `services.demod-talk` does, rather
+          than opening globally.
+
+          Note that `tailscale0` is deliberately not a trusted interface on this
+          host, so naming it here admits every peer in your tailnet.
+        '';
+      };
     };
 
     logLevel = mkOption {
@@ -270,6 +369,23 @@ in
         '';
       }
       {
+        assertion = cfg.transport == "none" -> cfg.peers == [ ];
+        message = ''
+          custom.p2pCache.peers is set but transport is "none", so none of them
+          will ever be contacted. Set transport = "lan" or clear the list —
+          silently ignoring configuration is worse than refusing it.
+        '';
+      }
+      {
+        assertion = cfg.transport != "lan" || cfg.peers != [ ] || cfg.peer.enable;
+        message = ''
+          custom.p2pCache.transport = "lan" but there are no peers and the peer
+          surface is off, so this host neither fetches from anyone nor serves
+          anyone. Set custom.p2pCache.peers, or enable custom.p2pCache.peer, or
+          leave transport at "none".
+        '';
+      }
+      {
         assertion = cfg.upstreams != [ ];
         message = ''
           custom.p2pCache.upstreams is empty. Stage 1 is a proxy — with no
@@ -293,6 +409,25 @@ in
         adapter will work, but every request will go to upstream and the disk
         writes are pure waste. Set a real budget or turn cacheDownloaded off.
       ''
+      ++ optional (cfg.peer.enable && cfg.peer.openFirewall == [ ]) ''
+        custom.p2pCache.peer is enabled but peer.openFirewall names no
+        interfaces, so the listener is up and the firewall drops everything that
+        reaches it. That is a safe default rather than a broken one — name the
+        interfaces your peers are on to make it useful.
+      ''
+      ++ optional (cfg.peer.enable && builtins.elem "tailscale0" cfg.peer.openFirewall) ''
+        custom.p2pCache.peer is open on tailscale0, which means every peer in
+        your tailnet can enumerate and fetch the store paths this host holds.
+        This host's own policy treats tailscale0 as untrusted for exactly that
+        reason (see networking.firewall in configuration.nix). Restrict it with
+        a Tailscale ACL if the tailnet is not solely yours.
+      ''
+      ++ optional (cfg.peer.enable) ''
+        custom.p2pCache.peer is enabled. Anyone who can reach peer.port can list
+        which store paths this machine holds, which discloses roughly what it
+        builds and runs. That is inherent to serving artifacts and is scoped to
+        the interfaces named in peer.openFirewall; there is no authentication.
+      ''
       ++ optional (!cfg.registerSubstituter) ''
         custom.p2pCache.registerSubstituter is false, so the daemon will run but
         Nix will not consult it. Nothing will use the adapter until this is true
@@ -314,6 +449,12 @@ in
     ];
 
     environment.etc."oligarchy/p2p/config.json".source = configFile;
+
+    # Per-interface, never global, and never `trustedInterfaces` — the same
+    # shape services.demod-talk and services.dcf-hypr-agent use.
+    networking.firewall.interfaces = lib.genAttrs cfg.peer.openFirewall (_: {
+      allowedTCPPorts = [ cfg.peer.port ];
+    });
 
     # Definitions, not defaults, so they MERGE with nixpkgs' own
     # (cache.nixos.org and its key) rather than replacing them. Upstream stays

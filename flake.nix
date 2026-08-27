@@ -681,6 +681,10 @@
         p2p-substituter-protocol = oligarchy-p2p.checks.${system}.substituter-protocol;
         p2p-signature-refusal = oligarchy-p2p.checks.${system}.signature-refusal;
         p2p-artifact-cache = oligarchy-p2p.checks.${system}.artifact-cache;
+        # The repo's first MULTI-NODE VM test. Two machines, one artifact, and
+        # a leecher whose only possible source is the seeder — no upstream that
+        # resolves, nothing in its store, an empty cache.
+        p2p-two-node = oligarchy-p2p.checks.${system}.two-node;
 
         # ════════════════════════════════════════════════════════════════════
         # Malware Shield build gate — scans the FULL system closure with pinned,

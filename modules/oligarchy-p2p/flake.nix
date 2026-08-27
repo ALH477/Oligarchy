@@ -38,6 +38,59 @@
         # module in the node. Same dance as modules/oligarchy-plugins.
         nodePkgs = pkgs;
 
+        # NixOS assigns test-node addresses in ALPHABETICAL order of the node
+        # name, not declaration order — so `leecher` is .1 and `seeder` is .2,
+        # which is the opposite of how the nodes read in the file below. Getting
+        # this backwards points the leecher at itself and costs a 60-second
+        # timeout with no hint as to why, so it is a named binding and the test
+        # asserts it rather than trusting it.
+        seederIp = "192.168.1.2";
+
+        # A peer that never verifies anything, for the two-node gate.
+        #
+        # A derivation rather than a heredoc inside the test script: the script
+        # is a Python f-string embedded in a Nix indented string, so a program
+        # containing braces and its own heredoc has three levels of quoting to
+        # get wrong, and did.
+        hostilePeer = nodePkgs.writeText "hostile-peer.py" ''
+          # Serves right-length, wrong bytes under the peer protocol. The point
+          # is that only the digest can catch it: the length is correct, the
+          # route is correct, and the HTTP is well-formed.
+          import http.server, sys
+
+          NARSIZE = int(sys.argv[1])
+
+
+          class H(http.server.BaseHTTPRequestHandler):
+              def _send(self, code, body=b"", ctype="application/octet-stream"):
+                  self.send_response(code)
+                  self.send_header("Content-Type", ctype)
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  if body and self.command != "HEAD":
+                      self.wfile.write(body)
+
+              def do_HEAD(self):
+                  # Claim to have everything.
+                  self._send(200 if "/have/" in self.path else 404)
+
+              def do_GET(self):
+                  if "/narinfo/" in self.path:
+                      # Refuse metadata: the leecher already has the genuine,
+                      # signed narinfo, so this gate is about the BYTES.
+                      self._send(404)
+                  elif "/nar/" in self.path:
+                      self._send(200, b"X" * NARSIZE)
+                  else:
+                      self._send(200, b"{}", "application/json")
+
+              def log_message(self, *a):
+                  pass
+
+
+          http.server.HTTPServer(("0.0.0.0", 5199), H).serve_forever()
+        '';
+
         # ── Shared fixture ────────────────────────────────────────────────────
         # Both gates need the same thing: a real signed binary cache reachable
         # over HTTP from inside the VM, and a store to substitute into. The key
@@ -319,6 +372,285 @@
                     "canonical NAR, served with upstream DOWN, tampered entry "
                     "refused and removed with nothing to fall back to, and "
                     "nix-store --dump answered for a path held locally")
+            '';
+          };
+
+          # ── Gate 4: two nodes, one artifact ────────────────────────────────
+          # The repo's first multi-node VM test, and the only way to prove the
+          # claim the whole project rests on: that a machine which has never
+          # seen a path can get it from a neighbour rather than from the
+          # internet.
+          #
+          # The test is built so it CANNOT pass by accident. Node B has no
+          # upstream that resolves, `hello` is not in its store, and its cache
+          # starts empty — so if the path appears in B's store, the bytes came
+          # from A over the peer surface. Nothing else could have supplied them.
+          two-node = nodePkgs.testers.runNixOSTest {
+            name = "oligarchy-p2p-two-node";
+
+            nodes = {
+              # A: holds the artifact and serves it. No peers of its own.
+              seeder = { pkgs, ... }: {
+                imports = [ ./modules/p2p-cache.nix ];
+                custom.p2pCache = {
+                  enable = true;
+                  registerSubstituter = false;
+                  upstreams = [ "http://127.0.0.1:8000" ];
+                  serveFromStore = true;
+                  peer.enable = true;
+                  peer.openFirewall = [ "eth1" ];
+                  logLevel = "oligarchy_p2pd=debug";
+                };
+                environment.systemPackages = [ pkgs.hello pkgs.curl ];
+                nix.settings.experimental-features = [ "nix-command" "flakes" ];
+                virtualisation.memorySize = 2048;
+                virtualisation.diskSize = 8192;
+              };
+
+              # B: has nothing, and no working upstream. Its ONLY source is A.
+              leecher = { pkgs, ... }: {
+                imports = [ ./modules/p2p-cache.nix ];
+                custom.p2pCache = {
+                  enable = true;
+                  registerSubstituter = false;
+                  # Points at a port nothing listens on. If this test passes,
+                  # upstream played no part in it.
+                  upstreams = [ "http://127.0.0.1:9" ];
+                  upstreamTimeout = 2;
+                  # OFF, and this is load-bearing rather than tidy. NixOS test
+                  # nodes share the HOST's /nix/store, so `hello` is visible on
+                  # this node's filesystem even though it is not in its Nix
+                  # database and not in its closure. With serveFromStore on, the
+                  # daemon would `nix-store --dump` it locally and the peer
+                  # transport — the entire subject of this gate — would never be
+                  # exercised. "The leecher does not have it" has to mean
+                  # something the shared store cannot undo.
+                  serveFromStore = false;
+                  transport = "lan";
+                  peers = [ "${seederIp}:5112" ];
+                  peerTimeout = 30;
+                  logLevel = "oligarchy_p2pd=debug";
+                };
+                # Deliberately NOT pkgs.hello — B must not hold the artifact.
+                environment.systemPackages = [ pkgs.curl ];
+                nix.settings.experimental-features = [ "nix-command" "flakes" ];
+                nix.settings.substituters = nixpkgs.lib.mkForce [ ];
+                virtualisation.memorySize = 2048;
+                virtualisation.diskSize = 8192;
+              };
+            };
+
+            testScript = ''
+              import json
+
+              start_all()
+              seeder.wait_for_unit("multi-user.target")
+              leecher.wait_for_unit("multi-user.target")
+              seeder.wait_for_unit("oligarchy-p2pd.service")
+              leecher.wait_for_unit("oligarchy-p2pd.service")
+
+              # ── Prepare the seeder: a signed cache it can resolve from ─────
+              seeder.succeed("mkdir -p /tmp/upstream")
+              seeder.succeed(
+                  "nix-store --generate-binary-cache-key test-cache-1 "
+                  "/tmp/cache.sec /tmp/cache.pub"
+              )
+              pubkey = seeder.succeed("cat /tmp/cache.pub").strip()
+              hello = seeder.succeed(
+                  "readlink -f $(which hello) | xargs dirname | xargs dirname"
+              ).strip()
+              hp = hello.split("/")[-1].split("-")[0]
+              seeder.succeed(f"nix store sign --key-file /tmp/cache.sec --recursive {hello}")
+              seeder.succeed(f"nix copy --to file:///tmp/upstream {hello}")
+              seeder.succeed(
+                  "systemd-run --unit=upstream-http -p WorkingDirectory=/tmp/upstream "
+                  "${pkgs.python3}/bin/python3 -m http.server 8000 --bind 127.0.0.1"
+              )
+              seeder.wait_until_succeeds("curl -sf http://127.0.0.1:8000/nix-cache-info", timeout=30)
+
+              # Warm the seeder over the WHOLE CLOSURE, by driving a real
+              # substitution through its own adapter. This is what a machine
+              # that just rebuilt actually looks like, and it matters: the peer
+              # surface serves only metadata the host has itself resolved (it
+              # never goes upstream on a peer's behalf), so a seeder warmed with
+              # a single narinfo can hand over `hello` and none of the five
+              # paths `hello` needs to run.
+              seeder.succeed(
+                  f"nix-store --realise {hello} --store /tmp/warm "
+                  f"--option substituters http://127.0.0.1:5111 "
+                  f"--option require-sigs true "
+                  f"--option trusted-public-keys '{pubkey}'"
+              )
+              info = seeder.succeed(f"curl -sf http://127.0.0.1:5111/{hp}.narinfo")
+              f = dict(l.split(": ", 1) for l in info.strip().split("\n"))
+              narhash = f["NarHash"].split(":")[1]
+              narsize = int(f["NarSize"])
+              seeder.succeed(f"test -e /var/lib/oligarchy/p2p/nar/{narhash}.nar")
+              # More than one path, or the substitution leg below proves only
+              # that a single artifact moves.
+              assert int(seeder.succeed(
+                  "ls /var/lib/oligarchy/p2p/narinfo | wc -l"
+              ).strip()) >= 5, "the seeder did not cache the whole closure"
+
+              # ── The leecher really cannot supply this itself ───────────────
+              # NOT `test -e {hello}` — the store DIRECTORY is shared from the
+              # host in a NixOS test, so the files are there regardless. What
+              # matters is that the path is not valid in this node's database,
+              # its artifact cache is empty, its upstream does not answer, and
+              # its daemon will not serve from the store.
+              leecher.fail(f"nix path-info {hello}")
+              leecher.fail(f"test -e /var/lib/oligarchy/p2p/nar/{narhash}.nar")
+              leecher.fail(f"test -e /var/lib/oligarchy/p2p/narinfo/{hp}.narinfo")
+              leecher.fail("curl -sf --max-time 3 http://127.0.0.1:9/nix-cache-info")
+              assert '"serve_from_store":false' in leecher.succeed(
+                  "cat /etc/oligarchy/p2p/config.json"
+              )
+
+              # ── Reachability: B can see A's peer surface, and only that ────
+              # Assert the address assignment before depending on it. If NixOS
+              # ever changes how node addresses are allocated, this fails with a
+              # sentence instead of a timeout.
+              assert "${seederIp}/24" in seeder.succeed("ip -4 addr show eth1"), \
+                  "the seeder is not at ${seederIp}; node address assignment changed"
+
+              leecher.wait_until_succeeds(
+                  "curl -sf --max-time 5 http://${seederIp}:5112/peer/v1/info", timeout=60
+              )
+              # A's SUBSTITUTER surface must NOT be reachable from B. It is
+              # loopback-only precisely so that exposing a peer does not expose
+              # an open proxy for everything upstream holds.
+              leecher.fail("curl -sf --max-time 5 http://${seederIp}:5111/nix-cache-info")
+
+              # ── THE test: the metadata and the bytes both come from A ──────
+              got = leecher.succeed(
+                  f"curl -sf --max-time 30 http://127.0.0.1:5111/{hp}.narinfo"
+              )
+              assert "Sig: test-cache-1:" in got, got
+              assert f"NarHash: sha256:{narhash}" in got, got
+
+              leecher.succeed(
+                  f"curl -sf --max-time 60 -o /tmp/got.nar "
+                  f"http://127.0.0.1:5111/nar/{hp}/{narhash}.nar"
+              )
+              assert int(leecher.succeed("stat -c%s /tmp/got.nar").strip()) == narsize
+              assert leecher.succeed(
+                  "nix hash file --type sha256 --base32 /tmp/got.nar"
+              ).strip() == narhash
+
+              journal = leecher.succeed("journalctl -u oligarchy-p2pd --no-pager")
+              assert "narinfo from a peer" in journal, journal
+              assert "fetched from a peer" in journal, journal
+
+              # ── And a real substitution, end to end, signatures required ───
+              leecher.succeed(
+                  f"nix-store --realise {hello} --store /tmp/teststore "
+                  f"--option substituters http://127.0.0.1:5111 "
+                  f"--option require-sigs true "
+                  f"--option trusted-public-keys '{pubkey}'"
+              )
+              leecher.succeed(f"test -x /tmp/teststore{hello}/bin/hello")
+
+              # ── A well-behaved peer does not hand out unverified bytes ────
+              # Corrupt the seeder's cached artifact, length-preserving. A
+              # verifies before serving a peer, so it must refuse rather than
+              # pass the corruption on.
+              seeder.succeed("systemctl stop upstream-http")
+              seeder.succeed(
+                  f"printf 'X' | dd of=/var/lib/oligarchy/p2p/nar/{narhash}.nar "
+                  f"bs=1 seek=200 count=1 conv=notrunc"
+              )
+              code = seeder.succeed(
+                  f"curl -s -o /dev/null -w '%{{http_code}}' "
+                  f"http://127.0.0.1:5112/peer/v1/nar/{hp}/{narhash}"
+              ).strip()
+              # 404 either because the digest failed, or because A fell back to
+              # its own store copy and re-published — both are A behaving. What
+              # must NOT happen is corrupt bytes going out.
+              if code == "200":
+                  seeder.succeed(
+                      f"curl -sf -o /tmp/served.nar http://127.0.0.1:5112/peer/v1/nar/{hp}/{narhash}"
+                  )
+                  assert seeder.succeed(
+                      "nix hash file --type sha256 --base32 /tmp/served.nar"
+                  ).strip() == narhash, "a peer served bytes that were not what it named"
+              seeder_journal = seeder.succeed("journalctl -u oligarchy-p2pd --no-pager")
+              assert "REFUSED a cache entry" in seeder_journal, seeder_journal
+
+              # ── A HOSTILE peer is refused by the leecher ──────────────────
+              # The leg above proves the SEEDER is honest, which is the seeder's
+              # guarantee and not the one that matters. Peers are untrusted by
+              # assumption, so the thing to prove is that B refuses bad bytes
+              # from a peer that never verifies anything. A well-behaved peer
+              # with a corrupt cache cannot demonstrate that — it refuses first.
+              seeder.succeed(
+                  f"systemd-run --unit=hostile ${pkgs.python3}/bin/python3 "
+                  f"${hostilePeer} {narsize}"
+              )
+              seeder.succeed("systemctl start firewall.service || true")
+              seeder.succeed("iptables -I nixos-fw -p tcp --dport 5199 -j nixos-fw-accept")
+              leecher.wait_until_succeeds(
+                  "curl -sf --max-time 5 http://${seederIp}:5199/peer/v1/info", timeout=60
+              )
+
+              # Point the leecher at the hostile peer only, and clear what it
+              # already holds so it must actually fetch.
+              # NOT /tmp: the unit sets PrivateTmp=true, so anything written to
+              # the host's /tmp is invisible to the daemon — it restart-looped
+              # on "No such file or directory" until this moved. /etc is
+              # read-only to the unit under ProtectSystem=strict but perfectly
+              # readable, which is all this needs.
+              leecher.succeed(
+                  "sed 's|${seederIp}:5112|${seederIp}:5199|' /etc/oligarchy/p2p/config.json "
+                  "> /etc/oligarchy-p2p-hostile.json"
+              )
+              # Override ExecStart, NOT the environment. The unit passes
+              # `--config /etc/oligarchy/p2p/config.json` explicitly, and an
+              # explicit flag beats clap's env fallback — so an
+              # `Environment=OLIGARCHY_P2P_CONFIG=...` drop-in silently does
+              # nothing and the leecher keeps talking to the honest peer. It
+              # did, and the gate then failed claiming forged bytes were
+              # accepted when none had been served.
+              leecher.succeed(
+                  "mkdir -p /run/systemd/system/oligarchy-p2pd.service.d && "
+                  "printf '[Service]\\nExecStartPre=\\nExecStart=\\n"
+                  "ExecStart=${nodePkgs.oligarchy-p2pd}/bin/oligarchy-p2pd "
+                  "--config /etc/oligarchy-p2p-hostile.json daemon\\n' "
+                  "> /run/systemd/system/oligarchy-p2pd.service.d/hostile.conf"
+              )
+              leecher.succeed(f"rm -f /var/lib/oligarchy/p2p/nar/{narhash}.nar")
+              leecher.succeed("systemctl daemon-reload && systemctl restart oligarchy-p2pd")
+              leecher.wait_until_succeeds("curl -sf http://127.0.0.1:5111/nix-cache-info", timeout=30)
+
+              # The override took, and the only peer really is the hostile one.
+              assert "/etc/oligarchy-p2p-hostile.json" in leecher.succeed(
+                  "systemctl show -p ExecStart oligarchy-p2pd"
+              )
+              # Check the PEERS list specifically. A blunt "5112 not in the
+              # file" is wrong: peer_port is 5112 in every config whether the
+              # peer surface is enabled or not, so that assertion fails on a
+              # correctly-rewritten file.
+              hostile_cfg = json.loads(
+                  leecher.succeed("cat /etc/oligarchy-p2p-hostile.json")
+              )
+              assert hostile_cfg["peers"] == ["${seederIp}:5199"], hostile_cfg["peers"]
+
+              code = leecher.succeed(
+                  f"curl -s -o /tmp/bad.nar -w '%{{http_code}}' --max-time 60 "
+                  f"http://127.0.0.1:5111/nar/{hp}/{narhash}.nar"
+              ).strip()
+              assert code == "404", f"accepted forged bytes from its only peer (HTTP {code})"
+              leecher.fail(f"test -e /var/lib/oligarchy/p2p/nar/{narhash}.nar")
+              assert leecher.succeed("ls /var/lib/oligarchy/p2p/tmp | wc -l").strip() == "0", \
+                  "a rejected peer fetch left a temp file behind"
+              journal = leecher.succeed("journalctl -u oligarchy-p2pd --no-pager")
+              assert "peer fetch failed" in journal, journal
+              assert "hash mismatch" in journal, journal
+
+              print("two-node: leecher resolved metadata AND bytes from its only "
+                    "peer with no upstream, substituted for real with signatures "
+                    "required, could not reach the seeder's loopback surface, "
+                    "and refused right-length forged bytes from a HOSTILE peer "
+                    "without publishing or leaking a temp file")
             '';
           };
 

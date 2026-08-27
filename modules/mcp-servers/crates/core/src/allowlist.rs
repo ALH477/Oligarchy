@@ -35,6 +35,10 @@ pub const NET: &[&str] = &[
     // `oligarchy-blocklist status` / `test <ip>` only — both read-only. The
     // `update` and `panic` verbs mutate, so they are never passed from here.
     "oligarchy-blocklist",
+    // Read-only verbs only: `status` reports the substituter URL, transport,
+    // peers and cache usage; `check` validates the config and exits. The
+    // `daemon` verb is never passed from here.
+    "oligarchy-p2pd",
 ];
 
 /// CLIs the `dcf` aspect may invoke.

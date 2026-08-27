@@ -290,10 +290,24 @@ transport field derived from upstream's *compressed* bytes goes stale the
 moment upstream re-compresses — which cache.nixos.org does. Every field the
 adapter emits is now a function of signed, immutable data.
 
-Staged: stage 2 (artifact cache + upstream, no peer transport yet) is wired
-on `nixosConfigurations.nixos` only and **disabled by default**. Gates:
-`nix build .#p2p-substituter-protocol`, `.#p2p-signature-refusal` and
-`.#p2p-artifact-cache`.
+Peers sit between the local sources and upstream, and supply metadata as
+well as bytes — a NAR cannot be verified without the signed `NarHash`, so a
+transport that could not fetch a narinfo would be useless offline. A peer's
+narinfo is upstream's, verbatim and signed; the adapter re-checks only that
+it names the path that was asked for.
+
+There are **two listeners**. The substituter surface is loopback-only and
+proxies upstream; the peer surface (`custom.p2pCache.peer`, default off)
+binds a real interface, never triggers an upstream fetch on a peer's behalf,
+and serves nothing it has not verified. Peer addresses are restricted to
+private ranges in code — the same set `strict-egress.nix` allows statically,
+which is why a LAN swarm needs no firewall change.
+
+Staged: stage 3 (LAN peer transport) is wired on `nixosConfigurations.nixos`
+only and **disabled by default**, with `transport` defaulting to `"none"`.
+Gates: `nix build .#p2p-substituter-protocol`, `.#p2p-signature-refusal`,
+`.#p2p-artifact-cache` and `.#p2p-two-node` — the repo's first multi-node VM
+test.
 
 ## 6. `vm-manager/` — VMs
 
@@ -630,6 +644,7 @@ nix build .#plugins-tier1-runtime
 nix build .#p2p-substituter-protocol # real substitution through the P2P adapter
 nix build .#p2p-signature-refusal    # the adapter never becomes a trust authority
 nix build .#p2p-artifact-cache       # the local artifact cache is real and verified
+nix build .#p2p-two-node             # a host whose only source is a peer gets the path
 nix build .#plugins-tier2-runtime
 
 # eval-only check (full toplevel is already in checks; slow gates left out)

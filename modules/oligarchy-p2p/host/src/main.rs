@@ -21,8 +21,10 @@ mod http;
 mod narinfo;
 mod nixhash;
 mod nixstore;
+mod peer;
 mod resolve;
 mod route;
+mod transport;
 mod upstream;
 mod verify;
 
@@ -75,7 +77,16 @@ fn main() -> Result<()> {
             println!("upstreams   : {}", cfg.upstreams.join(", "));
             println!("cache       : {}/nar, max {}", cfg.state_dir, cfg.max_cache_size);
             println!("from store  : {}", cfg.serve_from_store);
-            println!("transport   : none (stage 2 — cache + upstream, no peers yet)");
+            println!("transport   : {}", cfg.transport);
+            println!("peers       : {}", if cfg.peers.is_empty() {
+                "(none)".to_string()
+            } else {
+                cfg.peers.join(", ")
+            });
+            println!("peer surface: {}", match &cfg.peer_listen {
+                Some(a) => format!("{a}:{}", cfg.peer_port),
+                None => "disabled".to_string(),
+            });
             println!("OK");
             Ok(())
         }
@@ -94,7 +105,28 @@ fn status(cfg: &config::Config) -> Result<()> {
     let url = format!("http://{}:{}", cfg.bind_address, cfg.port);
     println!("substituter : {url}");
     println!("upstreams   : {}", cfg.upstreams.join(", "));
-    println!("transport   : none (stage 2 — cache + upstream, no peers yet)");
+
+    // Built here rather than asked of the running daemon: `status` has to work
+    // when the unit is down, which is exactly when someone runs it.
+    let t: Box<dyn transport::ArtifactTransport> = match cfg.transport.as_str() {
+        "lan" => Box::new(transport::lan::LanTransport::new(
+            &cfg.peers,
+            Duration::from_secs(cfg.peer_timeout_secs),
+        )?),
+        _ => Box::new(transport::NullTransport),
+    };
+    let ts = t.status();
+    println!("transport   : {}", ts.name);
+    if ts.peers_known > 0 {
+        println!(
+            "peers       : {}/{} reachable — {}",
+            ts.peers_reachable, ts.peers_known, ts.detail
+        );
+    }
+    println!("peer surface: {}", match &cfg.peer_listen {
+        Some(a) => format!("{a}:{}", cfg.peer_port),
+        None => "disabled".to_string(),
+    });
     match cache::Cache::new(std::path::Path::new(&cfg.state_dir), 0)
         .and_then(|c| c.total_bytes())
     {
@@ -148,6 +180,15 @@ async fn daemon(cfg: config::Config) -> Result<()> {
         Duration::from_secs(cfg.upstream_timeout_secs),
     )?;
 
+    let transport: std::sync::Arc<dyn transport::ArtifactTransport> = match cfg.transport.as_str() {
+        "lan" => std::sync::Arc::new(transport::lan::LanTransport::new(
+            &cfg.peers,
+            Duration::from_secs(cfg.peer_timeout_secs),
+        )?),
+        // Validated in Config::validate; this arm is the only other value.
+        _ => std::sync::Arc::new(transport::NullTransport),
+    };
+
     let state = Arc::new(http::AppState::new(
         up,
         cache,
@@ -156,6 +197,8 @@ async fn daemon(cfg: config::Config) -> Result<()> {
         Duration::from_secs(cfg.upstream_timeout_secs),
         cfg.cache_downloaded,
         cfg.serve_from_store,
+        transport,
+        Duration::from_secs(cfg.peer_timeout_secs),
     ));
 
     // Bind before announcing readiness, so `systemctl start` returning means a
@@ -170,8 +213,28 @@ async fn daemon(cfg: config::Config) -> Result<()> {
         store_dir = %cfg.store_dir,
         priority = cfg.priority,
         cache_max = %cfg.max_cache_size,
-        "oligarchy-p2pd ready (stage 2: cache + upstream, no peer transport yet)"
+        transport = %cfg.transport,
+        peers = cfg.peers.len(),
+        "oligarchy-p2pd ready"
     );
+
+    // The peer surface is a SEPARATE listener on a real interface, serving a
+    // deliberately smaller route set. See peer.rs for why it is not simply the
+    // substituter surface with a wider bind.
+    if let Some(addr) = &cfg.peer_listen {
+        let pip: IpAddr = addr.parse().context("peer_listen")?;
+        let paddr = SocketAddr::new(pip, cfg.peer_port);
+        let plistener = tokio::net::TcpListener::bind(paddr)
+            .await
+            .with_context(|| format!("binding the peer surface on {paddr}"))?;
+        tracing::info!(%paddr, "peer surface listening");
+        let pstate = state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = axum::serve(plistener, peer::router(pstate)).await {
+                tracing::error!(error = %e, "peer surface stopped");
+            }
+        });
+    }
 
     axum::serve(listener, http::router(state))
         .with_graceful_shutdown(async {
