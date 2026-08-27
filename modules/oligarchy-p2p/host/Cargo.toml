@@ -1,0 +1,48 @@
+[package]
+name = "oligarchy-p2pd"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+license = "MPL-2.0"
+description = "Oligarchy P2P substituter — a local Nix binary-cache adapter"
+
+[[bin]]
+name = "oligarchy-p2pd"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive", "env"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "fs", "io-util"] }
+futures-util = { version = "0.3", default-features = false }
+async-stream = "0.3"
+bytes = "1"
+libc = "0.2"
+tokio-util = { version = "0.7", features = ["io", "io-util"] }
+
+# Decompressors. Upstream serves xz or zstd; we serve the canonical
+# uncompressed NAR, so we decode. Both of these vendor their C sources and
+# build them with `cc`, so they need no system library and `buildInputs` stays
+# empty — the same arrangement `ring` already uses in this tree.
+xz2 = { version = "0.1", features = ["static"] }
+zstd = "0.13"
+
+# rustls, never openssl. Verified in Stage 0 spike (b): default features route
+# reqwest at openssl and pull it into the closure; this posture keeps
+# buildInputs empty. See docs/p2p-substituter-roadmap.md §2.3.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

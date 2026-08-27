@@ -234,6 +234,67 @@ that made an earlier version of the tier-1 claim false.
 Like `oligarchy-forge` and `dsp-ctl` this is a **read-write** tool, so it
 stays out of the MCP surface.
 
+### 5c. P2P substituter (`modules/oligarchy-p2p/`)
+
+`custom.p2pCache.*`. A loopback HTTP Nix binary-cache adapter, so Nix can
+obtain NARs from peers **without Nix being patched and without its trust
+model being weakened**. Nix believes it is talking to an ordinary
+substituter at `http://127.0.0.1:5111`.
+
+The rule the whole design reduces to:
+
+> **P2P provides availability. Nix provides trust.**
+
+The daemon sits on the untrusted side of that boundary and is built as if
+hostile: unprivileged, no keys, no write access to the store, nobody in
+`nix.settings.trusted-users`. Peers are sources of bytes and nothing else —
+they supply no metadata, no signatures and no policy. Every path the adapter
+serves is signature-checked and hash-checked by `nix-daemon` afterwards.
+
+What makes it legal is that Nix's signature fingerprint
+(`ValidPathInfo::fingerprint`) covers exactly `StorePath`, `NarHash`,
+`NarSize` and `References`. `URL`, `Compression`, `FileHash` and `FileSize`
+are unsigned, so the adapter rewrites those and nothing else —
+`NarInfo::set` asserts against `SIGNED_FIELDS` rather than trusting its
+caller.
+
+Three measured facts the implementation depends on, reproduced against the
+Nix installed here rather than inferred (`docs/p2p-substituter-roadmap.md`
+§3.1):
+
+- **`?trusted=1` on a substituter URI makes Nix accept unsigned paths** —
+  silently, exit 0, no diagnostic. Guarded in three places because there is
+  no runtime signal that it has happened.
+- **Nix imposes no upper bound on what a substituter delivers.** `FileSize`
+  is never checked and trailing bytes are discarded without complaint;
+  64 MiB served against a 279 KiB claim succeeds. The adapter's byte cap is
+  the only bound in existence.
+- **Unknown `.narinfo` fields are ignored but do not survive re-emission**
+  by Nix's own serialiser, so extended metadata is compatible without being
+  durable.
+
+The resolver chain, in order — the first two are verified in full *before*
+a byte is sent, so a corrupt artifact yields a 404 rather than a partial
+response:
+
+```
+1. local cache      <stateDir>/nar/<narhash>.nar   verified in full, then served
+2. local Nix store  nix-store --dump               verified in full, then served
+3. upstream HTTP    decompress + verify + tee      streamed with one-chunk lookahead
+```
+
+The adapter serves the **canonical uncompressed NAR** (`Compression: none`,
+`FileHash = NarHash`, `FileSize = NarSize`). That is a correctness
+requirement, not a preference: Nix caches a narinfo for thirty days, so any
+transport field derived from upstream's *compressed* bytes goes stale the
+moment upstream re-compresses — which cache.nixos.org does. Every field the
+adapter emits is now a function of signed, immutable data.
+
+Staged: stage 2 (artifact cache + upstream, no peer transport yet) is wired
+on `nixosConfigurations.nixos` only and **disabled by default**. Gates:
+`nix build .#p2p-substituter-protocol`, `.#p2p-signature-refusal` and
+`.#p2p-artifact-cache`.
+
 ## 6. `vm-manager/` — VMs
 
 A sub-flake providing two NixOS modules — `quickemu-vm` and `dsp-vm` —
@@ -537,6 +598,7 @@ secrets management. The tray auto-starts on login.
 | `docs/architecture.md` | this file — the straight technical reference |
 | `docs/mcp-servers-roadmap.md` | the MCP server design + living roadmap |
 | `docs/plugins-roadmap.md` | the plugin runtime design + integration record (§5b) |
+| `docs/p2p-substituter-roadmap.md` | The P2P substituter: the binary-cache protocol facts it rests on, the trust boundary, the staging record and the known gaps per stage. |
 | `docs/oligarchy-forge-roadmap.md` | the sandboxed coding-agent runner's design + roadmap |
 | `docs/dgpu-steam-forcing.md` | why the compositor never renders on the dGPU |
 | `docs/bios-uma-unlock.md` | the iGPU UMA carve-out procedure (out-of-band, not Nix) |
@@ -565,6 +627,9 @@ nix build .#plugins-wx-enforcement
 nix build .#plugins-policy-refusal
 nix build .#plugins-signed-install
 nix build .#plugins-tier1-runtime
+nix build .#p2p-substituter-protocol # real substitution through the P2P adapter
+nix build .#p2p-signature-refusal    # the adapter never becomes a trust authority
+nix build .#p2p-artifact-cache       # the local artifact cache is real and verified
 nix build .#plugins-tier2-runtime
 
 # eval-only check (full toplevel is already in checks; slow gates left out)

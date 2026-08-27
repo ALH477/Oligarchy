@@ -94,6 +94,21 @@
       inputs.rust-overlay.follows = "mcp-servers/rust-overlay";
     };
 
+    # oligarchy-p2p — the P2P substituter: a loopback Nix binary-cache adapter
+    # that lets Nix obtain NARs over a peer transport without Nix being patched
+    # and without weakening its trust model. STAGED — stage 1 is a verifying
+    # pass-through proxy with no transport yet, wired on the workstation host
+    # below and DISABLED by default there. Staging plan, gates and the measured
+    # facts the design rests on: docs/p2p-substituter-roadmap.md.
+    #
+    # Read-write and network-facing, same category as oligarchy-forge and
+    # oligarchy-plugins, so like them it must stay out of the read-only MCP
+    # surface (.#mcp-self-audit fails the build if it lands in .mcp.json).
+    oligarchy-p2p = {
+      url = "path:./modules/oligarchy-p2p";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # DCF-Talk — decentralized voice + text over the 17-byte DeModFrame.
     # Off by default (services.demod-talk.enable); see modules/demod-talk/README.md.
     # Plaintext by design, so the module REQUIRES a WireGuard interface.
@@ -142,6 +157,7 @@
     , dsp-ctl
     , oligarchy-forge
     , oligarchy-plugins
+    , oligarchy-p2p
     , demod-voice
     , mcp-servers
     , hydramesh
@@ -426,6 +442,33 @@
             installers = [ config.custom.user.name ];
           };
         })
+
+        # ── P2P substituter — STAGE 2, still not switched on ────────────────
+        # The module is imported here and nowhere else: the other three hosts
+        # and the ISO never see the option, so nothing needs a mkForce disable.
+        #
+        # Stage 1 shipped this off because a pass-through narinfo described
+        # bytes we did not control, and Nix caches a narinfo for thirty days —
+        # so an upstream re-compression made the adapter 404 for a month. THAT
+        # REASON IS GONE. Stage 2 serves the canonical uncompressed NAR, so
+        # every transport field emitted is a function of NarHash and NarSize,
+        # both signed and both immutable for a given store path.
+        #
+        # It stays off for a different and smaller reason: `priority = 30` puts
+        # the adapter ahead of cache.nixos.org for EVERY path, so enabling it
+        # re-routes all substitution on this machine through a local daemon.
+        # That is the intended design and it fails safe — the daemon 404s on any
+        # internal error, upstream stays configured behind it, and
+        # `.#p2p-substituter-protocol` asserts a build still succeeds with the
+        # unit stopped — but it is the operator's call to make, not a default to
+        # inherit.
+        #
+        # To turn it on:
+        #   custom.p2pCache.enable = true;
+        # then check it took:
+        #   oligarchy-p2pd --config /etc/oligarchy/p2p/config.json check
+        #   curl -s http://127.0.0.1:5111/nix-cache-info
+        oligarchy-p2p.nixosModules.default
       ];
 
       # Framework 13 AMD 7040 — iGPU only, no expansion-bay dGPU. Unverified
@@ -622,6 +665,22 @@
         # equivalent), otherwise the inner guest falls back to emulation and the
         # boot budget stops meaning anything.
         plugins-tier2-runtime = oligarchy-plugins.checks.${system}.tier2-runtime;
+
+        # ════════════════════════════════════════════════════════════════════
+        # P2P substituter gates. Same reasoning as the plugin gates above: real
+        # gates, slow (each boots a VM and runs a real substitution), so they
+        # live in `packages` and are run on demand rather than by
+        # `nix flake check`.
+        #
+        # `p2p-signature-refusal` is the one that matters. It asserts that the
+        # substituter URI this module registers carries no `trusted=` parameter
+        # — the flag that makes Nix accept paths signed by no trusted key,
+        # silently and with exit 0. Reproduced on real hardware; see
+        # docs/p2p-substituter-roadmap.md §2.1 spike 11.
+        # ════════════════════════════════════════════════════════════════════
+        p2p-substituter-protocol = oligarchy-p2p.checks.${system}.substituter-protocol;
+        p2p-signature-refusal = oligarchy-p2p.checks.${system}.signature-refusal;
+        p2p-artifact-cache = oligarchy-p2p.checks.${system}.artifact-cache;
 
         # ════════════════════════════════════════════════════════════════════
         # Malware Shield build gate — scans the FULL system closure with pinned,
