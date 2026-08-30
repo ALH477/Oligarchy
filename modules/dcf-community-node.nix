@@ -26,6 +26,10 @@ let
     };
 
     # Server Ports
+    # MUST stay byte-identical in bind_* to modules/hydramesh.nix
+    # /etc/hydramesh/dcf_config.toml [server]. The hydramesh MCP
+    # `node_config` tool reads THAT file, not this container mount.
+    # A drift is a lying tool. Checked by matching bind_udp/grpc/shim.
     server = {
       bind_udp = "0.0.0.0:7777";       # HydraMesh Binary
       bind_grpc = "0.0.0.0:50051";     # gRPC Management
