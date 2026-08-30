@@ -10,9 +10,9 @@
 
 ## 1. Purpose
 
-Replace the single monolithic `oligarchy-mcp` Python server with **nine
-dedicated, read-only Model Context Protocol servers**, one per OS aspect, plus
-a brand-new **port/API security-audit server**. Goals:
+Replace the single monolithic `oligarchy-mcp` Python server with **ten
+dedicated, read-only Model Context Protocol servers**, one per OS aspect
+(including the `ports-sec` auditor). Goals:
 
 - **Least privilege per aspect.** Each server may only call a fixed,
   compile-time-checked allowlist of system CLIs. A compromise of one aspect
@@ -30,7 +30,7 @@ a brand-new **port/API security-audit server**. Goals:
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Split granularity | **9 dedicated servers** | maximal separation; one process per scope |
+| Split granularity | **10 dedicated servers** | maximal separation; one process per scope |
 | Capability posture | **Read-only + dry-run** | matches zero-trust model; mutations stay a manual user action |
 | Runtime | **Rust + `rmcp` SDK** | memory-safe, no Python interpreter attack surface, matches repo's Rust sub-flake idiom (greeting, boot-intro, blipply) |
 | Legacy `oligarchy-mcp` | **Keep as umbrella router** | `.mcp.json` and `custom.oligarchyMcp` option unchanged; umbrella spawns aspect binaries |
@@ -61,10 +61,12 @@ modules/mcp-servers/
     ├── ai/                # oligarchy-ai-mcp
     ├── secrets/           # oligarchy-secrets-mcp
     ├── vm/                # oligarchy-vm-mcp
+    ├── hydramesh/         # oligarchy-hydramesh-mcp
+    ├── storage/           # oligarchy-storage-mcp
     └── ports-sec/         # oligarchy-ports-sec-mcp  ← dedicated API/port auditor
 ```
 
-## 4. The 9 dedicated servers
+## 4. The 10 dedicated servers
 
 Each server shells out to the system's **existing** CLIs (no new system CLIs
 are invented) through a **compile-time-checked allowlist** defined in
@@ -223,6 +225,21 @@ exposes `mesh_send` / `mesh_recv`, and offers a streamable-HTTP transport — it
 is read-write and is **not** part of this surface. It is off by default, kept
 out of `.mcp.json`, and `mcp_self_audit` now fails the build if it appears
 there.
+
+### 4.10 `oligarchy-storage-mcp` — disk capacity and Nix store pins
+
+Exists because a full disk fails indirectly: on a Determinate host the
+collector escalates under disk pressure and logs `Relaxing the rubric`,
+after which store paths that look live can vanish. Tools, in the order
+you actually need them:
+
+`disk_usage`, `directory_sizes`, `largest_files`, `nix_gc_roots`,
+`nix_closure_size`, `nix_generations`, `gc_pressure`.
+
+Allowlist contains **no binary capable of deleting**. Paths must be
+absolute (leading `/`) so `du`/`find` cannot treat them as flags.
+Every tool must work unprivileged — generations are read off profile
+symlinks, not via `nix-env`.
 
 ## 5. Umbrella router (`crates/umbrella/`, replaces Python `oligarchy-mcp`)
 
@@ -508,7 +525,7 @@ land a phase. Format:
 
 ### 2026-07-25 — Living document created
 - Initial design + roadmap captured from the planning conversation.
-- Locked: 9 dedicated Rust servers, read-only + dry-run, umbrella router,
+- Locked: dedicated Rust servers (count has grown; see §4), read-only + dry-run, umbrella router,
   `oligarchy-<aspect>-mcp` naming, per-aspect audit logs, stdio-only
   transport, `ports-sec` is the only socket opener (loopback, gated).
 - Open questions §10 (defaults noted); awaiting maintainer confirmation
@@ -595,3 +612,11 @@ land a phase. Format:
     the whole NixOS closure + all 10 crate compile). The maintainer
     should run it as the final compile gate:
     `nix build .#nixosConfigurations.nixos.config.system.build.toplevel`.
+
+### 2026-08-30 — Aspect count is ten; topology is not a mesh
+- Working tree (and `.mcp.json`) has ten aspects: the original set plus
+  `hydramesh` and `storage`. Roadmap §1/§2/§3/§4 and `docs/architecture.md`
+  now match. `docker` argv in dcf/hydramesh remains `inspect` only.
+- Architecture §9a records the process topology so the next reader does
+  not invent a microservice mesh. DCF `:latest` images called out as a
+  pin-before-enable landmine.

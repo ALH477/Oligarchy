@@ -21,7 +21,7 @@ nothing to "run" beyond `nixos-rebuild switch`.
 | Kernel variants | `zen`, `xanmod`, `latest`, `lts` (6.12), `cachyos-bore` (opt-in) |
 | DSP | Real-time coprocessor guest via KVM/QEMU + NETJACK, isolated CPU core `isolcpus=0` |
 | AI | Local Ollama on ROCm (AMD) / CUDA (Optimus) / CPU fallback; `ai-stack` CLI with presets |
-| MCP | 9 dedicated, read-only Rust MCP servers — one per OS aspect — plus the `ports-sec` auditor |
+| MCP | 10 dedicated, read-only Rust MCP servers — one per OS aspect, including the `ports-sec` auditor |
 | Scale | ~68k lines of code across 278 files (35k Nix, 24k Rust) — see §1a |
 
 ### 1a. Scale
@@ -210,7 +210,7 @@ input.
 | `modules/blipply-assistant/` | Rust voice assistant (STT/TTS/VAD, UI, ollama integration) | its own `nixosModule` |
 | `modules/demod-voice/` | local TTS / voice cloning (Coqui XTTS-v2, Piper) | `nixos-module.nix` |
 | `modules/dsp-ctl/` | Rust TUI/CLI for the ArchibaldOS DSP VM | its own `nixosModule` |
-| `modules/mcp-servers/` | 11-crate Rust workspace: 9 dedicated read-only aspect MCP servers + umbrella `oligarchy-mcp` + ports-sec auditor | `nixosModules.default` |
+| `modules/mcp-servers/` | 12-crate Rust workspace: 10 dedicated read-only aspect MCP servers + umbrella `oligarchy-mcp` + shared `core` | `nixosModules.default` |
 | `modules/oligarchy-forge/` | sandboxed coding-agent runner — a TOML schema compiles to a generated flake building a `dockerTools.streamLayeredImage`, run via rootless Podman; Ratatui dashboard. **Read-write**, so deliberately outside the MCP surface | its own `nixosModule` (`custom.oligarchyForge`) |
 | `modules/oligarchy-plugins/` | tiered sandboxed plugin runtime — one WIT ABI across three sandbox tiers, with per-instance W^X. The FX Bazaar's foundation. **Read-write**, so also outside the MCP surface. See §5b | `nixosModules.plugins` / `.default` |
 | `modules/demod-talk/` | pure-Lua DCF chat stack (certified text + voice L3, SuperPack/Reed-Solomon transport, StreamDB history). Plaintext by design, so `interface` is mandatory and asserted to be WireGuard | `services.demod-talk` |
@@ -556,8 +556,8 @@ new `output` hook rather than replacing the firewall chain.
 
 ## 9. MCP servers — the agent surface
 
-Nine dedicated, **read-only** Model Context Protocol servers — one per
-OS aspect — plus a dedicated port/API security-audit server. All are
+Ten dedicated, **read-only** Model Context Protocol servers — one per
+OS aspect, including the `ports-sec` auditor. All are
 Rust binaries spawned by Claude Code / Blipply over stdio, with no network
 listener and no remote-plugin fetch. The agent surface can never mutate
 the running system.
@@ -575,6 +575,7 @@ the short form:
 | ai | `oligarchy-ai-mcp` | `ai_status`, `ollama_models`, `ollama_running`, `blipply_status`, `voice_status` |
 | vm | `oligarchy-vm-mcp` | `vm_list`, `vm_status`, `vm_disk_usage`, `vm_port_forwards` |
 | secrets | `oligarchy-secrets-mcp` | `secrets_inventory` (redacted metadata), `sops_status`, `age_keys_present` — **no decrypt path by construction** |
+| storage | `oligarchy-storage-mcp` | `disk_usage`, `directory_sizes`, `largest_files`, `nix_gc_roots`, `nix_closure_size`, `nix_generations`, `gc_pressure` — no binary on its allowlist can delete |
 | ports-sec | `oligarchy-ports-sec-mcp` | `listening_ports`, `egress_coverage`, `local_api_scan`, `nmap_self_scan`, `mcp_self_audit`, `tls_cert_check` |
 
 Each aspect server reaches a CLI only through `runner::run(ASPECT, prog, …)`,
@@ -623,6 +624,37 @@ with one aspect argument and the umbrella `execvp`'s into the matching
 compromised umbrella cannot grant new capabilities. The legacy Blipply
 `command = "oligarchy-mcp"` (no args) execs into `system` by default,
 keeping the old spawn working unchanged.
+
+### 9a. Process topology (not a microservice mesh)
+
+Oligarchy is one NixOS host. Isolation is systemd + stdio + Unix sockets,
+not a service mesh. Do not add HTTP between these processes.
+
+    agent (Claude/Blipply)
+      └─ stdio  oligarchy-mcp <aspect>     # umbrella, zero capabilities
+                  └─ execvp oligarchy-<aspect>-mcp
+                        └─ runner::run(ASPECT, cli, argv) only
+
+    read-write, never in .mcp.json:
+      oligarchy-plugind  -- Unix socket /run/oligarchy/plugind
+      oligarchy-plugin@  -- instances, not the supervisor
+      oligarchy-p2pd     -- loopback HTTP 127.0.0.1:5111 (Nix substituter)
+      dcf-mesh-agent     -- UDP 7801 (off)
+      dcf-hypr-agent     -- UDP 7100 → hypr sockets + oligarchy-ctl (off)
+      docker-dcf-sdk     -- 0.0.0.0:7777/50051/8888 (off, image unpinned)
+      docker-dcf-id      -- :4000 (off, image unpinned)
+      archibaldos-dsp    -- QEMU + NETJACK (enable is local.nix)
+
+HydraMesh is packages (`dcf`, `hydramesh` CLIs), not a daemon.
+
+Adding an MCP aspect means editing every list named in
+`modules/mcp-servers/README.md` (allowlist, umbrella, flake aspectNames,
+nixos-module aspectNames, `.mcp.json`, README, this table). Miss one and
+the umbrella prints `exec failed` with no compile error.
+
+`docker` is on the dcf and hydramesh MCP allowlists, but both tools pass
+only `docker inspect --format '{{.State.Status}}' dcf-sdk`. The binary
+allowlist is wider than the argv; do not add more docker verbs.
 
 ## 10. DSP coprocessor — the headline feature
 
@@ -677,6 +709,15 @@ Real-time agent-to-agent fabric split across three modules:
 
 All run in hardened rootless Docker containers with least-privilege
 secrets management. The tray auto-starts on login.
+
+DCF containers (`modules/dcf-community-node.nix`, `modules/dcf-identity.nix`)
+pull `alh477/dcf-rs:latest` and `alh477/dcf-id:latest`. That is not a Nix
+pin. Do not enable either option until the image is replaced with a digest
+(`image = "alh477/dcf-rs@sha256:…"`). Firewall opens 7777/50051/8888/4000
+on `0.0.0.0` when they are on. Host-visible bind ports in
+`modules/hydramesh.nix` (`/etc/hydramesh/dcf_config.toml`) must stay
+identical to the container TOML in `dcf-community-node.nix`; the hydramesh
+MCP `node_config` tool reads the host copy.
 
 ## 13. Conventions
 
