@@ -53,6 +53,16 @@ let
         rootkit.enable = false; # lynis is slow/noisy in a VM
         aide.enable = false;
         yara.enable = true;
+        # Set explicitly because this node imports malware-shield.nix ALONE,
+        # and `notifyUser` defaults to `config.custom.user.name` — an option
+        # declared in modules/user.nix, which is not imported here. Without
+        # this the node dies with a bare "attribute 'user' missing", naming
+        # neither the option nor the module that would have supplied it.
+        #
+        # Setting the value rather than importing modules/user.nix keeps the
+        # node light, which is the same call the hardening test makes just
+        # below (apparmor/auditd off for the same reason).
+        notifyUser = "root";
       };
     };
 

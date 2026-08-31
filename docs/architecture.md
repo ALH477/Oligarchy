@@ -22,21 +22,21 @@ nothing to "run" beyond `nixos-rebuild switch`.
 | DSP | Real-time coprocessor guest via KVM/QEMU + NETJACK, isolated CPU core `isolcpus=0` |
 | AI | Local Ollama on ROCm (AMD) / CUDA (Optimus) / CPU fallback; `ai-stack` CLI with presets |
 | MCP | 10 dedicated, read-only Rust MCP servers — one per OS aspect, including the `ports-sec` auditor |
-| Scale | ~68k lines of code across 278 files (35k Nix, 24k Rust) — see §1a |
+| Scale | ~70k lines of code across 285 files (35k Nix, 25k Rust) — see §1a |
 
 ### 1a. Scale
 
-**68,372 lines of code across 278 tracked files** — 60,893 excluding blanks.
+**70,097 lines of code across 285 tracked files** — 62,489 excluding blanks.
 
 | language | files | lines | non-blank |
 |---|---|---|---|
-| Nix | 107 | 34,614 | 30,646 |
-| Rust | 98 | 23,884 | 21,547 |
-| Shell | 37 | 4,302 | 3,771 |
-| Kotlin (the Android companion) | 23 | 3,481 | 3,161 |
+| Nix | 108 | 34,961 | 30,975 |
+| Rust | 99 | 24,762 | 22,366 |
+| Shell | 39 | 4,713 | 4,139 |
+| Kotlin (the Android companion) | 26 | 3,570 | 3,241 |
 | Python | 7 | 905 | 747 |
 | C, Lua, WIT, Plymouth script | 6 | 1,186 | 1,021 |
-| **total** | **278** | **68,372** | **60,893** |
+| **total** | **285** | **70,097** | **62,489** |
 
 Git-tracked source only. Not counted: generated lockfiles (`Cargo.lock` 12.3k,
 `flake.lock` 2.7k), markup and config (`assets/demods_codex.html` 2.7k, plus
@@ -47,15 +47,15 @@ stack" and 155 lines of Lua are not a contradiction.
 
 Two figures are worth more than the total.
 
-**19% of the Nix and Rust is whole-line comments** — 9,712 of 52,193 non-blank
+**19% of the Nix and Rust is whole-line comments** — 10,025 of 53,341 non-blank
 lines, and roughly even between the two languages (Nix 18%, Rust 20%). That is
 not incidental. Most of the load-bearing decisions in this tree look arbitrary
 or removable until you know what broke last time, so the reason lives next to
 the code rather than only in a roadmap. Budget for it when reading: a 400-line
 module here is often 300 lines of mechanism.
 
-**14% of the Rust is inside `#[cfg(test)]`** — 3.4k of 24k, across 238 `#[test]`
-functions in 21 crates — and that undercounts the testing, because the expensive
+**14% of the Rust is inside `#[cfg(test)]`** — 3.6k of 25k, across 261 `#[test]`
+functions in 20 crates — and that undercounts the testing, because the expensive
 assertions are not in the crates at all. They are NixOS VM gates
 (`nix build .#plugins-*`, `.#p2p-*`) which boot a real kernel to check what a
 unit test structurally cannot: that a seccomp filter was honoured, that a
@@ -85,18 +85,23 @@ reader at the wrong place to start.
 
 ## 2. Flake composition
 
-`flake.nix` defines four NixOS configurations
+`flake.nix` defines five NixOS configurations — four laptops
 (`nixosConfigurations.nixos`, `nixos-fw13`, `nixos-intel`,
-`nixos-optimus`) plus the installer ISO (`packages.x86_64-linux.iso`).
+`nixos-optimus`) and one headless CI build server (`builder`, §5d) — plus
+the installer ISO (`packages.x86_64-linux.iso`).
 
 ### Input layers (order matters)
 
 `mkHost` assembles the system from three layers, in this order:
 
-1. **Third-party modules** — `determinate` (Nix installer flakehub),
+1. **Third-party modules** — `determinate` (Nix, from FlakeHub),
    `sops-nix` (secrets), `nixos-hardware` (`framework-16-7040-amd` profile),
-   `fw-fanctrl` (Framework fan control), `demod-ip-blocker` (ingress
-   blocklist), `lanzaboote` (secure boot, opt-in).
+   `demod-ip-blocker` (ingress blocklist), `lanzaboote` (secure boot,
+   opt-in), `nixos-generators` (the ISO and the DSP guest image),
+   `hydramesh` (`github:ALH477/HydraMesh`, deliberately not following
+   nixpkgs), `yara-rules` (`flake = false`).
+   Note `fw-fanctrl` is **not** an input — that option comes from nixpkgs
+   25.11 now and is configured in `modules/platform.nix`.
 2. **Home Manager** — `home-manager.nixosModules.home-manager`, with
    `users.asher = import ./home/home.nix`.
 3. **Local modules + sub-flakes** — pinned `path:` inputs for `boot-intro`,
@@ -118,13 +123,18 @@ coprocessor when available.
 | `nixosConfigurations.nixos-fw13` | Framework 13 AMD (iGPU only) |
 | `nixosConfigurations.nixos-intel` | pure Intel iGPU |
 | `nixosConfigurations.nixos-optimus` | Intel iGPU + NVIDIA dGPU (PRIME offload) |
+| `nixosConfigurations.builder` | headless CI build server (`custom.ciBuilder.*`) — see §5d |
 | `packages.x86_64-linux.iso` | install ISO (Calamares-Plasma6 + a reduced module set) |
 | `packages.x86_64-linux.default` | alias to `iso` |
 | `packages.x86_64-linux.malwareScan` | build gate — YARA-scan the system closure |
 | `packages.x86_64-linux.mcp-self-audit` | build gate — verify MCP workspace stays socket-free outside `ports-sec` |
 | `packages.x86_64-linux.plugins-*` | five build gates for the plugin runtime — see §5b |
+| `packages.x86_64-linux.p2p-*` | nine build gates for the P2P substituter — see §5c |
+| `packages.x86_64-linux.test-*` | the five `tests/default.nix` VM suites — packages, NOT checks, so `nix flake check` stays KVM-free |
+| `packages.x86_64-linux.forge-catalog` | build gate — every forge agent still renders a flake that parses |
+| `packages.x86_64-linux.dsp-vm-qcow` | the DSP coprocessor guest image (`qcow-efi`) |
 | `packages.x86_64-linux.oligarchy-hw-detect` | installer-only helper: picks the matching `nixosConfigurations.*` from DMI |
-| `checks.x86_64-linux.system` | minimal check (eval the toplevel) |
+| `checks.x86_64-linux.system` | the full system toplevel — `nix flake check` evaluates AND builds it. Needs no KVM, which is why the VM suites are `packages.test-*` instead |
 | `devShells.default` | `nil` LSP, `nixpkgs-fmt`, qemu, virt-manager, debug tools |
 
 ## 3. `configuration.nix` — the toggle bank
@@ -403,6 +413,56 @@ by default**, with `transport` defaulting to `"none"` and `servePackages` /
 test), `.#p2p-swarm`, `.#p2p-no-peer-fallback`, `.#p2p-local-signing`,
 `.#p2p-peer-scope` and `.#p2p-selftest`.
 
+### 5d. CI build server (`modules/ci-builder.nix`)
+
+`custom.ciBuilder.*`, off by default, wired on `nixosConfigurations.builder`
+only. It exists because everything above this line was opt-in: sixteen
+`nix build .#<gate>` outputs and five `runNixOSTest` suites, none of which
+any flake output or CI system referenced. They guarded against the author
+forgetting, which is the one moment they could not fire.
+
+**Four lanes, split by trust rather than by cost.** `ALH477/Oligarchy` is a
+public repository, and a fork's pull request carries its own copy of
+`.github/workflows` — so any self-hosted job a fork can trigger is arbitrary
+code execution on the maintainer's LAN.
+
+| lane | file | trigger | runner |
+|---|---|---|---|
+| eval | `eval.yml` | push + PR, **including forks** | GitHub-hosted |
+| gates | `gates.yml` | push to `main`, dispatch | self-hosted, on the host |
+| nightly sweep | `gates.yml` | schedule | self-hosted, on the host |
+| agents | `agents.yml` | PR (same-repo only), dispatch | self-hosted, in a microVM |
+
+The controls are layered because none is sufficient alone. `gates.yml` has
+**no `pull_request` trigger at all** — a runner cannot be reached by a job
+that never starts. The runners register with `ephemeral = true`, so one job
+cannot leave state for the next. And every self-hosted job in `agents.yml`
+requires `head.repo.full_name == github.repository`, including the *catalog*
+job that reads no diff and holds no key — it still runs `nix build` over
+checked-out source, and a Nix build executes that source's own build scripts.
+
+**Why only the agent lane runs in a VM.** Putting every runner in a guest
+looks stricter and breaks `plugins-tier2-runtime`, which already boots a
+microVM inside a NixOS test VM: a runner in a guest puts its inner guest at
+L3, and that gate asserts `/dev/kvm` against a fifteen-second boot budget
+that stops measuring anything under emulation. The gate lane only ever runs
+code already pushed here, so the trigger restriction is the right control
+there. The agent lane is the one that reads untrusted diffs *and* holds
+model API keys, so it gets the disposable guest.
+
+Two hardware facts the module encodes. **Nested KVM** is required by
+`plugins-tier2-runtime` and by nothing else; `custom.ciBuilder` asserts on it
+rather than letting the gate silently degrade, and picks `kvm_amd` vs
+`kvm_intel` from `custom.platform.cpu` instead of hardcoding a vendor.
+**Disk** is sized by `malwareScan`, which realizes the entire system closure
+— 4096 paths / 48.6 GiB by the §3.1 measurement in the P2P roadmap — which is
+why `nix.gc` is on by default here and off everywhere else.
+
+Every lane is additionally **disabled by default** at the workflow level:
+nothing runs until the repository variable `OLIGARCHY_CI` is `true`, and the
+agent lane needs `OLIGARCHY_CI_AGENTS` on top of that, because it is the only
+lane that costs money per run.
+
 ## 6. `vm-manager/` — VMs
 
 A sub-flake providing two NixOS modules — `quickemu-vm` and `dsp-vm` —
@@ -527,7 +587,7 @@ rollout runbook.
 | Secure Boot | `custom.secureBoot.enable` | off | lanzaboote signed chain + optional TPM2 LUKS |
 | Secrets | `custom.secrets` (sops-nix) | **on** | Age key lives at `/var/lib/sops-nix/key.txt` (never in-store); encrypted `*.enc.env` only |
 | Plugin runtime W^X | `custom.plugins` (`allowedTiers`, `allowSelfJit`, `requireSignature`) | off | Per-*instance* `MemoryDenyWriteExecute` from the plugin's own manifest, plus a seccomp filter that also denies anonymous `PROT_EXEC`, `ptrace` and `userfaultfd`, and `NoExecPaths=/ <stateDir>` against plain-file dual mapping. Signed-only install with nobody in `trusted-users`. See §5b |
-| Steam/game sandbox | `steam-noswap.slice` + `systemd-run` launch wrapper (icewm menu + `home/apps/desktop-entries.nix`) | **on** | `MemorySwapMax=0` (isolates games from swap/zram — a memory ceiling OOM-kills the game instead of thrashing) plus `NoNewPrivileges`, `ProtectHome`/`Hostname`/`Clock`/`Kernel{Tunables,Logs,Modules}`/`ControlGroups`, `RestrictSUIDSGID`, `LockPersonality`. Deliberately excludes `RestrictNamespaces`/`SystemCallFilter` (breaks Proton's pressure-vessel sandbox), `MemoryDenyWriteExecute` (breaks Wine/Mono JIT), `RestrictRealtime` (GameMode may want RT scheduling) |
+| Steam/game sandbox | `steam-noswap.slice` + `systemd-run` launch wrapper (icewm menu + `home/apps/desktop-entries.nix`) | **on** | `MemorySwapMax=0` (isolates games from swap/zram — a memory ceiling OOM-kills the game instead of thrashing) plus `NoNewPrivileges`, `ProtectHostname`/`Clock`/`Kernel{Tunables,Logs,Modules}`/`ControlGroups`, `RestrictSUIDSGID`, `LockPersonality`. No `ProtectHome` — Steam's library is in `$HOME`. Deliberately excludes `RestrictNamespaces`/`SystemCallFilter` (breaks Proton's pressure-vessel sandbox), `MemoryDenyWriteExecute` (breaks Wine/Mono JIT), `RestrictRealtime` (GameMode may want RT scheduling) |
 
 `oligarchy-security status` (also `oligarchy-ctl status`, the DCF tray,
 and the MCP `security_status` tool) reports live posture.

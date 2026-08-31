@@ -245,14 +245,48 @@ in
       # current-key.pub is overwritten by build-all.sh before each rebuild;
       # it's a per-build artifact (gitignored), not a sops secret — the
       # public key isn't secret, and rotation is by rebuild.
+      #
+      # GITIGNORED MEANS ABSENT FROM THE FLAKE, NOT JUST ABSENT FROM GIT.
+      # Nix excludes gitignored files from a git-tracked flake source, so
+      # these two paths do not exist during evaluation even on the machine
+      # that just generated them. Reading one unguarded made `sshAuth = true`
+      # an eval error for the WHOLE FLAKE — every host, and CI — with a
+      # message pointing at a missing store path rather than at this option.
+      #
+      # The assertion below turns that into a sentence naming the fix. It is
+      # an assertion rather than a silent fallback on purpose: quietly
+      # installing no key would leave the bridge reachable with `sshAuth`
+      # reported as on, which is the worse failure.
+      assertions = [
+        {
+          assertion = builtins.pathExists ./current-key.pub
+            && builtins.pathExists ./current-key-raw.pub;
+          message = ''
+            services.dcf-hypr-agent.sshAuth is enabled, but the build-generated
+            key artifacts are not visible to Nix:
+
+              modules/hypr-controller/current-key.pub
+              modules/hypr-controller/current-key-raw.pub
+
+            Both are gitignored, and Nix does not copy gitignored files into a
+            flake's source, so they are absent at evaluation time even if they
+            exist in your working tree. Run modules/hypr-controller/build-all.sh
+            to generate them and either commit them (they are public keys, not
+            secrets) or drop them from .gitignore, then rebuild.
+          '';
+        }
+      ];
+
       users.users.${cfg.sshAuthUser}.openssh.authorizedKeys.keys =
-        [ (builtins.readFile ./current-key.pub) ];
+        lib.optional (builtins.pathExists ./current-key.pub)
+          (builtins.readFile ./current-key.pub);
 
       # DCF-SPA peer credential (raw Ed25519 public key, 64 hex chars) for
       # bridge pairing-auth verification. Same posture as the SPA creds dir —
       # public key, no sops needed.
-      environment.etc."dcf-spa/peers/0001.pub".source =
-        ./current-key-raw.pub;
+      environment.etc = lib.mkIf (builtins.pathExists ./current-key-raw.pub) {
+        "dcf-spa/peers/0001.pub".source = ./current-key-raw.pub;
+      };
     })
   ]);
 }

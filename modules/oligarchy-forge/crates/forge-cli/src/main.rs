@@ -43,6 +43,17 @@ enum Command {
     /// Open the interactive extension picker for the current directory's
     /// oligarchy-forge.toml (bootstraps one if it doesn't exist yet).
     Edit,
+    /// Print the generated flake.nix to stdout and exit, without building
+    /// anything or touching Podman.
+    ///
+    /// Exists so the generated flake can be checked without the two things
+    /// `build` needs and CI cannot always have: a container runtime, and
+    /// network access to fetch an agent's upstream flake. `nix build
+    /// .#forge-catalog` renders one project per catalogued agent and parses
+    /// each result, which catches the failure mode the unit tests cannot —
+    /// a template that produces well-formed-looking text that is not valid
+    /// Nix, or an `inputs` block that disagrees with the `outputs` signature.
+    Render,
 }
 
 fn load_config() -> Result<ForgeConfig> {
@@ -86,6 +97,11 @@ fn run(cli: Cli) -> Result<i32> {
             let cfg = load_config()?;
             forge_core::process::ensure_image(&cfg, rebuild)?;
             forge_core::process::container_run(&cfg, &[])
+        }
+        Some(Command::Render) => {
+            let cfg = load_config()?;
+            print!("{}", forge_core::render::render_flake(&cfg)?);
+            Ok(0)
         }
     }
 }
