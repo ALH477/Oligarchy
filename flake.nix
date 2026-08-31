@@ -280,7 +280,15 @@
         # DeMoD Voice - Local TTS and Voice Cloning
         ./modules/demod-voice/nixos-module.nix
 
-        # Uncomment when archibaldos input is available:
+        # NOT imported: the DSP VM this file used to gesture at is already
+        # built, in full, by `vm-manager.nixosModules.dsp-vm` (option
+        # `custom.vm.dsp`) — VFIO, OVMF, hugepages, RT scheduling, the NETJACK
+        # and JACK bridges. modules/archibaldos-dsp-vm.nix is an older, smaller
+        # take on the same hardware, and importing it would declare a SECOND
+        # unit claiming the same xHCI functions; whichever started first would
+        # win and the loser would fail with a device-busy error that reads like
+        # a hardware fault. The guest image is `nix build .#dsp-vm-qcow`, wired
+        # into `custom.vm.dsp.archibaldOS.diskImage` below.
         # ./modules/archibaldos-dsp-vm.nix
       ];
 
@@ -469,6 +477,27 @@
         #   oligarchy-p2pd --config /etc/oligarchy/p2p/config.json check
         #   curl -s http://127.0.0.1:5111/nix-cache-info
         oligarchy-p2p.nixosModules.default
+
+        # ── DSP coprocessor guest image ────────────────────────────────────
+        # Workstation only, and this sets the IMAGE, not `enable` — enabling
+        # the VM stays in ~/.config/oligarchy/local.nix, because starting it
+        # hands the passed-through xHCI controller to the guest and the audio
+        # interfaces vanish from the host.
+        #
+        # Everything else about this VM (VFIO device ids, cores, hugepages,
+        # NETJACK) is already configured in configuration.nix. The one thing
+        # that was never reproducible was the disk: the default is a path under
+        # /home that nothing builds, and the image sitting there had no EFI
+        # system partition, so OVMF fell through to PXE and the VM sat in a
+        # netboot loop pinning the isolated cores. It is now a derivation.
+        {
+          custom.vm.dsp.archibaldOS.diskImage = self.packages.x86_64-linux.dsp-vm-qcow;
+
+          # sshd in the guest (modules/dsp-guest.nix), so the latency harness
+          # can drive jackd from INSIDE the RT guest — measuring from the host
+          # measures the host's scheduler, which is the thing under test.
+          custom.vm.dsp.network.hostfwd = { "2222" = 22; };
+        }
       ];
 
       # Framework 13 AMD 7040 — iGPU only, no expansion-bay dGPU. Unverified
@@ -518,6 +547,52 @@
       ];
 
       # ════════════════════════════════════════════════════════════════════════
+      # Headless CI build server (custom.ciBuilder).
+      #
+      # The machine that runs what nothing else runs. Sixteen `nix build
+      # .#<gate>` outputs and five runNixOSTest suites exist in this tree and
+      # no CI system referenced any of them; this host is where they run on a
+      # schedule instead of when somebody remembers.
+      #
+      # Not a laptop, so no nixos-hardware profile and no dGPU story. The two
+      # things that matter here are nested KVM (plugins-tier2-runtime boots a
+      # guest inside a guest) and disk (malwareScan realizes the whole ~48.6
+      # GiB closure). modules/ci-builder.nix carries both, and reads
+      # custom.platform.cpu below to pick kvm_amd vs kvm_intel rather than
+      # hardcoding a vendor.
+      #
+      # oligarchy-plugins.nixosModules.default is imported for its microvm.nix
+      # host module: custom.ciBuilder.sandbox puts the agent-review runner —
+      # the only lane that reads fork pull-request content, and the only one
+      # holding API keys — inside a guest. custom.plugins.enable defaults to
+      # false, so importing it costs nothing else.
+      # ════════════════════════════════════════════════════════════════════════
+      nixosConfigurations.builder = mkHost [
+        ./hosts/builder/hardware-configuration.nix
+        ./modules/ci-builder.nix
+        oligarchy-plugins.nixosModules.default
+        {
+          # Set `cpu` to this box's actual vendor: it selects the nested-virt
+          # modprobe line in modules/ci-builder.nix. `gpu` is irrelevant on a
+          # headless host but the option is an enum with no "none" member.
+          custom.platform = {
+            gpu = "amd";
+            cpu = "amd";
+            framework = false;
+            hasDgpu = false;
+            displayGpu = "igpu";
+          };
+
+          custom.ciBuilder = {
+            enable = true;
+            # Provision this out of band (sops-nix, or root-owned by hand).
+            # Never a path literal — that copies the token into the store.
+            tokenFile = "/var/lib/secrets/github-runner-token";
+          };
+        }
+      ];
+
+      # ════════════════════════════════════════════════════════════════════════
       # Installation ISO & Tests
       # ════════════════════════════════════════════════════════════════════════
       packages.${system} = {
@@ -528,6 +603,24 @@
         # assertion (nixpkgs lib/eval-config.nix only sets nixpkgs.pkgs when
         # pkgs != null). With `system`, nixpkgs is built internally and honours
         # nixpkgs.config.
+        # The DSP coprocessor guest, as a UEFI-bootable image.
+        #
+        # `qcow-efi`, NOT `qcow`, and that is the whole point: the firmware in
+        # modules/archibaldos-dsp-vm.nix is OVMF, and the image it replaced had
+        # no EFI system partition — OVMF found nothing, fell through to PXE,
+        # and sat in the netboot loop. A BIOS image here silently reproduces
+        # exactly that failure.
+        #
+        # This exists so the guest stops being a hand-copied artifact built out
+        # of tree. Three files in this repo used to look like they defined that
+        # VM and none of them did; when the image stopped booting there was
+        # nothing to rebuild it from.
+        dsp-vm-qcow = nixos-generators.nixosGenerate {
+          inherit system;
+          format = "qcow-efi";
+          modules = [ ./modules/dsp-guest.nix ];
+        };
+
         iso = nixos-generators.nixosGenerate {
           inherit system;
           format = "install-iso";
@@ -749,7 +842,113 @@
               echo "Clean: no signatures in the system closure."
               touch $out
             '';
-      };
+
+        # ════════════════════════════════════════════════════════════════════
+        # Forge agent-catalog gate — every catalogued agent still renders a
+        # flake that is valid Nix.
+        #
+        # WHAT THIS CATCHES THAT THE UNIT TESTS DO NOT. forge-core's tests
+        # assert on substrings of the rendered text, which cannot tell
+        # well-formed-looking output from output that actually parses. The two
+        # ways this generator breaks are exactly the two a substring check
+        # misses: a template edit that emits syntactically invalid Nix, and an
+        # `inputs` block that disagrees with the `outputs` function signature
+        # (declare an input the function does not accept, or accept one never
+        # declared, and Nix rejects the flake).
+        #
+        # Renders rather than builds, deliberately. `oligarchy-forge build`
+        # needs a container runtime and network access to fetch each agent's
+        # upstream flake; neither is available in a Nix build sandbox, and
+        # requiring them would make this gate unrunnable rather than slow. The
+        # `render` verb exists for this.
+        #
+        # Run on demand:  nix build .#forge-catalog
+        # ════════════════════════════════════════════════════════════════════
+        forge-catalog =
+          let
+            forge = oligarchy-forge.packages.${system}.oligarchy-forge;
+            # The agents CI reviews with, plus the two lazily-installed ones,
+            # so a template change cannot break a catalog entry unnoticed.
+            agents = [ "oh-my-pi" "claude" "hermes" "opencode" "codex" ];
+          in
+          pkgs.runCommand "oligarchy-forge-catalog"
+            {
+              nativeBuildInputs = [ forge pkgs.nix ];
+              meta = with nixpkgs.lib; {
+                description = "Assert every forge agent renders a parseable flake";
+                license = licenses.mit;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              # nix-instantiate --parse only reads and parses; point its state
+              # and store at the build dir anyway so it can never reach for a
+              # daemon socket the sandbox does not have.
+              export NIX_STATE_DIR="$PWD/nix-state"
+              export NIX_STORE_DIR="$PWD/nix-store"
+              export HOME="$PWD"
+              mkdir -p "$NIX_STATE_DIR" "$NIX_STORE_DIR" work
+              cd work
+
+              fail=0
+              for agent in ${nixpkgs.lib.concatStringsSep " " agents}; do
+                printf '[project]\nname = "catalog-%s"\nagents = ["%s"]\n' \
+                  "$agent" "$agent" > oligarchy-forge.toml
+
+                if ! oligarchy-forge render > flake.nix 2> render.err; then
+                  echo "FAIL  $agent — render failed:" >&2
+                  cat render.err >&2
+                  fail=1
+                  continue
+                fi
+
+                if ! nix-instantiate --parse flake.nix > /dev/null 2> parse.err; then
+                  echo "FAIL  $agent — rendered flake is not valid Nix:" >&2
+                  cat parse.err >&2
+                  echo "--- rendered ---" >&2
+                  cat flake.nix >&2
+                  fail=1
+                  continue
+                fi
+
+                echo "PASS  $agent"
+              done
+
+              # A gate that inspected nothing is a failure, not a pass — the
+              # same rule mcp_self_audit and the p2p selftest follow. An empty
+              # agent list here would otherwise report success forever.
+              if [ ${toString (builtins.length agents)} -eq 0 ]; then
+                echo "FAIL: the agent list is empty; this gate checked nothing." >&2
+                exit 1
+              fi
+
+              [ "$fail" -eq 0 ] || exit 1
+              mkdir -p $out
+              echo "all ${toString (builtins.length agents)} catalogued agents render valid Nix" > $out/report.txt
+            '';
+      }
+      # ══════════════════════════════════════════════════════════════════════
+      # The tests/default.nix VM suite, surfaced as `packages.test-<name>`.
+      #
+      # These are `pkgs.testers.runNixOSTest` and therefore need KVM. They go
+      # in `packages`, NOT in `checks`, and that placement is deliberate:
+      # `checks.${system}` is currently KVM-free (it builds the system
+      # toplevel and nothing else), which is what lets a runner without
+      # /dev/kvm still run `nix flake check`. Folding five VM tests into
+      # `checks` would silently take that property away.
+      #
+      # Same reasoning as the plugins-*/p2p-* gates above, which are also
+      # packages rather than checks. CI runs them by name on the self-hosted
+      # builder — see .github/workflows/gates.yml.
+      # ══════════════════════════════════════════════════════════════════════
+      // (
+        let
+          vmTests = import ./tests { inherit pkgs; inherit (nixpkgs) lib; };
+        in
+        nixpkgs.lib.mapAttrs'
+          (name: drv: nixpkgs.lib.nameValuePair "test-${name}" drv)
+          vmTests
+      );
 
       # ════════════════════════════════════════════════════════════════════════
       # Checks & Formatter
@@ -772,145 +971,145 @@
       # runs automatically or is part of any build/boot path.
       # ════════════════════════════════════════════════════════════════════════
       devShells.${system} = {
-      bios-tools = pkgs.mkShell {
-        buildInputs = [
-          pkgs.flashrom
-          pkgs.uefitool
-          pkgs.chipsec
-          pkgs.ifrextractor-rs
+        bios-tools = pkgs.mkShell {
+          buildInputs = [
+            pkgs.flashrom
+            pkgs.uefitool
+            pkgs.chipsec
+            pkgs.ifrextractor-rs
 
-          (pkgs.writeShellScriptBin "oligarchy-bios-uma-unlock" ''
-            set -euo pipefail
+            (pkgs.writeShellScriptBin "oligarchy-bios-uma-unlock" ''
+              set -euo pipefail
 
-            usage() {
-              echo "Usage:"
-              echo "  oligarchy-bios-uma-unlock read  <VarName> <VarGuid>"
-              echo "  oligarchy-bios-uma-unlock write <VarName> <VarGuid> <offset> <hex-byte> --backup <path>"
-              echo
-              echo "Read docs/bios-uma-unlock.md in full before using 'write'."
-              exit 1
-            }
-
-            [ $# -ge 1 ] || usage
-            cmd="$1"; shift
-
-            case "$cmd" in
-              read)
-                [ $# -eq 2 ] || usage
-                name="$1"; guid="$2"
-                tmp=$(mktemp)
-                echo "+ chipsec_util uefi var-read '$name' '$guid' '$tmp'"
-                sudo chipsec_util uefi var-read "$name" "$guid" "$tmp"
-                echo "== hex dump =="
-                xxd "$tmp"
-                rm -f "$tmp"
-                ;;
-              write)
-                [ $# -eq 6 ] && [ "$5" = "--backup" ] || usage
-                name="$1" guid="$2" offset="$3" newbyte="$4" backup="$6"
-
-                [ -s "$backup" ] || { echo "Backup file '$backup' missing or empty — refusing to continue." >&2; exit 1; }
-
-                echo "This will modify a live UEFI Setup NVRAM variable on this machine."
-                echo "Variable: $name  GUID: $guid  offset: $offset  new byte: $newbyte"
-                echo "Confirmed backup present at: $backup"
+              usage() {
+                echo "Usage:"
+                echo "  oligarchy-bios-uma-unlock read  <VarName> <VarGuid>"
+                echo "  oligarchy-bios-uma-unlock write <VarName> <VarGuid> <offset> <hex-byte> --backup <path>"
                 echo
-                echo "Have you (a) read docs/bios-uma-unlock.md in full, (b) independently"
-                echo "identified this exact offset from YOUR OWN BIOS dump via IFRExtractor"
-                echo "(not a guess), and (c) got the machine on AC power with no other"
-                echo "critical work in progress?"
-                echo
-                read -r -p "Type exactly: I ACCEPT THE BRICK RISK   " confirm
-                [ "$confirm" = "I ACCEPT THE BRICK RISK" ] || { echo "Aborted."; exit 1; }
+                echo "Read docs/bios-uma-unlock.md in full before using 'write'."
+                exit 1
+              }
 
-                cur=$(mktemp); new=$(mktemp)
-                sudo chipsec_util uefi var-read "$name" "$guid" "$cur"
-                echo "== current value =="; xxd "$cur"
+              [ $# -ge 1 ] || usage
+              cmd="$1"; shift
 
-                cp "$cur" "$new"
-                printf "$(printf '\\x%s' "$newbyte")" | dd of="$new" bs=1 seek="$offset" count=1 conv=notrunc status=none
+              case "$cmd" in
+                read)
+                  [ $# -eq 2 ] || usage
+                  name="$1"; guid="$2"
+                  tmp=$(mktemp)
+                  echo "+ chipsec_util uefi var-read '$name' '$guid' '$tmp'"
+                  sudo chipsec_util uefi var-read "$name" "$guid" "$tmp"
+                  echo "== hex dump =="
+                  xxd "$tmp"
+                  rm -f "$tmp"
+                  ;;
+                write)
+                  [ $# -eq 6 ] && [ "$5" = "--backup" ] || usage
+                  name="$1" guid="$2" offset="$3" newbyte="$4" backup="$6"
 
-                echo "== proposed new value =="; xxd "$new"
-                read -r -p "Write this? [y/N] " go
-                [ "$go" = "y" ] || [ "$go" = "Y" ] || { echo "Aborted, nothing written."; rm -f "$cur" "$new"; exit 1; }
+                  [ -s "$backup" ] || { echo "Backup file '$backup' missing or empty — refusing to continue." >&2; exit 1; }
 
-                sudo chipsec_util uefi var-write "$name" "$guid" "$new"
+                  echo "This will modify a live UEFI Setup NVRAM variable on this machine."
+                  echo "Variable: $name  GUID: $guid  offset: $offset  new byte: $newbyte"
+                  echo "Confirmed backup present at: $backup"
+                  echo
+                  echo "Have you (a) read docs/bios-uma-unlock.md in full, (b) independently"
+                  echo "identified this exact offset from YOUR OWN BIOS dump via IFRExtractor"
+                  echo "(not a guess), and (c) got the machine on AC power with no other"
+                  echo "critical work in progress?"
+                  echo
+                  read -r -p "Type exactly: I ACCEPT THE BRICK RISK   " confirm
+                  [ "$confirm" = "I ACCEPT THE BRICK RISK" ] || { echo "Aborted."; exit 1; }
 
-                verify=$(mktemp)
-                sudo chipsec_util uefi var-read "$name" "$guid" "$verify"
-                echo "== read-back after write =="; xxd "$verify"
-                cmp -s "$new" "$verify" && echo "Verified: variable now matches what was written." \
-                  || echo "WARNING: read-back does not match what was written — investigate before rebooting."
-                rm -f "$cur" "$new" "$verify"
-                ;;
-              *) usage ;;
-            esac
-          '')
-        ];
+                  cur=$(mktemp); new=$(mktemp)
+                  sudo chipsec_util uefi var-read "$name" "$guid" "$cur"
+                  echo "== current value =="; xxd "$cur"
 
-        shellHook = ''
-          echo "bios-tools shell — read docs/bios-uma-unlock.md before doing anything."
-          echo "This shell can modify live firmware NVRAM. Nothing here runs unless you run it."
-        '';
-      };
+                  cp "$cur" "$new"
+                  printf "$(printf '\\x%s' "$newbyte")" | dd of="$new" bs=1 seek="$offset" count=1 conv=notrunc status=none
 
-      # ════════════════════════════════════════════════════════════════════════
-      # Development Shell with Testing Tools
-      # ════════════════════════════════════════════════════════════════════════
-      default = pkgs.mkShell {
-        buildInputs = with pkgs; [
-          # Core Nix development
-          nil # Nix LSP
-          nixpkgs-fmt
-          nixfmt-rfc-style
-          nix-tree # Explore Nix store
-          nix-diff # Compare Nix derivations
-          nvd # NixOS version diff
+                  echo "== proposed new value =="; xxd "$new"
+                  read -r -p "Write this? [y/N] " go
+                  [ "$go" = "y" ] || [ "$go" = "Y" ] || { echo "Aborted, nothing written."; rm -f "$cur" "$new"; exit 1; }
 
-          # VM / virtualization tools
-          qemu # Full QEMU (for manual VM testing)
-          virt-manager # GUI for VM management
-          libvirt # Virtualization library
-          virt-viewer # Minimal SPICE client
+                  sudo chipsec_util uefi var-write "$name" "$guid" "$new"
 
-          # Network testing
-          nmap # Network scanner
-          iperf3 # Network bandwidth tester
-          tcpdump # Packet analyzer
-          wireshark-cli # CLI Wireshark (tshark)
+                  verify=$(mktemp)
+                  sudo chipsec_util uefi var-read "$name" "$guid" "$verify"
+                  echo "== read-back after write =="; xxd "$verify"
+                  cmp -s "$new" "$verify" && echo "Verified: variable now matches what was written." \
+                    || echo "WARNING: read-back does not match what was written — investigate before rebooting."
+                  rm -f "$cur" "$new" "$verify"
+                  ;;
+                *) usage ;;
+              esac
+            '')
+          ];
 
-          # Debugging
-          gdb # Debugger
-          strace # System call tracer
-          ltrace # Library call tracer
-          lsof # List open files
-          # netstat-nat removed (no longer in nixpkgs)
+          shellHook = ''
+            echo "bios-tools shell — read docs/bios-uma-unlock.md before doing anything."
+            echo "This shell can modify live firmware NVRAM. Nothing here runs unless you run it."
+          '';
+        };
 
-          # System analysis
-          htop # Process viewer
-          iftop # Network traffic monitor
-          iotop # I/O monitor
-          atop # Advanced system monitor
-        ];
+        # ════════════════════════════════════════════════════════════════════════
+        # Development Shell with Testing Tools
+        # ════════════════════════════════════════════════════════════════════════
+        default = pkgs.mkShell {
+          buildInputs = with pkgs; [
+            # Core Nix development
+            nil # Nix LSP
+            nixpkgs-fmt
+            nixfmt-rfc-style
+            nix-tree # Explore Nix store
+            nix-diff # Compare Nix derivations
+            nvd # NixOS version diff
 
-        shellHook = ''
-          echo "╔════════════════════════════════════════════════════════════════╗"
-          echo "║              Oligarchy NixOS Development Shell                 ║"
-          echo "╠════════════════════════════════════════════════════════════════╣"
-          echo "║ Commands:                                                      ║"
-          echo "║   nix flake check                  - eval + build system       ║"
-          echo "║   nixos-rebuild dry-build \\                                    ║"
-          echo "║     --flake .#nixos                - fast eval smoke test      ║"
-          echo "║   nix build .#iso                  - build installer ISO       ║"
-          echo "║   nix build .#malwareScan          - YARA-scan the closure     ║"
-          echo "║   nix fmt                          - format Nix sources        ║"
-          echo "║   nvd diff /run/current-system ./result - diff closures        ║"
-          echo "║   oligarchy-security status        - live security posture     ║"
-          echo "║                                                                ║"
-          echo "║ Tools: nix-tree, nix-diff, htop, iftop, tshark, qemu           ║"
-          echo "╚════════════════════════════════════════════════════════════════╝"
-        '';
-      };
+            # VM / virtualization tools
+            qemu # Full QEMU (for manual VM testing)
+            virt-manager # GUI for VM management
+            libvirt # Virtualization library
+            virt-viewer # Minimal SPICE client
+
+            # Network testing
+            nmap # Network scanner
+            iperf3 # Network bandwidth tester
+            tcpdump # Packet analyzer
+            wireshark-cli # CLI Wireshark (tshark)
+
+            # Debugging
+            gdb # Debugger
+            strace # System call tracer
+            ltrace # Library call tracer
+            lsof # List open files
+            # netstat-nat removed (no longer in nixpkgs)
+
+            # System analysis
+            htop # Process viewer
+            iftop # Network traffic monitor
+            iotop # I/O monitor
+            atop # Advanced system monitor
+          ];
+
+          shellHook = ''
+            echo "╔════════════════════════════════════════════════════════════════╗"
+            echo "║              Oligarchy NixOS Development Shell                 ║"
+            echo "╠════════════════════════════════════════════════════════════════╣"
+            echo "║ Commands:                                                      ║"
+            echo "║   nix flake check                  - eval + build system       ║"
+            echo "║   nixos-rebuild dry-build \\                                    ║"
+            echo "║     --flake .#nixos                - fast eval smoke test      ║"
+            echo "║   nix build .#iso                  - build installer ISO       ║"
+            echo "║   nix build .#malwareScan          - YARA-scan the closure     ║"
+            echo "║   nix fmt                          - format Nix sources        ║"
+            echo "║   nvd diff /run/current-system ./result - diff closures        ║"
+            echo "║   oligarchy-security status        - live security posture     ║"
+            echo "║                                                                ║"
+            echo "║ Tools: nix-tree, nix-diff, htop, iftop, tshark, qemu           ║"
+            echo "╚════════════════════════════════════════════════════════════════╝"
+          '';
+        };
       };
     };
 }

@@ -130,10 +130,11 @@ pub enum Agent {
     Codex,
     Aider,
     Cursor,
+    Hermes,
 }
 
 impl Agent {
-    pub const ALL: [Agent; 7] = [
+    pub const ALL: [Agent; 8] = [
         Agent::OhMyPi,
         Agent::Claude,
         Agent::OpenCode,
@@ -141,15 +142,37 @@ impl Agent {
         Agent::Codex,
         Agent::Aider,
         Agent::Cursor,
+        Agent::Hermes,
     ];
 
     /// True for agents whose CLI comes from a flake input rather than a
     /// plain nixpkgs attribute or a `wrapper_script()`-built derivation —
-    /// see `Agent::Claude` and `ForgeConfig::needs_claude_code_nix()`. The
-    /// generated flake only declares (and therefore only ever fetches) the
-    /// `claude-code-nix` input when this is true for some selected agent.
+    /// see `Agent::flake_input()` and `ForgeConfig::extra_flake_inputs()`. The
+    /// generated flake only declares (and therefore only ever fetches) such an
+    /// input when this is true for some selected agent.
     pub fn needs_flake_input(self) -> bool {
-        matches!(self, Agent::Claude)
+        self.flake_input().is_some()
+    }
+
+    /// The extra flake input this agent's CLI comes from, as
+    /// `(input name, url)` — `None` for an agent that is a plain nixpkgs
+    /// package or a lazily-installed wrapper.
+    ///
+    /// Returned as data rather than written into the template because there
+    /// is now more than one such agent. The previous shape was a single
+    /// `needs_claude_code_nix` boolean with the input's name and URL spelled
+    /// out literally in `flake.nix.tera`, which could not express a second
+    /// one without duplicating the whole conditional; adding a third agent
+    /// from a flake is now one arm here and nothing else.
+    ///
+    /// The input name must match the identifier `wrapper_script()` uses,
+    /// because the generated flake passes it into `outputs` by that name.
+    pub fn flake_input(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Agent::Claude => Some(("claude-code-nix", "github:sadjow/claude-code-nix")),
+            Agent::Hermes => Some(("hermes-agent", "github:NousResearch/hermes-agent")),
+            _ => None,
+        }
     }
 
     /// nixpkgs attribute names this agent's wrapper needs at runtime, beyond
@@ -168,6 +191,9 @@ impl Agent {
             Agent::Codex => &["codex"],
             Agent::Aider => &["aider-chat"],
             Agent::Cursor => &["cursor-cli"],
+            // Comes from its own flake input, same as Claude Code — see
+            // flake_input().
+            Agent::Hermes => &[],
         }
     }
 
@@ -180,6 +206,7 @@ impl Agent {
             Agent::Codex => "codex",
             Agent::Aider => "aider",
             Agent::Cursor => "cursor",
+            Agent::Hermes => "hermes",
         }
     }
 
@@ -221,6 +248,15 @@ impl Agent {
             Agent::Cursor => {
                 "Cursor CLI (`cursor-agent`) — Cursor's terminal coding agent. \
                  Plain nixpkgs package (`cursor-cli`), no wrapper needed."
+            }
+            Agent::Hermes => {
+                "Hermes Agent (`hermes`) — Nous Research's terminal agent, and \
+                 an MCP client, which is what makes it interesting here: it \
+                 speaks to this repo's own read-only MCP aspect servers (see \
+                 modules/dcf-mesh-agent/hermes-mcp.json for the client-side \
+                 block). Not in nixpkgs; packaged reproducibly by its own \
+                 upstream flake, github:NousResearch/hermes-agent, pulled in \
+                 as an extra input only when this agent is selected."
             }
         }
     }
@@ -277,10 +313,16 @@ in pkgs.writeShellScriptBin "omp" ''
             // complete, reproducible derivation for the real `claude`
             // binary. The generated flake only declares this input at all
             // when Agent::Claude is selected — see
-            // ForgeConfig::needs_claude_code_nix() and the Tera template.
+            // ForgeConfig::extra_flake_inputs() and the Tera template.
             Agent::Claude => "claude-code-nix.packages.${system}.claude-code",
             // Plain nixpkgs packages — packages() above is sufficient,
             // nothing to bake in here.
+            // Same shape as Claude: upstream ships its own flake, so the
+            // package it exposes is already the complete, reproducible
+            // derivation. `hermes-agent` is the input name declared by
+            // flake_input(), and the generated flake receives it under that
+            // name in `outputs`.
+            Agent::Hermes => "hermes-agent.packages.${system}.default",
             Agent::OpenCode => "",
             Agent::Ollama => "",
             Agent::Codex => "",
@@ -370,12 +412,29 @@ impl ForgeConfig {
         self.project.agents.iter().map(|a| a.wrapper_script()).collect::<Vec<_>>().join(" ")
     }
 
-    /// Whether any selected agent needs a flake input beyond plain nixpkgs
-    /// (currently: Agent::Claude, via claude-code-nix). The generated
-    /// flake's `inputs` only ever grow to include claude-code-nix when this
-    /// is true, so a project that never selects Claude never fetches it.
-    pub fn needs_claude_code_nix(&self) -> bool {
+    /// Whether any selected agent needs a flake input beyond plain nixpkgs.
+    /// The generated flake's `inputs` only ever grow when this is true, so a
+    /// project that selects none of those agents fetches none of them.
+    pub fn needs_extra_flake_inputs(&self) -> bool {
         self.project.agents.iter().any(|a| a.needs_flake_input())
+    }
+
+    /// Every extra flake input the selected agents need, as
+    /// `(input name, url)` — deduplicated and ordered by input name so the
+    /// rendered `flake.nix` is byte-identical for the same agent set
+    /// regardless of the order they were listed in the TOML. A generated
+    /// file that reshuffles itself between runs produces noise in review and
+    /// defeats the point of generating it.
+    pub fn extra_flake_inputs(&self) -> Vec<(&'static str, &'static str)> {
+        let mut inputs: Vec<_> = self
+            .project
+            .agents
+            .iter()
+            .filter_map(|a| a.flake_input())
+            .collect();
+        inputs.sort_unstable_by_key(|(name, _)| *name);
+        inputs.dedup();
+        inputs
     }
 
     /// Every pair of currently-selected extensions that provide the same
