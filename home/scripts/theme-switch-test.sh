@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Task 1: prove today's prefix matcher picks Night Owl when the user chose Night.
-choice="Night"
-options=("Night Owl" "Night")
-ids=(beta alpha)
-got=""
-for i in "${!options[@]}"; do
-  if [[ "${options[$i]}" == "$choice"* ]]; then got="${ids[$i]}"; break; fi
-done
-if [[ "$got" == "alpha" ]]; then
-  echo "FAIL: expected prefix-bug (got alpha); test harness wrong"
-  exit 1
-fi
-echo "confirmed prefix bug: choosing 'Night' matched '$got' (want alpha)"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+export THEMES_DIR="$ROOT/testdata/themes"
+export MANIFEST="$THEMES_DIR/manifest.json"
+export CURRENT_FILE="$ROOT/testdata/current-theme"
+echo alpha > "$CURRENT_FILE"
+
+THEME_SWITCH_LIB=1
+# shellcheck source=theme-switch.sh
+source "$ROOT/theme-switch.sh"
+
+id="$(pick_id_from_label "Night")"
+[[ "$id" == "alpha" ]] || { echo "FAIL pick Night → $id (want alpha)"; exit 1; }
+id="$(pick_id_from_label "Night Owl")"
+[[ "$id" == "beta" ]] || { echo "FAIL pick Night Owl → $id (want beta)"; exit 1; }
+id="$(pick_id_from_label "Night ✓")"
+[[ "$id" == "alpha" ]] || { echo "FAIL pick Night ✓ → $id (want alpha)"; exit 1; }
+echo "ok pick_id_from_label"
