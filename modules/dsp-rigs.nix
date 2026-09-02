@@ -171,11 +171,16 @@ in
 
     # Let a wheel user arm/disarm the DSP coprocessor (the `dsp-arm` cockpit key)
     # without a password — scoped to exactly those units.
+    #
+    # `custom.vm.dsp.name` is the real unit name (vm-manager's dsp-vm module,
+    # `services.dsp-vm.*` never existed as a live option — see personas.nix).
+    # Always declared: vm-manager.nixosModules.dsp-vm is in commonModules
+    # (flake.nix), which every nixosConfigurations host and the ISO share.
     security.polkit.extraConfig = ''
       polkit.addRule(function(action, subject) {
         if (action.id == "org.freedesktop.systemd1.manage-units" && subject.isInGroup("wheel")) {
           var unit = action.lookup("unit");
-          if (unit == "${config.services.dsp-vm.name}.service" ||
+          if (unit == "${config.custom.vm.dsp.name}.service" ||
               unit == "dsp-netjack-bridge.service" ||
               unit == "dsp-jack-bridge.service") {
             return polkit.Result.YES;

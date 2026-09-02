@@ -468,8 +468,16 @@ lane that costs money per run.
 A sub-flake providing two NixOS modules — `quickemu-vm` and `dsp-vm` —
 plus per-VM definitions in `vm-manager/config/`:
 
-- **DSP VM** — latency-critical RT guest (NETJACK, isolated CPU core via
-  `isolcpus=0`, RT BORE kernel, kexec recovery). The headline feature.
+- **DSP VM** — latency-critical RT guest (NETJACK over virtio-net, CPU
+  isolation via `custom.vm.dsp.isolatedCores`, default `[ 0 1 ]`). The
+  headline feature. The runner is `vm-manager/modules/dsp-vm.nix`
+  (`custom.vm.dsp`, unit `archibaldos-dsp`); the guest OS itself is
+  `modules/dsp-guest.nix`, built with `nix build .#dsp-vm-qcow`
+  (`qcow-efi` format — the firmware is OVMF, and a plain `qcow` image has
+  no ESP). `vm-manager/config/archibaldos-dsp.nix` and
+  `modules/archibaldos-dsp-vm.nix` are older, smaller definitions that
+  predate this and are imported by nothing; do not edit either expecting
+  it to affect the running guest. See §10.
 - **Coding sandbox** — development isolation
 - **Kali** — penetration-testing guest
 - **OpenWRT** — router simulation
@@ -720,21 +728,24 @@ allowlist is wider than the argv; do not add more docker verbs.
 
 A real-time audio DSP guest running on the same hardware as the chaotic
 Linux host, isolated so that the host can thrash (Doom at 300+ FPS) while
-the guest keeps audio latency in the sub-millisecond range.
+the guest keeps audio latency low. The guest is defined in
+`modules/dsp-guest.nix` and built via `nix build .#dsp-vm-qcow`; the host
+runner is `vm-manager/modules/dsp-vm.nix` (`custom.vm.dsp`).
 
 | | |
 |---|---|
 | Host kernel | CachyOS/Zen/XanMod/latest/lts/BORE (per `custom.kernel.variant`) |
-| RT guest | ArchibaldOS (custom RT NixOS, BORE scheduler) via KVM/QEMU |
-| Isolation | `isolcpus=0` — CPU 0 surrendered to the DSP guest |
-| Audio bridge | NETJACK over shared memory |
-| Latency | 0.38–0.66 ms @ 96 kHz / 32–64 samples (theoretical), ~1.33 ms measured |
-| Recovery | 180–350 ms kexec restart |
-| Persona | `studio` arms the DSP and drops AI; `dev` is the day-to-day default |
+| RT guest | ArchibaldOS on `linuxPackages_xanmod_latest` via KVM/QEMU. `linuxPackages-rt`/`-rt_latest` and CachyOS RT were removed from nixpkgs; XanMod carries the RT patch set instead — anything older in this repo saying "PREEMPT_RT kernel" means this now |
+| Isolation | `custom.vm.dsp.isolatedCores`, default `[ 0 1 ]` — not just core 0 |
+| Audio bridge | NETJACK over virtio-net (port 4713), not shared memory |
+| Latency | 0.38–0.66 ms @ 96 kHz / 32–64 samples and ~1.33 ms measured are old, theoretical/pre-XanMod numbers, carried here for history only — the current XanMod guest has not been re-measured |
+| Recovery | no kexec path is defined anywhere in `modules/dsp-guest.nix`; restart is `systemctl restart archibaldos-dsp` on the host |
+| Arming | `studio` persona documents *intent* only — `p.dsp` does not touch `custom.vm.dsp.enable` (`modules/personas.nix`). Real path: set `custom.vm.dsp.enable = true` in `~/.config/oligarchy/local.nix` (`nixos-rebuild switch --impure`), then arm at runtime with `dsp-arm` or `systemctl start archibaldos-dsp`. `autoStart` defaults to `false` because starting the VM binds the second xHCI controller to `vfio-pci`, pulling it out from under the host |
 
-Personas (`studio / gaming / dev / battery / minimal`) re-arm the whole rig in one
-switch — kernel, DSP coprocessor, AI tier, audio quantum, gamemode and
-power policy. Runtime toggles (power profile, animations, live PipeWire
+Personas (`studio / gaming / dev / battery / minimal`) retune kernel, AI
+tier, audio quantum, gamemode and power in one switch. They do **not**
+flip `custom.vm.dsp.enable` — that stays in local.nix (see the Arming
+row above). Runtime toggles (power profile, animations, live PipeWire
 quantum) flip instantly; build-time pieces are written to
 `~/.config/oligarchy/state.nix` and applied on the next `nixos-rebuild switch --impure`.
 

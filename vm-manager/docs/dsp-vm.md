@@ -4,13 +4,21 @@ Real-time audio processing coprocessor with ultra-low latency.
 
 ## Overview
 
-The DSP VM runs ArchibaldOS with a CachyOS RT kernel, isolated from the host system. Audio is routed to the host via NETJACK2 over the virtual network.
+The DSP VM boots an in-tree NixOS guest (`modules/dsp-guest.nix`,
+still called "ArchibaldOS" for its hostname/persona), isolated from the
+host system. Audio is routed to the host via NETJACK2 over the virtual
+network.
+
+The guest kernel is `linuxPackages_xanmod_latest`, **not** PREEMPT_RT and
+**not** CachyOS RT — both were removed from nixpkgs ("removed due to lack
+of maintenance"), so the guest module uses XanMod's RT patch set instead.
+Any older material that says "RT kernel" or "CachyOS RT" means this now.
 
 ### Performance Targets
 
-| Metric | Target | Actual |
+| Metric | Target | Config |
 |--------|--------|--------|
-| Round-trip latency | <2ms | 1.33ms |
+| Round-trip latency | <2ms | **not yet measured** on the XanMod guest — the old CachyOS-RT figures do not carry over, and none has replaced them; see `docs/architecture.md` §10 and `modules/dsp-guest.nix` |
 | Sample rate | 96kHz | 96kHz |
 | Bit depth | 24-bit | 24-bit |
 | Buffer size | 128 samples | 128 samples |
@@ -49,16 +57,20 @@ boot.kernelParams = [
 
 ### Step 1: Build the VM Image
 
+Built directly from this repo's top-level flake — no cloning, no
+conversion step. `modules/ArchibaldOS/` is a separate, unrelated
+desktop/ISO sub-flake; it is not the DSP guest.
+
 ```bash
-# Clone ArchibaldOS
-cd modules/ArchibaldOS
-
-# Build the headless DSP configuration
-nix build .#hydramesh-iso
-
-# Convert to raw disk image
-qemu-img convert -O raw result ~/vms/archibaldos-dsp.qcow2
+nix build .#dsp-vm-qcow
 ```
+
+This produces a `qcow-efi` image (a real ESP for the OVMF firmware the
+host runner supplies — a raw/BIOS image here reproduces the exact
+failure this guest used to have: OVMF finds no EFI entry and falls
+through to an endless PXE netboot loop). On `nixosConfigurations.nixos`
+the derivation is already wired into `custom.vm.dsp.archibaldOS.diskImage`
+(see `flake.nix`), so there is nothing to copy to `~/vms/`.
 
 ### Step 2: Configure the Host
 
