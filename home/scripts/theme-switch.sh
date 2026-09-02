@@ -138,7 +138,7 @@ apply_theme() {
     # it to reload from (the new target of) style.css.
     pkill -HUP waybar 2>/dev/null || true
 
-    notify-send -u low -t 2000 "Theme Changed" "Now using: $display_name" 2>/dev/null || true
+    notify-send -u low -t 4000 "Theme Changed" "Now using: $display_name (live; next rebuild restores Nix default)" 2>/dev/null || true
 }
 
 show_gui_menu() {
