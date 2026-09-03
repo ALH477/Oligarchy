@@ -187,7 +187,9 @@
         domain = "dcf.demod.ltd";
         port = 4000;
         dataDir = "/var/lib/demod-identity";
-        secretsFile = "/etc/nixos/secrets/dcf-id.env";
+        # When enabling: sops runtime path, NEVER a repo file (that copies
+        # into /nix/store). See modules/dcf-identity.nix secretsFile docs.
+        secretsFile = "/run/secrets/dcf-id-env";
       };
       # System Tray Controller
       services.dcf-tray.enable = false;
@@ -427,14 +429,29 @@
       programs.steam = lib.mkIf config.custom.steam.enable {
         enable = true;
         extraCompatPackages = [ pkgs.proton-ge-bin ];
-        # Only force dGPU routing when custom.platform.displayGpu = "dgpu"
-        # (the default) and this host actually has a dGPU to route to — see
-        # modules/platform.nix and docs/dgpu-steam-forcing.md.
-        package = lib.mkIf (config.custom.platform.hasDgpu && config.custom.platform.displayGpu == "dgpu") (pkgs.steam.override {
+        # These have to live in Steam's FHS, not just on PATH. A host
+        # mangohud/gamescope is invisible to pressure-vessel otherwise, so
+        # launch options like `mangohud %command%` / `gamescope -- %command%`
+        # silently do nothing.
+        extraPackages = with pkgs; [ gamescope mangohud ];
+        remotePlay.openFirewall = true;
+        localNetworkGameTransfers.openFirewall = true;
+        # Steam Input on Wayland: translate X11 events to uinput so controllers
+        # and Steam's overlay bindings actually reach games under Hyprland.
+        extest.enable = true;
+        protontricks.enable = true;
+        # extraEnv always — scaling is independent of which GPU renders.
+        # DRI_PRIME only when this host has a dGPU and displayGpu = "dgpu"
+        # (see modules/platform.nix and docs/dgpu-steam-forcing.md).
+        package = pkgs.steam.override {
           extraEnv = {
+            # Framework 16 2560x1600 @ scale 1: Steam's UI is unreadably small
+            # at 1.0. 1.25 is sharp enough not to look like a bitmap stretch.
+            STEAM_FORCE_DESKTOPUI_SCALING = "1.25";
+          } // lib.optionalAttrs (config.custom.platform.hasDgpu && config.custom.platform.displayGpu == "dgpu") {
             DRI_PRIME = "pci-" + lib.replaceStrings [ ":" "." ] [ "_" "_" ] config.custom.platform.dgpuPciId;
           };
-        });
+        };
       };
       hardware.steam-hardware.enable = lib.mkIf config.custom.steam.enable true;
       # gamemode is owned by the active persona (on for the "gaming" persona).
@@ -455,11 +472,19 @@
       # ──────────────────────────────────────────────────────────────────────────
       custom.vm.dsp = {
         enable = lib.mkDefault false;
-        # Do NOT autostart at boot: the guest currently spins at 100% CPU on the
-        # isolated cores and never boots (OVMF firmware not wired into the qemu
-        # launch + no guest serial console), which soft-locks the host. Units
-        # stay defined for manual launch (systemctl start archibaldos-dsp) while
-        # the boot path is fixed. Flip back to true once the guest boots cleanly.
+        # Do NOT autostart at boot, and this is now a policy choice rather than
+        # a workaround. Starting the VM binds the second xHCI controller to
+        # vfio-pci and hands it to the guest, so every audio interface on that
+        # bus disappears from the host mid-session. That has to be deliberate.
+        #
+        # The old reason recorded here — "OVMF firmware not wired into the qemu
+        # launch + no guest serial console" — was wrong on the first count and
+        # is fixed on the second. OVMF was already wired in (`cfg.ovmf`, on by
+        # default). What actually spun the isolated cores at 100% was the disk:
+        # a hand-copied qcow2 with no EFI system partition, so OVMF found
+        # nothing to boot and fell through to an endless PXE netboot loop. The
+        # image is a derivation now (`nix build .#dsp-vm-qcow`, wired up in
+        # flake.nix) and the console is a real socket, so `dsp-console` works.
         autoStart = false;
         name = "archibaldos-dsp";
         isolatedCores = [ 0 1 ];
@@ -689,7 +714,10 @@
             "ProtectKernelLogs=yes"
             "ProtectKernelModules=yes"
             "ProtectControlGroups=yes"
-            "ProtectHome=yes"
+            # ProtectHome is deliberately absent: Steam's library, shader
+            # cache, and compat prefixes live under ~/.steam and
+            # ~/.local/share/Steam. Hiding $HOME makes every launch look like
+            # a first-run (or fail outright).
             "LockPersonality=yes"
           ];
           steamNoSwapLauncher = pkgs.writeShellScript "steam-noswap" ''
@@ -1002,6 +1030,32 @@
       # docker -> multi-user.target hostage for 30s every boot.
       systemd.services.NetworkManager-wait-online.enable = lib.mkForce false;
 
+      # Shutdown timeout backstop. The stock 90s system / 90s user defaults let
+      # a SINGLE process stuck in an uninterruptible kernel path cost 3m44s of
+      # poweroff (hyprlock wedged in an amdgpu/TTM ioctl: 90s in hypridle's
+      # stop, then 2min of user@1000 stop-sigterm, then 2min more after the
+      # final SIGKILL). The fix for that specific process is elsewhere -- this
+      # is the backstop, so the NEXT stuck process costs seconds instead.
+      # Truncating a .swap stop is harmless at poweroff: the contents are
+      # discarded either way. `systemd.extraConfig` is a removed option; the
+      # system manager is configured via settings.Manager, the user manager
+      # still via a lines-typed extraConfig.
+      systemd.settings.Manager.DefaultTimeoutStopSec = "10s";
+      systemd.user.extraConfig = "DefaultTimeoutStopSec=10s\n";
+
+      # libvirt-guests ships TimeoutStopSec=0 -- literally infinity -- with
+      # ON_SHUTDOWN=suspend and SHUTDOWN_TIMEOUT=300 per guest, serialised.
+      # It is free today only because zero domains exist (it stops in 67ms);
+      # defining one arms an unbounded wait. Bound both halves. This is a
+      # timeout backstop, not a decision to stop using libvirt.
+      virtualisation.libvirtd.shutdownTimeout = 30;
+      # Guarded: the NixOS module only defines libvirt-guests when libvirtd is
+      # enabled (it is here only because local.nix sets custom.vm.dsp.enable).
+      # Unguarded this would synthesise a stub unit with no ExecStart on a
+      # fresh clone.
+      systemd.services.libvirt-guests.serviceConfig.TimeoutStopSec =
+        lib.mkIf config.virtualisation.libvirtd.enable 60;
+
       # Astrill VPN egress list -> demod-blk-v4/v6. VPN detection, not threat
       # intel; the blocklists module below carries the actual threat feeds.
       services.demod-ip-blocker = {
@@ -1194,7 +1248,15 @@
           login = { fprintAuth = true; enableGnomeKeyring = true; };
           sudo = { fprintAuth = true; };
           greetd = { enableGnomeKeyring = true; };
-          hyprlock = { fprintAuth = true; enableGnomeKeyring = true; };
+          # fprintAuth is OFF here on purpose. pam_fprintd lands FIRST and
+          # `sufficient` in /etc/pam.d/hyprlock, but no fingers are enrolled on
+          # the Goodix sensor -- so every single lock D-Bus-activated fprintd
+          # and sat on it for ~30s, buying nothing: hyprlock's own
+          # auth:fingerprint:enabled defaults off, so the reader never drove
+          # the UI anyway. To actually use it, flip this back to true AND set
+          # auth:fingerprint:enabled in home/apps/hyprlock.nix -- both, or it
+          # regresses to the same dead leg.
+          hyprlock = { fprintAuth = false; enableGnomeKeyring = true; };
         };
 
 

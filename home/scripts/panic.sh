@@ -25,5 +25,6 @@ fi
 
 notify "locked · mic muted · clipboard wiped${radios}"
 
-# 4. Lock last (blocking).
-pidof hyprlock >/dev/null 2>&1 || hyprlock
+# 4. Lock last (blocking). No --no-block here on purpose: a panic lock that
+# returns before the locker is actually up is a panic lock that failed.
+systemctl --user start hyprlock.service

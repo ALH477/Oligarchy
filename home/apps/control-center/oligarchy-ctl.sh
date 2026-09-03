@@ -355,7 +355,7 @@ run() {
     power-perf)     powerprofilesctl set performance && note "Power → performance" ;;
     power-balanced) powerprofilesctl set balanced && note "Power → balanced" ;;
     power-saver)    powerprofilesctl set power-saver && note "Power → power-saver" ;;
-    lock)           hyprlock ;;
+    lock)           systemctl --user start --no-block hyprlock.service ;;
     logout)         wlogout -p layer-shell ;;
 
     sys-status)     visible bash -c 'oligarchy-ctl status' ;;
