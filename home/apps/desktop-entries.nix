@@ -15,12 +15,14 @@ let
     "ProtectKernelLogs=yes"
     "ProtectKernelModules=yes"
     "ProtectControlGroups=yes"
-    "ProtectHome=yes"
+    # ProtectHome is deliberately absent: Steam's library lives in $HOME.
     "LockPersonality=yes"
   ];
-  steamExec = "${pkgs.systemd}/bin/systemd-run --user --collect --slice=steam-noswap.slice --description=steam-hardened "
+  mkSteamExec = args:
+    "${pkgs.systemd}/bin/systemd-run --user --collect --slice=steam-noswap.slice --description=steam-hardened "
     + lib.concatMapStringsSep " " (p: "-p ${p}") steamHardeningProps
-    + " -- /run/current-system/sw/bin/steam %U";
+    + " -- /run/current-system/sw/bin/steam" + args;
+  steamExec = mkSteamExec " %U";
 in
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,12 +73,30 @@ in
   home.file.".local/share/applications/steam.desktop".text = ''
     [Desktop Entry]
     Name=Steam
+    Comment=Valve Steam
     Icon=steam
     Exec=${steamExec}
     Terminal=false
     Type=Application
     Categories=Network;FileTransfer;Game;
-    MimeType=x-scheme-handler/steam;
+    MimeType=x-scheme-handler/steam;x-scheme-handler/steamlink;
+    Actions=Library;BigPicture;Friends;
+    PrefersNonDefaultGPU=true
+    X-KDE-RunOnDiscreteGpu=true
+    StartupNotify=true
+    StartupWMClass=steam
+
+    [Desktop Action Library]
+    Name=Library
+    Exec=${mkSteamExec " steam://open/games"}
+
+    [Desktop Action BigPicture]
+    Name=Big Picture
+    Exec=${mkSteamExec " -gamepadui"}
+
+    [Desktop Action Friends]
+    Name=Friends
+    Exec=${mkSteamExec " steam://open/friends"}
   '';
 
   home.file.".local/share/applications/dsp-status.desktop".text = ''
