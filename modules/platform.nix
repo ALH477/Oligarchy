@@ -33,18 +33,35 @@ in
       type = types.enum [ "dgpu" "igpu" ];
       default = "dgpu";
       description = ''
-        Which AMD GPU client apps (games, Steam, anything launched from
-        Hyprland) render on, on hosts with both an iGPU and a dGPU, via
-        Mesa's DRI_PRIME device-select. "dgpu" (default) prioritizes the
-        discrete GPU; "igpu" pins client rendering to the integrated GPU
-        for battery/thermal efficiency. Only applied when
-        custom.platform.gpu == "amd".
+        Which AMD GPU an app gets when it OPTS IN to offload, on hosts with
+        both an iGPU and a dGPU, via Mesa's DRI_PRIME device-select. "dgpu"
+        (default) sends opted-in apps to the discrete GPU; "igpu" keeps them
+        on the integrated GPU for battery/thermal efficiency. Only applied
+        when custom.platform.gpu == "amd".
+
+        This is NOT a session-wide setting, and must not become one. Apps
+        that do not opt in are unaffected and render on whatever Mesa picks
+        by default, which is the device driving the panel. There are exactly
+        three opt-in routes:
+
+          - Steam          -> programs.steam `extraEnv` (configuration.nix)
+          - anything else  -> `dgpu-run <cmd>` (home/scripts/default.nix)
+          - a systemd unit -> `Environment=` on that unit
+
+        Exporting DRI_PRIME for the whole session instead (e.g. an `env=`
+        line in hyprland.conf, which also reaches the systemd user manager)
+        is a bug, not a shortcut: the internal panel hangs off the iGPU, so
+        it makes every client's every frame a cross-device dmabuf import —
+        visible artifacts and flicker — and pins the dGPU resident at 0%
+        busy where amdgpu runtime PM can never suspend it. See
+        docs/dgpu-steam-forcing.md.
 
         This does NOT affect Hyprland/Aquamarine's own backend device — the
         compositor always uses whatever Mesa/KMS picks by default (the
         iGPU). Do not try to steer Aquamarine's own device (e.g. via
-        AQ_DRM_DEVICES) to the dGPU: it has no display engine path of its
-        own (see docs/dgpu-steam-forcing.md), and telling the compositor's
+        AQ_DRM_DEVICES) to the dGPU: its own outputs are the Graphics
+        Module's rear ports, and it has no path at all to the internal panel
+        (see docs/dgpu-steam-forcing.md), so telling the compositor's
         backend to open it as primary is a fatal, unrecoverable crash
         (CCompositor::initServer -> throwError -> SIGABRT) with no
         fallback — this took the whole session and greetd down when tried.

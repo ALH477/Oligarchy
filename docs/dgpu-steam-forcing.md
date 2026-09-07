@@ -18,10 +18,14 @@ file descriptors to `/dev/dri/renderD129` (iGPU), and `card1` (dGPU) sat idle.
 | Navi 33 RX 7600| `0000:03:00.0`| `renderD128` (card1) | dGPU (render offload) |
 | Phoenix1       | `0000:c5:00.0`| `renderD129` (card2) | iGPU (drives eDP panel)|
 
-The laptop panel (`eDP-2`) is physically wired to the iGPU only. The dGPU is
-render-offload only — it has no display engine path to the panel. This is not
-a muxed-switching laptop; a "switch the whole display to dGPU" keybind is not
+The laptop panel (`eDP-2`) is physically wired to the iGPU only. The dGPU does
+have its own outputs — `card1-DP-1`, the Framework Graphics Module's rear USB-C
+ports — but no path whatsoever to the internal panel. This is not a
+muxed-switching laptop; a "switch the whole display to dGPU" keybind is not
 physically possible.
+
+That asymmetry is the thing to keep in mind throughout: anything rendered on
+the dGPU and shown on the internal panel has to be copied across devices.
 
 ## Fix
 
@@ -131,10 +135,55 @@ sudo nixos-rebuild switch --flake /etc/nixos#nixos
    cat /sys/class/drm/card2/device/gpu_busy_percent  # iGPU — should settle
    ```
 
-## Stray `DRI_PRIME=1` Origin
+## Session-wide `DRI_PRIME` is a bug — the rule, and how it was found
 
-The `DRI_PRIME=1` was found in the live Steam process environment but was not
-located in any NixOS config, shell rc, `environment.d`, or Hyprland config. It
-likely originates from a `nixos-hardware` Framework module or a leftover
-session variable. The `extraEnv` override makes it harmless (the explicit PCI
-form wins), but if you want a clean session it can be hunted down separately.
+The original `DRI_PRIME=1` documented above was never traced to a source, and
+this section does **not** claim to have found it: the value differs (`1`, not
+the `pci-` form), so it may still have come from somewhere else, and it is no
+longer present in the live session either way.
+
+What was found is a separate and considerably larger problem in this repo.
+`home/hyprland/default.nix` carried a `gpuEnv` binding emitting
+`env=DRI_PRIME,pci-0000_03_00_0` into `hyprland.conf`.
+
+That is a far bigger hammer than it looks. A Hyprland `env=` is *session-global*
+— it is exported to every client **and** pushed into the systemd user manager's
+environment — so a single line put the entire desktop on the dGPU, not just
+games. Since the panel hangs off the iGPU, every client's every frame became a
+cross-device dmabuf import. Symptoms, all of which were live on this machine:
+
+- visible artifacts and flicker in Brave and other GPU-compositing clients;
+- `hyprlock` wedging uninterruptibly in TTM buffer migration
+  (`ttm_bo_move_memcpy` -> `amdgpu_bo_move`), which got its own per-unit
+  `UnsetEnvironment = "DRI_PRIME"` band-aid before the real cause was found;
+- the dGPU stuck at `runtime_status: active` with `gpu_busy_percent: 0` —
+  clients held `renderD128` continuously, so amdgpu runtime PM never suspended
+  it, and the battery paid for a GPU that was doing nothing.
+
+It has been removed. The standing rule:
+
+> **dGPU routing is per-app and opt-in. A session-wide `DRI_PRIME` is a bug.**
+
+Three sanctioned routes, and no others:
+
+| what | how | where |
+|---|---|---|
+| Steam and everything it launches | `extraEnv` on `programs.steam.package` | `configuration.nix` |
+| any other command | `dgpu-run <cmd>` | `home/scripts/default.nix` |
+| a systemd unit | `Environment=DRI_PRIME=…` on that unit | the unit |
+
+`custom.platform.displayGpu` selects *which* device those opted-in routes point
+at. It does not, and must not, put anything in the ambient environment.
+
+### Checking for a regression
+
+```sh
+env | grep DRI_PRIME                            # expect: nothing
+grep -c DRI_PRIME ~/.config/hypr/hyprland.conf  # expect: 0
+
+# a browser should be on the iGPU (renderD129), never renderD128
+ls -l /proc/$(pgrep -f brave | head -1)/fd | grep -o 'renderD12[89]' | sort -u
+
+# with no game running, the dGPU should be asleep
+cat /sys/bus/pci/devices/0000:03:00.0/power/runtime_status   # expect: suspended
+```
