@@ -1,10 +1,18 @@
-{ config, pkgs, lib, theme ? { }, features ? { }, ... }:
+{ config, pkgs, lib, theme ? { }, features ? { }, osConfig ? { }, ... }:
 
 let
   p = theme; # Shorthand for palette
 
   # Helper scripts directory
   scriptsDir = ".config/hypr/scripts";
+
+  # dGPU offload target, in the pci-DDDD_BB_DD_F form Mesa's DRI_PRIME wants.
+  # Same transform as configuration.nix's programs.steam extraEnv, so the two
+  # opt-in routes cannot disagree about which device they mean.
+  platform = osConfig.custom.platform or { };
+  hasDgpu = (platform.gpu or "amd") == "amd" && (platform.hasDgpu or false);
+  dgpuPrime = "pci-" + lib.replaceStrings [ ":" "." ] [ "_" "_" ]
+    (platform.dgpuPciId or "0000:03:00.0");
 
 in
 {
@@ -200,6 +208,40 @@ in
   home.file.".local/bin/scale-cycle" = {
     executable = true;
     source = ./scale-cycle.sh;
+  };
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # dgpu-run — opt-in dGPU offload for a single command.
+  #
+  # There is deliberately no session-wide DRI_PRIME (see the GPU targeting
+  # comment at the top of home/hyprland/default.nix): the panel hangs off the
+  # iGPU, so routing everything to the dGPU makes every frame a cross-device
+  # copy and keeps the dGPU from ever autosuspending. Browsers and other
+  # low-VRAM apps therefore stay on the iGPU by default, and anything that
+  # actually wants the RX 7700S asks for it here. Steam has its own equivalent
+  # override in configuration.nix and does not need this.
+  #
+  #   dgpu-run blender
+  #   dgpu-run glxinfo -B          # sanity: should report NAVI33
+  #
+  # Emitted only on hosts that have a dGPU — pointing DRI_PRIME at a PCI
+  # address that does not exist is worse than not setting it at all.
+  # ════════════════════════════════════════════════════════════════════════════
+  home.file.".local/bin/dgpu-run" = lib.mkIf hasDgpu {
+    executable = true;
+    text = ''
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+        echo "usage: dgpu-run <command> [args...]" >&2
+        echo "  runs <command> on the discrete GPU (${dgpuPrime})" >&2
+        exit 2
+      fi
+
+      export DRI_PRIME="${dgpuPrime}"
+      exec "$@"
+    '';
   };
 
   # ════════════════════════════════════════════════════════════════════════════
