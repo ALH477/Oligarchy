@@ -145,6 +145,15 @@ S = HKDF-SHA256(
     )   // 32 bytes
 ```
 
+Exact algorithm (RFC 5869):
+1. PRK = HKDF-Extract(salt = "oligarchy.tv-privacy.v1", IKM = host_secret)
+2. S   = HKDF-Expand(PRK, info = policy || 0x00 || date_bucket || … || le64(session_n), L=32)
+3. All subsequent values use HKDF-Expand(PRK, "edid-serial" || 0x00 || …, L=n)  // never re-extract from S
+
+`expand(label, n)` below means `HKDF-Expand(PRK, info = label || 0x00 || policy || 0x00 || date_bucket || 0x00 || connector || 0x00 || le64(session_n), L=n)` except where a shorter info is shown. Implementations MUST NOT treat S as a new IKM.
+
+Golden vectors use a 32-byte all-zero PRK and the exact label strings above. Implementations that produce different ts_sid for S=0x11 repeated 32 times fail the test.
+
 `generic` forces `date_bucket = "static"` and `session_n = 0`, so the face is stable across boots. That is intentional: a living-room TV that forgets its input name every night is worse UX than a bland stable name.
 
 `ephemeral` increments `session_n` on every arm.
@@ -153,16 +162,16 @@ S = HKDF-SHA256(
 
 ### 6.3 What may be derived from S
 
-Only through labeled HKDF expands:
+Only through labeled HKDF expands from PRK (never from S as IKM):
 
 ```
-edid_serial_u32     = expand(S, "edid-serial", 4)
-cec_osd             = printable(expand(S, "cec-osd", 8))    // if policy != generic
-ts_sid              = 1 + (expand(S, "ts-sid", 2) % 0xFFFE)
-ts_tsid             = 1 + (expand(S, "ts-tsid", 2) % 0xFFFE)
-ts_onid             = 0xFF00 | expand(S, "ts-onid", 1)
-pid_perm_key        = expand(S, "pid-perm", 32)
-lan_suffix          = hex(expand(S, "lan-suffix", 3))
+edid_serial_u32     = expand("edid-serial", 4)
+cec_osd             = printable(expand("cec-osd", 8))    // if policy != generic
+ts_sid              = 1 + (expand("ts-sid", 2) % 0xFFFE)
+ts_tsid             = 1 + (expand("ts-tsid", 2) % 0xFFFE)
+ts_onid             = 0xFF00 | expand("ts-onid", 1)
+pid_perm_key        = expand("pid-perm", 32)
+lan_suffix          = hex(expand("lan-suffix", 3))
 ```
 
 No other public field may be a raw slice of S or of `host_secret`.
@@ -319,7 +328,7 @@ Required deletions:
 - `major_brand` / compatible brands left as the container requires; do not add a unique encoder brand.
 - `handler_name`, `encoding_tool`, `encoder`, `comment`, `title` unless `stream.keepTitle = true` (default false).
 - creation / modification timestamps → `1970-01-01T00:00:00Z` or omitted.
-- UID / SegmentUID / TrackUID in MKV → fresh random from S (`expand(S, "mkv-uid-"+track, 16)`).
+- UID / SegmentUID / TrackUID in MKV → fresh random from PRK (`expand("mkv-uid-"+track, 16)`).
 - attachments, tags, chapters that contain free text.
 - `iTunes` / `©too` atoms.
 
@@ -546,7 +555,7 @@ A change is not mergeable without these.
 
 1. **edid-roundtrip** — scrub(captured) passes `edid-decode --check`; vendor/serial/name match policy; detailed timing 0 still describes the same mode.
 2. **cec-unit-dry** — wrapper prints the intended `cec-ctl` argv; does not require hardware.
-3. **ts-golden** — a committed 2-program fixture remaps to one program; PAT/PMT/SDT fields equal the vectors for `S = 0x11..1f`, policy `generic`; no `x264`, hostname, or source filename survive `ffprobe` + `strings`.
+3. **ts-golden** — a committed 2-program fixture remaps to one program; PAT/PMT/SDT fields equal the vectors for `S = 0x11` repeated 32 times, policy `generic`; no `x264`, hostname, or source filename survive `ffprobe` + `strings`.
 4. **mp4-knife** — creation_time is epoch; handler_name empty; codec extra-data identical.
 5. **idempotence** — mux(mux(f)) public IDs equal mux(f).
 6. **bind-surface** — live mode refuses to listen on a non-loopback address (unit test on the CLI parser).
