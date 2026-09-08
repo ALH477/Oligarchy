@@ -443,7 +443,7 @@ New `oligarchy-ctl` category `tv`:
 | `tv-arm` | switch persona to theater (prompts rebuild if build-time pieces changed), start CEC unit, apply LAN face |
 | `tv-disarm` | restore previous persona, restore hostname, stop CEC unit |
 | `tv-rekey` | increment session_n, rewrite stream-face defaults; link face still needs reboot |
-| `tv-mux <in> <out>` | one-shot file remux |
+| `tv-mux` | one-shot file remux (prompts for in/out paths; does not take argv) |
 | `tv-watch <dir>` | watch folder → remux into `<dir>/faced/` |
 
 Read-only MCP tool `tv_status` may exist later. No write MCP. Same rule as the rest of Oligarchy's agent surface.
@@ -573,6 +573,8 @@ Golden vectors live in `modules/tv-privacy/testdata/`. Same spirit as HydraMesh'
 - Strict egress, if enabled, should allow the media domains the operator actually uses. This module adds an ACR block set; it does not open ports.
 - Logs go to the journal at `info`. Do not log source file paths at info; `debug` may.
 
+Note: adding the `tv` category makes 11 total. Update architecture.md §7a count when the actions land.
+
 ---
 
 ## 16. Operator cookbook (normative UX, not implementation)
@@ -587,7 +589,7 @@ oligarchy-ctl run tv-arm
 mpv ./film.mkv
 
 # 5. if a file will leave the box (USB, DVR, library sync)
-oligarchy-ctl run tv-mux -- ./film.mkv ./faced/film.mkv
+oligarchy-ctl run tv-mux
 
 # 6. leave
 oligarchy-ctl run tv-disarm
