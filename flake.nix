@@ -18,6 +18,10 @@
     # Custom modules
     demod-ip-blocker.url = "git+https://github.com/ALH477/DeMoD-IP-Blocker.git";
     minecraft.url = "path:./modules/minecraft";
+    android-mirror = {
+      url = "path:./modules/android-mirror";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
 
     # Secure Boot (opt-in via custom.secureBoot.enable). Tracks the default
     # branch for reliable locking; pin a release tag if you prefer.
@@ -147,6 +151,7 @@
     , demod-ip-blocker
     , demod-talk
     , minecraft
+    , android-mirror
     , greeting
     , boot-intro
     , blipply-assistant
@@ -251,6 +256,9 @@
         ./modules/kernel.nix
         ./modules/personas.nix
         ./modules/dsp-rigs.nix
+        # USB scrcpy phone-mirror (custom.androidMirror). Opt-in, defaults OFF,
+        # so the ISO needs no mkForce. See modules/android-mirror/README.md.
+        android-mirror.nixosModules.default
         ./modules/secure-boot.nix
         ./modules/agentic-local-ai.nix
         # oligarchy-mcp.nix removed — replaced by mcp-servers.nixosModules.default
@@ -613,6 +621,11 @@
         # directly on an already-installed system for a firmware check:
         #   nix run .#oligarchy-hw-detect
         oligarchy-hw-detect = oligarchyHwDetect;
+
+        # USB scrcpy game-display wrapper. Same derivation the NixOS module
+        # installs when custom.androidMirror.enable is set.
+        #   nix run .#phone-mirror
+        phone-mirror = android-mirror.packages.${system}.default;
 
         # ════════════════════════════════════════════════════════════════════
         # MCP self-audit build gate — runs the ports-sec `mcp_self_audit`
