@@ -374,7 +374,7 @@ Applied only while the theater persona is active.
 | Knob | Default | Behaviour |
 |---|---|---|
 | `lan.hostname` | `player` | transient hostname via `systemd-hostnamed`, restored on disarm |
-| `lan.avahi` | off | already off in Oligarchy hardening; assert it stays off |
+| `lan.avahi` | off | assert avahi is disabled while theater is active. Oligarchy currently enables avahi with `workstation=false`; the module must either `mkForce` it false or document that the mDNS workstation name is still visible |
 | `lan.randomMac` | true | random MAC on the interface used for optional WFD/Cast; address derived from `lan_suffix` so it is stable for one session |
 | `lan.castName` | `Player` | if a Cast/WFD helper is installed, feed it this name |
 | `lan.blockWellKnownAcr` | true | extra nft set of vendor ACR / smart-TV phone-home destinations, composed with `demod-ip-blocker` and optional `strictEgress` |
@@ -482,6 +482,11 @@ in {
     };
     lan = {
       hostname = lib.mkOption { type = lib.types.str; default = "player"; };
+      avahi = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Assert that avahi is disabled while theater is active. Oligarchy enables avahi with workstation=false; the module must either set mkForce false or document that mDNS workstation name is still visible.";
+      };
       randomMac = lib.mkOption { type = lib.types.bool; default = true; };
     };
   };
@@ -491,6 +496,11 @@ in {
     # oligarchy-privacy-muxd, cec-ctl wrapper.
     # assertions: cfg.connector != "", seedFile parent exists after activation,
     # edid vendor is three A-Z letters.
+    assertions = [
+      { assertion = cfg.lan.avahi || !config.services.avahi.enable;
+        message = "tvPrivacy.lan.avahi=false requires services.avahi.enable=false while theater is armed";
+      }
+    ];
   };
 }
 ```
