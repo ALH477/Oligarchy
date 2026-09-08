@@ -1,6 +1,6 @@
 # Oligarchy Theater Face — TV Privacy Mux Specification
 
-**Status:** Draft 0.1 — design spec, not implemented  
+**Status:** Draft 0.2 — design spec, not implemented  
 **Target tree:** `github:ALH477/Oligarchy`  
 **Module path (proposed):** `modules/tv-privacy/`  
 **Option namespace:** `custom.tvPrivacy`  
@@ -265,6 +265,12 @@ If no CEC adapter exists (some USB-C docks), the unit exits 0 and logs `cec.unav
 ### 8.3 What we do not do
 
 No CEC traffic injection toward other devices on the bus except the legal device-identity replies. No recording-device impersonation, no deck-control fuzzing.
+
+## 8a. Known gaps (do not implement until 0.3)
+
+- SPD InfoFrame (source vendor string) is emitted by some AMD/Intel HDMI drivers. No mechanism to override it is specified.
+- Live remux must preserve continuity counters or set the discontinuity indicator; resetting CC to 0 on every PID breaks players.
+- Program filtering ("remaps to one program") is unspecified. Recommendation: keep all programs, remap each service_id independently.
 
 ---
 
@@ -604,6 +610,7 @@ If the picture is black after step 2, the scrub dropped a timing the panel needs
 | Rev | Date | Notes |
 |---|---|---|
 | 0.1 | 2026-09-08 | Initial design. No code in ALH477/Oligarchy yet. |
+| 0.2 | 2026-09-08 | EDID is local hygiene only; seedFile is `types.str`; avahi is on by default; HKDF is RFC 5869 Extract+Expand; ctl `tv-mux` takes no argv; SPD/CC/program-filter deferred to 0.3. |
 
 A 1.0 tag requires the Nix module, both binaries, the `theater` persona, golden tests, and an architecture.md paragraph.
 
