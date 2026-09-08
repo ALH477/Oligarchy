@@ -458,8 +458,9 @@ in {
       default = "generic";
     };
     seedFile = lib.mkOption {
-      type = lib.types.path;
+      type = lib.types.str;  # runtime path only; types.path would copy into store
       default = "/var/lib/oligarchy/tv-privacy/seed";
+      description = "Path to 32-byte host_secret. Generated with getrandom on first activation. May be overlaid by sops-nix secret for backup/restore of the same face across reinstalls.";
     };
     rotateHours = lib.mkOption { type = lib.types.int; default = 24; };
     edid = {
