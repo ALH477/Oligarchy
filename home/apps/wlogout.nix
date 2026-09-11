@@ -7,7 +7,7 @@ in {
   # Wlogout Power Menu Configuration
   # ══════════════════════════════════════════════════════════════════════════
   home.file.".config/wlogout/layout".text = ''
-    {"label":"lock","action":"hyprlock","text":"Lock","keybind":"l"}
+    {"label":"lock","action":"systemctl --user start --no-block hyprlock.service","text":"Lock","keybind":"l"}
     {"label":"logout","action":"hyprctl dispatch exit","text":"Logout","keybind":"e"}
     {"label":"suspend","action":"systemctl suspend","text":"Sleep","keybind":"s"}
     {"label":"hibernate","action":"systemctl hibernate","text":"Hibernate","keybind":"h"}
