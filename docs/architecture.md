@@ -107,7 +107,7 @@ the installer ISO (`packages.x86_64-linux.iso`).
 3. **Local modules + sub-flakes** — pinned `path:` inputs for `boot-intro`,
    `greeting`, `blipply-assistant`, `vm-manager`, `demod-voice`, `dsp-ctl`,
    `mcp-servers`, `oligarchy-forge`, `oligarchy-plugins`, `demod-talk`,
-   `minecraft` — plus the `./modules/*.nix` files and `./configuration.nix`.
+   `minecraft`, `android-mirror` — plus the `./modules/*.nix` files and `./configuration.nix`.
 
 `specialArgs` threads `inputs`, `nixpkgs-unstable`, `vm-manager`,
 `dsp-ctl`, `oligarchy-forge`, `mcp-servers`, `hydramesh` and `demod-talk`
@@ -148,7 +148,7 @@ Option namespaces in play:
 
 | Namespace | Handles |
 |---|---|
-| `custom.*` | `custom.steam`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.secrets`, `custom.secureBoot`, `custom.kernel.variant`, `custom.platform.gpu`, `custom.platform.displayGpu`, `custom.security.hardening`, `custom.dsp.enable` |
+| `custom.*` | `custom.steam`, `custom.androidMirror`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.secrets`, `custom.secureBoot`, `custom.kernel.variant`, `custom.platform.gpu`, `custom.platform.displayGpu`, `custom.security.hardening`, `custom.dsp.enable` |
 | `services.*` | project-defined services like `services.ollamaAgentic`, `services.dcf-tray`, `services.boot-intro`, `services.oligarchyGreeting`, `services.dsp-vm` |
 | `networking.firewall.strictEgress` | the nftables egress firewall (`modules/security/strict-egress.nix`) |
 | `hardware.cpuSecurity` | CPU/kernel mitigations (forced spectre/MDS/SRSO + MSR-write block) |
@@ -224,6 +224,7 @@ input.
 | `modules/oligarchy-forge/` | sandboxed coding-agent runner — a TOML schema compiles to a generated flake building a `dockerTools.streamLayeredImage`, run via rootless Podman; Ratatui dashboard. **Read-write**, so deliberately outside the MCP surface | its own `nixosModule` (`custom.oligarchyForge`) |
 | `modules/oligarchy-plugins/` | tiered sandboxed plugin runtime — one WIT ABI across three sandbox tiers, with per-instance W^X. The FX Bazaar's foundation. **Read-write**, so also outside the MCP surface. See §5b | `nixosModules.plugins` / `.default` |
 | `modules/demod-talk/` | pure-Lua DCF chat stack (certified text + voice L3, SuperPack/Reed-Solomon transport, StreamDB history). Plaintext by design, so `interface` is mandatory and asserted to be WireGuard | `services.demod-talk` |
+| `modules/android-mirror/` | USB scrcpy `phone-mirror` wrapper (H264, 0 video buffer, UHID, no DRI_PRIME) for playing phone games on the desktop. Off by default; `configuration.nix` mkDefaults it to `enablePersonalApps` | `nixosModules.default` (`custom.androidMirror`) |
 | `modules/ArchibaldOS/` | the RT DSP guest OS, its own flake under `modules/ArchibaldOS/modules/` | its own modules |
 
 ### 5a. Boot → login ordering

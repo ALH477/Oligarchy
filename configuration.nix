@@ -409,6 +409,10 @@
       # ──────────────────────────────────────────────────────────────────────────
       custom.steam.enable = lib.mkDefault false;
 
+      # USB scrcpy phone-mirror. Tied to the personal-apps set so a fresh clone
+      # stays clean; override in local.nix if you want it without that list.
+      custom.androidMirror.enable = lib.mkDefault config.custom.desktopFeatures.enablePersonalApps;
+
       # Isolate Steam + games from swap (DDR5-only): under memory pressure
       # games were dipping into the disk swapfile / zram and stalling hard
       # enough to effectively die. MemorySwapMax=0 on this slice blocks that

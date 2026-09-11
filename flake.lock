@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "android-mirror": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "path": "./modules/android-mirror",
+        "type": "path"
+      },
+      "original": {
+        "path": "./modules/android-mirror",
+        "type": "path"
+      },
+      "parent": []
+    },
     "blipply-assistant": {
       "inputs": {
         "flake-utils": "flake-utils",
@@ -1250,6 +1266,7 @@
     },
     "root": {
       "inputs": {
+        "android-mirror": "android-mirror",
         "blipply-assistant": "blipply-assistant",
         "boot-intro": "boot-intro",
         "chaotic": "chaotic",
