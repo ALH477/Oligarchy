@@ -16,10 +16,10 @@ set -euo pipefail
 # home/themes/default.nix's activeThemeName declares, which is expected:
 # this script is a live preview/override, not a second source of truth.
 
-THEMES_DIR="$HOME/.config/oligarchy/themes"
-MANIFEST="$THEMES_DIR/manifest.json"
-CURRENT_FILE="$HOME/.config/oligarchy/current-theme"
-THEME_JSON="$HOME/.config/demod/theme.json"
+THEMES_DIR="${THEMES_DIR:-$HOME/.config/oligarchy/themes}"
+MANIFEST="${MANIFEST:-$THEMES_DIR/manifest.json}"
+CURRENT_FILE="${CURRENT_FILE:-$HOME/.config/oligarchy/current-theme}"
+THEME_JSON="${THEME_JSON:-$HOME/.config/demod/theme.json}"
 FALLBACK_THEME="demod"
 # Each kitty process listens on its own {kitty_pid}-suffixed socket (see
 # home/terminal/kitty.nix) — there is no single well-known path, so glob for
@@ -27,8 +27,6 @@ FALLBACK_THEME="demod"
 KITTY_SOCKET_GLOB="/tmp/kitty-$USER-*.sock"
 
 die() { echo "$*" >&2; exit 1; }
-
-[[ -f "$MANIFEST" ]] || die "No theme manifest at $MANIFEST — run 'home-manager switch' first."
 
 theme_ids() { jq -r '.[].id' "$MANIFEST"; }
 theme_display_name() { jq -r --arg id "$1" '.[] | select(.id==$id) | .name' "$MANIFEST"; }
@@ -55,6 +53,37 @@ get_next_theme() {
     done
     echo "${ids[0]}"
 }
+
+# Exact label → id. Labels are "<name>" or "<name> ✓". Never prefix-match.
+pick_id_from_label() {
+    local choice="${1% ✓}"
+    local id name
+    while IFS= read -r id; do
+        name="$(theme_display_name "$id")"
+        if [[ "$choice" == "$name" ]]; then
+            echo "$id"
+            return 0
+        fi
+    done < <(theme_ids)
+    return 1
+}
+
+gui_row() { # $1=id → one wofi line (image if wallpaper exists)
+    local id="$1" name mark="" img="$THEMES_DIR/$id/wallpaper.png"
+    name="$(theme_display_name "$id")"
+    [[ "$id" == "$(get_current_theme)" ]] && mark=" ✓"
+    if [[ -f "$img" ]]; then
+        printf 'img:%s:text:%s%s\n' "$img" "$name" "$mark"
+    else
+        printf '%s%s\n' "$name" "$mark"
+    fi
+}
+
+if [[ "${THEME_SWITCH_LIB:-}" == 1 ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+[[ -f "$MANIFEST" ]] || die "No theme manifest at $MANIFEST — run 'home-manager switch' first."
 
 apply_theme() {
     local id="$1"
@@ -109,36 +138,17 @@ apply_theme() {
     # it to reload from (the new target of) style.css.
     pkill -HUP waybar 2>/dev/null || true
 
-    notify-send -u low -t 2000 "Theme Changed" "Now using: $display_name" 2>/dev/null || true
+    notify-send -u low -t 4000 "Theme Changed" "Now using: $display_name (live; next rebuild restores Nix default)" 2>/dev/null || true
 }
 
 show_gui_menu() {
-    local current="$1"
-    local ids=() options=()
-    mapfile -t ids < <(theme_ids)
-    local id name
-    for id in "${ids[@]}"; do
-        name=$(theme_display_name "$id")
-        if [[ "$id" == "$current" ]]; then
-            options+=("$name ✓")
-        else
-            options+=("$name")
-        fi
-    done
-
     local choice
-    choice=$(printf '%s\n' "${options[@]}" | wofi --dmenu -I -p "Theme")
+    choice="$(theme_ids | while read -r id; do gui_row "$id"; done | wofi --dmenu -I -i -p "Theme")"
     [[ -n "$choice" ]] || return 1
-    choice="${choice% ✓}"
-
-    local i
-    for i in "${!options[@]}"; do
-        if [[ "${options[$i]}" == "$choice"* ]]; then
-            echo "${ids[$i]}"
-            return
-        fi
-    done
-    return 1
+    # wofi -I may return "img:...:text:Name" or just "Name" depending on version;
+    # strip the img prefix if present, then exact-match.
+    choice="${choice##*:text:}"
+    pick_id_from_label "$choice"
 }
 
 show_cli_menu() {

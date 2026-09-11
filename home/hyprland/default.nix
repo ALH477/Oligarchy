@@ -3,28 +3,30 @@
 let
   p = theme;
 
-  # ── GPU targeting (dGPU-priority by default, see custom.platform.displayGpu) ──
-  # Client-app device selection ONLY (Mesa/Vulkan DRI_PRIME) — never touch
-  # Aquamarine's own backend/KMS device. The dGPU has no display engine path
-  # of its own (see docs/dgpu-steam-forcing.md); telling Hyprland's backend
-  # to open it as primary is a fatal, unrecoverable abort with no fallback,
-  # not a graceful degrade (confirmed via coredump: CCompositor::initServer
-  # -> throwError -> SIGABRT). The compositor stays on whatever Mesa/KMS
-  # picks by default (the iGPU); only client processes get steered.
-  platform = osConfig.custom.platform or { };
-  gpuEnv =
-    let
-      pciUnderscore = id: "pci-" + lib.replaceStrings [ ":" "." ] [ "_" "_" ] id;
-      dgpu = platform.dgpuPciId or "0000:03:00.0";
-      igpu = platform.igpuPciId or "0000:c5:00.0";
-      primary = if (platform.displayGpu or "dgpu") == "dgpu" then dgpu else igpu;
-    in
-    # Skip DRI_PRIME entirely on iGPU-only hosts (e.g. Framework 13) — there's
-    # no second GPU to route to, and pointing it at a nonexistent PCI device
-    # is worse than doing nothing.
-    lib.optionals ((platform.gpu or "amd") == "amd" && (platform.hasDgpu or false)) [
-      "DRI_PRIME,${pciUnderscore primary}"
-    ];
+  # ── GPU targeting: deliberately NO session-wide DRI_PRIME ──────────────────
+  # Two rules here, routinely conflated. Both are load-bearing.
+  #
+  # 1. Never steer Aquamarine's own backend/KMS device (AQ_DRM_DEVICES /
+  #    WLR_DRM_DEVICES). The dGPU has no display path to the internal panel;
+  #    telling Hyprland's backend to open it as primary is a fatal,
+  #    unrecoverable abort with no fallback, not a graceful degrade (confirmed
+  #    via coredump: CCompositor::initServer -> throwError -> SIGABRT).
+  #    Asserted near the bottom of this file.
+  #
+  # 2. Never export DRI_PRIME from here either, which is why there is no
+  #    gpuEnv binding any more. `env=` in hyprland.conf is session-global: it
+  #    reaches every client AND the systemd user manager, so one line put the
+  #    entire desktop on the dGPU. eDP-2 hangs off the iGPU, so every frame
+  #    then became a cross-device dmabuf import -- visible artifacts and
+  #    flicker in Brave, and a dGPU pinned resident at 0% busy that amdgpu
+  #    runtime PM could never suspend. docs/dgpu-steam-forcing.md only ever
+  #    argued for the PER-APP form, and explicitly calls an ambient session
+  #    value a stray to hunt down; this was that stray, in Nix form.
+  #
+  # dGPU routing is opt-in, per app, via exactly three sanctioned routes:
+  #   Steam          -> programs.steam `extraEnv` (configuration.nix)
+  #   anything else  -> `dgpu-run <cmd>` (home/scripts/default.nix)
+  #   a systemd unit -> `Environment=` on that unit
 
   # Monitor configuration - auto-detect based on hardware
   # To customize: override monitors.laptop or monitors.desktop in your config
@@ -164,7 +166,10 @@ in
         "SDL_VIDEODRIVER,wayland,x11"
         "MOZ_ENABLE_WAYLAND,1"
         "MOZ_DBUS_REMOTE,1"
-        "ELECTRON_OZONE_PLATFORM_HINT,x11"
+        # auto (not x11): NIXOS_OZONE_WL=1 is set system-wide in
+        # configuration.nix, and forcing x11 here overrode it back onto
+        # XWayland -- a second copy path on top of everything else.
+        "ELECTRON_OZONE_PLATFORM_HINT,auto"
         "_JAVA_AWT_WM_NONREPARENTING,1"
 
         # Cursor
@@ -174,7 +179,7 @@ in
         "HYPRCURSOR_THEME,idTech4"
 
         # Gaming - VRR & Performance (only when gaming enabled)
-        (lib.optional (features.enableGaming or false) "STEAM_FORCE_DESKTOPUI_SCALING,1")
+        (lib.optional (features.enableGaming or false) "STEAM_FORCE_DESKTOPUI_SCALING,1.25")
         (lib.optional (features.enableGaming or false) "__GL_GSYNC_ALLOWED,1")
         (lib.optional (features.enableGaming or false) "__GL_VRR_ALLOWED,1")
 
@@ -189,9 +194,6 @@ in
 
         # SSH
         "SSH_AUTH_SOCK,$XDG_RUNTIME_DIR/gcr/ssh"
-
-        # GPU targeting — see custom.platform.displayGpu
-        gpuEnv
       ];
 
       # Input configuration
@@ -459,7 +461,7 @@ in
 
         # Session
         "$mod, Escape, exec, wlogout -p layer-shell"
-        "$mod CTRL, L, exec, hyprlock"
+        "$mod CTRL, L, exec, systemctl --user start --no-block hyprlock.service"
         "$mod SHIFT, Escape, exit"
 
         # Theme switching
@@ -565,7 +567,9 @@ in
         "workspace 2, class:^(Code|code-url-handler)$"
         "workspace 3, class:^(obsidian)$"
         "workspace 5, class:^(thunderbird|discord)$"
-        "workspace 9 silent, class:^(steam)$"
+        # No `silent`: launching Steam used to dump it on ws 9 without
+        # switching, so the click looked like a no-op. Follow the client.
+        "workspace 9, class:^(steam)$"
         "float, class:^(steam)$, title:^(Friends|Settings|Screenshot).*$"
 
         # Gaming - Steam
@@ -586,8 +590,9 @@ in
         "noshadow, class:^(gamescope)$"
 
         # Gaming - Wine/Proton (immediate rendering, no effects)
+        # Do not force fullscreen: that double-fullscreens games that already
+        # set their own mode and also catches Proton config/overlay windows.
         "immediate, class:^(steam_app_.*)$"
-        "fullscreen, class:^(steam_app_.*)$, title:^(?!.*Settings).*$"
         "noblur, class:^(steam_app_.*)$"
         "noshadow, class:^(steam_app_.*)$"
         "idleinhibit always, class:^(steam_app_.*)$"
@@ -685,7 +690,8 @@ in
   };
 
   # Guards against regressing the documented dGPU-backend-SIGABRT hazard
-  # (see the gpuEnv comment above and docs/dgpu-steam-forcing.md): turns the
+  # (see the GPU targeting comment at the top of this file, and
+  # docs/dgpu-steam-forcing.md): turns the
   # comment-only warning into a build-time check.
   assertions = [{
     assertion = !(lib.any
@@ -715,6 +721,10 @@ in
           ExecStart = execStart;
           Restart = "on-failure";
           RestartSec = 2;
+          # Nothing here is worth 90s of a shutdown. The default let one stuck
+          # child (hyprlock, in hypridle's cgroup) burn 90s here and then a
+          # further 2min+2min in user@1000 -- a 3m44s poweroff.
+          TimeoutStopSec = "10s";
         };
         Install.WantedBy = [ "hyprland-session.target" ];
       };
@@ -727,6 +737,50 @@ in
       hypridle = mkSessionService {
         description = "Hyprland idle daemon (dim/lock/suspend ladder)";
         execStart = "${pkgs.hypridle}/bin/hypridle";
+      };
+      # The locker is deliberately NOT a mkSessionService: it has no
+      # Install.WantedBy because it is started on demand, and it must not be
+      # `Restart`ed. Two reasons it is a unit at all rather than a bare command:
+      #
+      #  - It gets its own cgroup. Spawned as hypridle's child it inherited
+      #    hypridle's (KillMode=control-group), so a hyprlock stuck in an
+      #    uninterruptible amdgpu ioctl held hypridle's stop, then user@1000's.
+      #  - `systemctl start` on an active unit is a no-op, which is what
+      #    `pidof hyprlock || hyprlock` was reaching for and got wrong: pidof
+      #    also matches a hyprlock that is present but dead, and then the lock
+      #    is silently SKIPPED. That happened three times in one day.
+      #
+      # `grace` is an ExecStart flag because hyprlock 0.9.x removed the config
+      # key; see the comment in home/apps/hyprlock.nix.
+      hyprlock = {
+        Unit = {
+          Description = "Hyprland screen locker";
+          After = [ "hyprland-session.target" ];
+          PartOf = [ "hyprland-session.target" ];
+        };
+        Service = {
+          Type = "exec";
+          ExecStart = "${pkgs.hyprlock}/bin/hyprlock --grace 3";
+          Restart = "no";
+          TimeoutStopSec = "5s";
+          KillMode = "mixed";
+          # REGRESSION GUARD, not the active fix. The session-wide
+          # `env=DRI_PRIME` this defended against is gone (see the GPU
+          # targeting comment at the top of this file), so on a correct
+          # config there is nothing here to unset. It stays because the
+          # failure it caught was expensive and silent: `env=` in
+          # hyprland.conf also lands in the systemd user manager's
+          # environment, so every user unit silently inherited DRI_PRIME and
+          # every hyprlock in the journal was on the dGPU (amdgpu
+          # 0000:03:00.0). A full-screen blur on the dGPU over a dmabuf the
+          # compositor produced on the iGPU is a cross-device import, which
+          # dragged it into TTM buffer migration (ttm_bo_move_memcpy ->
+          # amdgpu_bo_move) and wedged it there uninterruptibly. The locker
+          # renders where the COMPOSITOR renders, not where games do. Unset
+          # rather than pin: Mesa's default is already the compositor's
+          # device, and this stays correct on iGPU-only hosts.
+          UnsetEnvironment = "DRI_PRIME";
+        };
       };
       mako = mkSessionService {
         description = "Mako notification daemon";
@@ -760,7 +814,7 @@ in
   # suspends once the machine is actually idle and cool; on-resume cancels it.
   home.file.".config/hypr/hypridle.conf".text = ''
     general {
-      lock_cmd = pidof hyprlock || hyprlock
+      lock_cmd = systemctl --user start --no-block hyprlock.service
       before_sleep_cmd = loginctl lock-session
       after_sleep_cmd = hyprctl dispatch dpms on
       ignore_dbus_inhibit = false

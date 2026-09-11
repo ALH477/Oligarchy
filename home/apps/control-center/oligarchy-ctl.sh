@@ -79,8 +79,20 @@ EOF
 
 items() {
   case "$1" in
-    appearance) cat <<'EOF'
-theme-menu|Theme picker (wofi)
+    appearance)
+      local cur id name mark
+      cur="$("$HOME/.config/hypr/scripts/theme-switch.sh" current 2>/dev/null || echo "")"
+      if [[ -f "$HOME/.config/oligarchy/themes/manifest.json" ]]; then
+        jq -r '.[] | [.id,.name] | @tsv' "$HOME/.config/oligarchy/themes/manifest.json" |
+        while IFS=$'\t' read -r id name; do
+          mark=""
+          [[ "$id" == "$cur" ]] && mark=" ✓"
+          printf 'theme-set:%s|%s%s\n' "$id" "$name" "$mark"
+        done
+      else
+        echo "theme-next|Themes not rendered (home-manager switch first)"
+      fi
+      cat <<'EOF'
 theme-next|Next theme
 anim-toggle|Toggle animations
 blur-toggle|Toggle blur
@@ -307,7 +319,9 @@ launch_persona_apps() {
 
 run() {
   case "$1" in
-    theme-menu)     "$HOME/.config/hypr/scripts/theme-switch.sh" gui ;;
+    theme-set:*)
+      "$HOME/.config/hypr/scripts/theme-switch.sh" set "${1#theme-set:}"
+      ;;
     theme-next)     "$HOME/.config/hypr/scripts/theme-switch.sh" toggle ;;
     anim-toggle)    hypr_toggle animations:enabled ;;
     blur-toggle)    hypr_toggle decoration:blur:enabled ;;
@@ -355,7 +369,7 @@ run() {
     power-perf)     powerprofilesctl set performance && note "Power → performance" ;;
     power-balanced) powerprofilesctl set balanced && note "Power → balanced" ;;
     power-saver)    powerprofilesctl set power-saver && note "Power → power-saver" ;;
-    lock)           hyprlock ;;
+    lock)           systemctl --user start --no-block hyprlock.service ;;
     logout)         wlogout -p layer-shell ;;
 
     sys-status)     visible bash -c 'oligarchy-ctl status' ;;

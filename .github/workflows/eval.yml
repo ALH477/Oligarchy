@@ -1,0 +1,167 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Lane A — evaluation. The only lane a fork can reach.
+#
+# ALH477/Oligarchy is a PUBLIC repository, and GitHub documents that self-hosted
+# runners must not be exposed to public-repo pull requests: a fork can put
+# anything in a workflow and it executes as the runner user. So the split is by
+# trust, not by convenience — this lane runs on GitHub's disposable hardware and
+# accepts fork input; every lane that touches the maintainer's own machine
+# (gates.yml, agents.yml) refuses to trigger on `pull_request`.
+#
+# Cheap on purpose. It evaluates the four laptop hosts plus the builder without
+# building any of them, so it catches the overwhelmingly common breakage — an
+# eval error, a renamed option, a module that no longer composes — in a minute
+# rather than an hour. Building is gates.yml's job.
+#
+# Nothing here needs --impure. Verified against Determinate Nix's own source:
+# configuration.nix's `builtins.pathExists "/home/asher/.config/oligarchy/*.nix"`
+# guards return FALSE under pure evaluation rather than throwing (primops.cc
+# catches RestrictedPathError), so a machine that is not the maintainer's laptop
+# evaluates the fresh-clone-minimal configuration and does not error. The disk
+# UUIDs in the hardware-configuration files are plain strings that are never
+# stat'd, and custom.secrets.enable defaults false, so no age key or secrets/
+# directory is required either.
+# ═══════════════════════════════════════════════════════════════════════════════
+name: eval
+
+# ── DISABLED BY DEFAULT ───────────────────────────────────────────────────────
+# Merging a workflow file is enough to make it run, which is the wrong default
+# for a repo whose every other feature is opt-in. Nothing here executes until
+# the repository variable OLIGARCHY_CI is set to "true":
+#
+#   gh variable set OLIGARCHY_CI --body true          # turn CI on
+#   gh variable delete OLIGARCHY_CI                   # turn it off again
+#
+# Until then the jobs are skipped, not failed, so the checks list stays green
+# and nobody is chasing a red X on a lane they never asked for. Manual runs via
+# `workflow_dispatch` obey the same switch — flip the variable first.
+# ──────────────────────────────────────────────────────────────────────────────
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first one's result irrelevant.
+concurrency:
+  group: eval-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    name: evaluate
+    if: vars.OLIGARCHY_CI == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The formatting check below diffs against the base commit, which
+          # needs more than the default single-commit checkout.
+          fetch-depth: 0
+
+      # PINNED TO A COMMIT SHA, NOT A TAG OR A BRANCH, AND THAT IS THE POINT.
+      # A third-party action referenced by `@main` — or by `@v22`, since a tag
+      # is just a movable pointer — lets its author change what executes in
+      # this job at any time, without any change landing in this repository.
+      # The comment records which release the SHA was, because the SHA alone
+      # is unreadable:
+      #
+      #   ef8a148 = v22, resolved 2026-08-30
+      #
+      # To move it deliberately:
+      #   gh api repos/DeterminateSystems/nix-installer-action/git/ref/tags/vNN \
+      #     --jq .object.sha
+      #
+      # `actions/checkout` below is deliberately left on `@v4`. It is GitHub's
+      # own first-party action, running on GitHub's own runner — if that is
+      # compromised, pinning it changes nothing, because the same party
+      # already controls the machine executing the job. The third-party
+      # action is the one where pinning buys something real.
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25
+
+      # ── flake.lock integrity ──────────────────────────────────────────────
+      # `determinate.url` is a FlakeHub WILDCARD (flake.nix:13,
+      # ".../determinate/*"). It resolves to whatever the lock pins, which
+      # means the lock is the only thing standing between this repo and a
+      # silently-moving input. If a command below would rewrite it, CI was
+      # about to validate something other than what is committed.
+      - name: flake.lock is honoured, not rewritten
+        run: |
+          nix flake metadata --no-update-lock-file >/dev/null
+          if ! git diff --quiet -- flake.lock; then
+            echo "::error file=flake.lock::flake.lock changed during evaluation."
+            git diff -- flake.lock
+            exit 1
+          fi
+
+      # ── Formatting ────────────────────────────────────────────────────────
+      # nixpkgs-fmt, NOT `nix fmt`: the flake's `formatter` is nixfmt-rfc-style,
+      # a different style, and running it would reformat the whole tree. Only
+      # files touched by this change are checked — the project convention is
+      # explicitly "don't blanket-format files you didn't touch", so a
+      # tree-wide check would fail on code this change never saw.
+      - name: nixpkgs-fmt (changed files only)
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            pull_request) base="${{ github.event.pull_request.base.sha }}" ;;
+            *)            base="${{ github.event.before }}" ;;
+          esac
+          # First push to a new branch reports an all-zero "before" SHA.
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            echo "No usable base commit; skipping the formatting check."
+            exit 0
+          fi
+          mapfile -t changed < <(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.nix')
+          if [ ${#changed[@]} -eq 0 ]; then
+            echo "No .nix files changed."
+            exit 0
+          fi
+          printf 'Checking %s file(s)\n' "${#changed[@]}"
+          nix shell nixpkgs#nixpkgs-fmt --command nixpkgs-fmt --check "${changed[@]}"
+
+      # ── The flake still presents itself ───────────────────────────────────
+      - name: nix flake show
+        run: nix flake show --no-update-lock-file --all-systems
+
+      # ── Every host still evaluates ────────────────────────────────────────
+      # drvPath, not the build: this resolves the entire module tree and every
+      # option definition without realizing a single derivation. It is the
+      # cheapest thing that would still have caught essentially every eval
+      # regression in this repo's history.
+      #
+      # All five are checked because they diverge only in their platform
+      # profile, which is exactly the kind of difference that rots unnoticed —
+      # the three alternate laptops and the builder are not what the
+      # maintainer rebuilds daily.
+      - name: Evaluate all hosts
+        run: |
+          set -euo pipefail
+          rc=0
+          for host in nixos nixos-fw13 nixos-intel nixos-optimus builder; do
+            printf '\n=== %s ===\n' "$host"
+            if drv=$(nix eval --raw --no-update-lock-file \
+                       ".#nixosConfigurations.${host}.config.system.build.toplevel.drvPath"); then
+              echo "ok  $drv"
+            else
+              echo "::error::$host failed to evaluate"
+              rc=1
+            fi
+          done
+          exit $rc
+
+      # ── The one gate small enough for a hosted runner ─────────────────────
+      # Every other gate is out of reach here: the VM gates need KVM, and
+      # malwareScan realizes the full system closure (measured at 48.6 GiB,
+      # docs/p2p-substituter-roadmap.md §3.1) against a runner with roughly
+      # 14 GiB free. mcp-self-audit only builds one Rust binary and then greps
+      # the workspace, so it fits — and it guards a real invariant: that no MCP
+      # crate outside ports-sec opens a socket, and that .mcp.json contains no
+      # remote transport.
+      - name: nix build .#mcp-self-audit
+        run: nix build --no-update-lock-file --print-build-logs .#mcp-self-audit

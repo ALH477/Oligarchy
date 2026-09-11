@@ -1,0 +1,157 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Lanes B and C — the build gates, on the maintainer's own hardware.
+#
+# ┌─ READ THIS BEFORE ADDING A TRIGGER ────────────────────────────────────────┐
+# │ There is deliberately no `pull_request` trigger in this file, and adding   │
+# │ one would be a security bug, not a feature.                               │
+# │                                                                            │
+# │ ALH477/Oligarchy is PUBLIC. A pull request from a fork carries its own     │
+# │ copy of .github/workflows, so `pull_request` on a self-hosted runner lets  │
+# │ any stranger execute arbitrary code as the runner user, on a machine on    │
+# │ the maintainer's LAN. GitHub documents this; it is not a theoretical risk. │
+# │                                                                            │
+# │ The mitigation is layered, and this file is the first layer: a runner      │
+# │ cannot be reached by a job that never starts. `push` fires only for        │
+# │ branches in this repository, which means only code the maintainer already  │
+# │ pushed. The second layer is `ephemeral = true` in modules/ci-builder.nix,  │
+# │ so one job cannot leave state for the next. The third is that the ONE lane │
+# │ which does read fork content — the agent review in agents.yml — runs in a  │
+# │ disposable microVM and is the only holder of API credentials.             │
+# │                                                                            │
+# │ If you want fork PRs gated, gate them in eval.yml, which is designed for   │
+# │ exactly that and runs on GitHub's disposable hardware.                     │
+# └────────────────────────────────────────────────────────────────────────────┘
+#
+# DISABLED BY DEFAULT. Nothing here runs until the repository variable
+# OLIGARCHY_CI is set to "true" (`gh variable set OLIGARCHY_CI --body true`),
+# and even then it needs a registered self-hosted runner carrying the labels
+# below — see modules/ci-builder.nix and nixosConfigurations.builder.
+# ═══════════════════════════════════════════════════════════════════════════════
+name: gates
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    # 03:17 UTC. Not on the hour: scheduled workflows queue against everyone
+    # else's cron, and GitHub drops schedules under load rather than delaying
+    # them.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      full_sweep:
+        description: 'Run the full nightly sweep (all gates + VM tests) instead of just flake check'
+        type: boolean
+        default: false
+
+concurrency:
+  # Never two gate runs at once: they compete for the same /dev/kvm, the same
+  # store and the same RAM, and a VM gate that loses that race fails in a way
+  # that looks like the thing under test broke.
+  group: gates
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Lane B — the honest build ───────────────────────────────────────────────
+  flake-check:
+    name: nix flake check
+    if: vars.OLIGARCHY_CI == 'true'
+    runs-on: [ self-hosted, nixos, kvm ]
+    timeout-minutes: 240
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # `checks.x86_64-linux.system` is the full system toplevel — the same
+      # artifact nixos-rebuild produces. Heavy, and the point: an eval-only
+      # check cannot catch a package that no longer builds.
+      #
+      # No --impure. If this ever starts needing it, something has acquired a
+      # dependency on the maintainer's home directory and that is the bug.
+      - name: nix flake check
+        run: nix flake check --no-update-lock-file --print-build-logs
+
+  # ── Lane C — the nightly sweep ──────────────────────────────────────────────
+  # Every gate, plus the five tests/default.nix VM suites that no flake output
+  # references and that consequently have never run automatically.
+  #
+  # Split into a matrix rather than one long script so a single red gate names
+  # itself in the checks list instead of hiding inside a 90-minute log, and so
+  # one flaky VM does not mask the nine gates behind it. `fail-fast: false` for
+  # the same reason.
+  sweep:
+    name: ${{ matrix.gate }}
+    if: >-
+      vars.OLIGARCHY_CI == 'true' &&
+      (github.event_name == 'schedule' || inputs.full_sweep)
+    runs-on: [ self-hosted, nixos, kvm, nested-kvm ]
+    timeout-minutes: 120
+    needs: flake-check
+
+    strategy:
+      fail-fast: false
+      # One at a time. These are VM tests on one machine: two 2048 MiB guests
+      # for each of the two-node p2p gates, 4096 MiB plus a 512 MiB inner guest
+      # for tier2. Running them concurrently is how you get failures that do
+      # not reproduce.
+      max-parallel: 1
+      matrix:
+        gate:
+          # Closure-wide YARA sweep. Not a VM gate — a disk one. Realizes the
+          # entire system closure, measured at 4096 paths / 48.6 GiB.
+          - malwareScan
+
+          # Plugin runtime: the W^X story, tier by tier.
+          - plugins-wx-enforcement
+          - plugins-policy-refusal
+          - plugins-signed-install
+          - plugins-tier1-runtime
+          # The only gate needing NESTED KVM — it boots a microVM inside the
+          # test VM. Fails misleadingly (as a boot-budget timeout) rather than
+          # informatively if the host lacks nested virt, which is why
+          # modules/ci-builder.nix asserts on it.
+          - plugins-tier2-runtime
+
+          # P2P substituter: availability without becoming a trust authority.
+          - p2p-substituter-protocol
+          - p2p-signature-refusal
+          - p2p-artifact-cache
+          - p2p-two-node
+          - p2p-swarm
+          - p2p-no-peer-fallback
+          - p2p-local-signing
+          - p2p-peer-scope
+          - p2p-selftest
+
+          # tests/default.nix, surfaced as packages.test-* in flake.nix.
+          # Before this lane existed these had never been run by anything but
+          # a hand-typed nix-build.
+          - test-strict-egress
+          - test-malware-shield
+          - test-hardening
+          - test-dcf-spa-gate
+          - test-ip-blocklists
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: nix build .#${{ matrix.gate }}
+        run: nix build --no-update-lock-file --print-build-logs '.#${{ matrix.gate }}'
+
+      # A VM gate that fails prints its reason deep inside a QEMU console dump.
+      # Surfacing the tail into the job summary is the difference between a
+      # nightly you read and a nightly you ignore.
+      - name: Report failure
+        if: failure()
+        run: |
+          {
+            echo "### \`${{ matrix.gate }}\` failed"
+            echo
+            echo "Reproduce locally:"
+            echo '```bash'
+            echo "nix build .#${{ matrix.gate }} --print-build-logs"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

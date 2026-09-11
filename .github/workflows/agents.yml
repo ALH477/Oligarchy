@@ -1,0 +1,162 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Lane D — the agent lane. Catalog gate, and a three-agent review of the diff.
+#
+# THIS IS THE ONLY LANE THAT READS FORK CONTENT, AND THE ONLY ONE HOLDING
+# CREDENTIALS. That combination is why it is also the only lane that runs
+# inside a disposable microVM (custom.ciBuilder.sandbox in
+# modules/ci-builder.nix) rather than on the builder host: a pull request can
+# put anything in the diff, and the diff is fed to an agent that has API keys
+# in its environment. The blast radius of that going wrong should be a guest
+# that gets thrown away, not the machine holding the Nix store.
+#
+# The two jobs have deliberately different trust postures:
+#
+#   catalog   Reads no pull-request content. Just asserts every catalogued
+#             agent still renders a flake that parses, so it is safe on push
+#             and is the cheap, deterministic half.
+#   review    Reads the diff. Fork PRs do NOT reach it automatically — it runs
+#             for same-repo pull requests and on manual dispatch, so a
+#             maintainer decides when a stranger's diff gets fed to a model
+#             holding a paid key. This is a cost control as much as a security
+#             one: an unrestricted trigger here is a way for anyone to spend
+#             your API budget.
+#
+# DISABLED BY DEFAULT, twice over. Nothing runs unless BOTH:
+#   gh variable set OLIGARCHY_CI        --body true     # CI at all
+#   gh variable set OLIGARCHY_CI_AGENTS --body true     # this lane specifically
+# The second switch is separate because this is the only lane that costs money
+# per run; turning CI on should not silently start billing.
+# ═══════════════════════════════════════════════════════════════════════════════
+name: agents
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: agents-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── The deterministic half ──────────────────────────────────────────────────
+  catalog:
+    name: forge catalog renders
+    # Same-repo only, exactly like `review` below, even though this job reads
+    # no diff and holds no key. It still runs `nix build` over the CHECKED-OUT
+    # source, and a Nix build executes that source's own build scripts — so a
+    # fork PR reaching this job would be arbitrary code execution on the
+    # builder, microVM or not. "It only builds" is not a weaker posture than
+    # "it reads the diff"; it is the same one.
+    if: >-
+      vars.OLIGARCHY_CI == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [ self-hosted, nixos, sandboxed ]
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Renders one project per catalogued agent and parses each result. Does
+      # not build an image: `oligarchy-forge build` needs Podman and network
+      # access to fetch each agent's upstream flake, neither of which exists in
+      # a Nix build sandbox. See the gate's own comment in flake.nix.
+      - name: nix build .#forge-catalog
+        run: nix build --no-update-lock-file --print-build-logs .#forge-catalog
+
+  # ── The expensive half ──────────────────────────────────────────────────────
+  review:
+    name: review (${{ matrix.agent }})
+    if: >-
+      vars.OLIGARCHY_CI == 'true' &&
+      vars.OLIGARCHY_CI_AGENTS == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [ self-hosted, nixos, sandboxed ]
+    timeout-minutes: 45
+    needs: catalog
+
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [ oh-my-pi, claude, hermes ]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect the diff
+        id: diff
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            pull_request) base="${{ github.event.pull_request.base.sha }}" ;;
+            *)            base="$(git rev-parse HEAD~1)" ;;
+          esac
+          git diff "$base" HEAD > /tmp/review.patch
+          bytes=$(wc -c < /tmp/review.patch)
+          echo "bytes=$bytes" >> "$GITHUB_OUTPUT"
+          echo "Diff is $bytes bytes against $base"
+
+      # A forge project whose only agent is the one under test, so each matrix
+      # leg builds the minimal image rather than one image with all three.
+      - name: Write the forge project
+        run: |
+          cat > oligarchy-forge.toml <<TOML
+          [project]
+          name = "ci-review-${{ matrix.agent }}"
+          agents = ["${{ matrix.agent }}"]
+
+          [runtime]
+          volume = "ephemeral"
+          TOML
+
+      - name: Review
+        env:
+          # Provisioned into the sandbox guest only — see
+          # custom.ciBuilder.sandbox. The host runner never sees these.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.diff.outputs.bytes }}" -eq 0 ]; then
+            echo "Empty diff; nothing to review." | tee /tmp/review.out
+            exit 0
+          fi
+
+          read -r -d '' PROMPT <<'PROMPT_END' || true
+          Review this diff against the repository you are in. Report only
+          defects you can point at a line for: correctness bugs, broken
+          invariants, and anything that contradicts a rule stated in CLAUDE.md
+          or the docs/ roadmaps. Do not restyle, do not suggest refactors, and
+          do not report an issue you cannot name a concrete failure case for.
+          If the diff is fine, say so in one line.
+          PROMPT_END
+
+          # `run --` is package-agnostic by design (roadmap §8), so the agent
+          # binary is invoked by its own name inside the sandbox.
+          oligarchy-forge run -- ${{ matrix.agent == 'oh-my-pi' && 'omp' || matrix.agent }} \
+            "$PROMPT
+
+          $(cat /tmp/review.patch)" 2>&1 | tee /tmp/review.out || {
+              echo "::warning::${{ matrix.agent }} exited non-zero; see the summary."
+            }
+
+      # Into the job summary rather than a PR comment: three agents commenting
+      # on every push is how a review lane gets muted within a week.
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### ${{ matrix.agent }}"
+            echo
+            echo '```'
+            tail -c 60000 /tmp/review.out 2>/dev/null || echo "(no output)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
