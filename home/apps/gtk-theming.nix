@@ -121,14 +121,11 @@ let
       color: ${p.textOnAccent};
     }
 
-    /* Reduced Motion Support */
-    @media (prefers-reduced-motion: reduce) {
-      * {
-        transition-duration: 0.01ms !important;
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-      }
-    }
+    /* NOTE: @media queries removed — GTK CSS has no media-query support
+       (only @import, @define-color and @keyframes), so the prefers-reduced-
+       motion block never applied and every GTK app logged
+       "Theme parsing error: gtk.css:NNN:0: unknown @ rule" on startup.
+       Same fix as home/waybar/default.nix. */
   '';
 
   renderGtk4Css = p: ''
@@ -306,14 +303,11 @@ let
       border-color: ${p.purple};
     }
 
-    /* Reduced Motion Support */
-    @media (prefers-reduced-motion: reduce) {
-      * {
-        transition-duration: 0.01ms !important;
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-      }
-    }
+    /* NOTE: @media queries removed — GTK CSS has no media-query support
+       (only @import, @define-color and @keyframes), so the prefers-reduced-
+       motion block never applied and every GTK app logged
+       "Theme parsing error: gtk.css:NNN:0: unknown @ rule" on startup.
+       Same fix as home/waybar/default.nix. */
   '';
 in
 {

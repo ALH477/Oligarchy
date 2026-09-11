@@ -3,28 +3,30 @@
 let
   p = theme;
 
-  # ── GPU targeting (dGPU-priority by default, see custom.platform.displayGpu) ──
-  # Client-app device selection ONLY (Mesa/Vulkan DRI_PRIME) — never touch
-  # Aquamarine's own backend/KMS device. The dGPU has no display engine path
-  # of its own (see docs/dgpu-steam-forcing.md); telling Hyprland's backend
-  # to open it as primary is a fatal, unrecoverable abort with no fallback,
-  # not a graceful degrade (confirmed via coredump: CCompositor::initServer
-  # -> throwError -> SIGABRT). The compositor stays on whatever Mesa/KMS
-  # picks by default (the iGPU); only client processes get steered.
-  platform = osConfig.custom.platform or { };
-  gpuEnv =
-    let
-      pciUnderscore = id: "pci-" + lib.replaceStrings [ ":" "." ] [ "_" "_" ] id;
-      dgpu = platform.dgpuPciId or "0000:03:00.0";
-      igpu = platform.igpuPciId or "0000:c5:00.0";
-      primary = if (platform.displayGpu or "dgpu") == "dgpu" then dgpu else igpu;
-    in
-    # Skip DRI_PRIME entirely on iGPU-only hosts (e.g. Framework 13) — there's
-    # no second GPU to route to, and pointing it at a nonexistent PCI device
-    # is worse than doing nothing.
-    lib.optionals ((platform.gpu or "amd") == "amd" && (platform.hasDgpu or false)) [
-      "DRI_PRIME,${pciUnderscore primary}"
-    ];
+  # ── GPU targeting: deliberately NO session-wide DRI_PRIME ──────────────────
+  # Two rules here, routinely conflated. Both are load-bearing.
+  #
+  # 1. Never steer Aquamarine's own backend/KMS device (AQ_DRM_DEVICES /
+  #    WLR_DRM_DEVICES). The dGPU has no display path to the internal panel;
+  #    telling Hyprland's backend to open it as primary is a fatal,
+  #    unrecoverable abort with no fallback, not a graceful degrade (confirmed
+  #    via coredump: CCompositor::initServer -> throwError -> SIGABRT).
+  #    Asserted near the bottom of this file.
+  #
+  # 2. Never export DRI_PRIME from here either, which is why there is no
+  #    gpuEnv binding any more. `env=` in hyprland.conf is session-global: it
+  #    reaches every client AND the systemd user manager, so one line put the
+  #    entire desktop on the dGPU. eDP-2 hangs off the iGPU, so every frame
+  #    then became a cross-device dmabuf import -- visible artifacts and
+  #    flicker in Brave, and a dGPU pinned resident at 0% busy that amdgpu
+  #    runtime PM could never suspend. docs/dgpu-steam-forcing.md only ever
+  #    argued for the PER-APP form, and explicitly calls an ambient session
+  #    value a stray to hunt down; this was that stray, in Nix form.
+  #
+  # dGPU routing is opt-in, per app, via exactly three sanctioned routes:
+  #   Steam          -> programs.steam `extraEnv` (configuration.nix)
+  #   anything else  -> `dgpu-run <cmd>` (home/scripts/default.nix)
+  #   a systemd unit -> `Environment=` on that unit
 
   # Monitor configuration - auto-detect based on hardware
   # To customize: override monitors.laptop or monitors.desktop in your config
@@ -164,7 +166,10 @@ in
         "SDL_VIDEODRIVER,wayland,x11"
         "MOZ_ENABLE_WAYLAND,1"
         "MOZ_DBUS_REMOTE,1"
-        "ELECTRON_OZONE_PLATFORM_HINT,x11"
+        # auto (not x11): NIXOS_OZONE_WL=1 is set system-wide in
+        # configuration.nix, and forcing x11 here overrode it back onto
+        # XWayland -- a second copy path on top of everything else.
+        "ELECTRON_OZONE_PLATFORM_HINT,auto"
         "_JAVA_AWT_WM_NONREPARENTING,1"
 
         # Cursor
@@ -189,9 +194,6 @@ in
 
         # SSH
         "SSH_AUTH_SOCK,$XDG_RUNTIME_DIR/gcr/ssh"
-
-        # GPU targeting — see custom.platform.displayGpu
-        gpuEnv
       ];
 
       # Input configuration
@@ -688,7 +690,8 @@ in
   };
 
   # Guards against regressing the documented dGPU-backend-SIGABRT hazard
-  # (see the gpuEnv comment above and docs/dgpu-steam-forcing.md): turns the
+  # (see the GPU targeting comment at the top of this file, and
+  # docs/dgpu-steam-forcing.md): turns the
   # comment-only warning into a build-time check.
   assertions = [{
     assertion = !(lib.any
@@ -761,17 +764,21 @@ in
           Restart = "no";
           TimeoutStopSec = "5s";
           KillMode = "mixed";
-          # The locker renders where the COMPOSITOR renders, not where games
-          # do. gpuEnv above is documented as "client-app device selection
-          # ONLY", but `env=` in hyprland.conf also lands in the systemd user
-          # manager's environment, so every user unit silently inherited
-          # DRI_PRIME -- and every hyprlock in the journal was on the dGPU
-          # (amdgpu 0000:03:00.0). A full-screen blur on the dGPU over a
-          # dmabuf the compositor produced on the iGPU is a cross-device
-          # import, which is what dragged it into TTM buffer migration
-          # (ttm_bo_move_memcpy -> amdgpu_bo_move) and wedged it there
-          # uninterruptibly. Unset rather than pin: Mesa's default is already
-          # the compositor's device, and this stays correct on iGPU-only hosts.
+          # REGRESSION GUARD, not the active fix. The session-wide
+          # `env=DRI_PRIME` this defended against is gone (see the GPU
+          # targeting comment at the top of this file), so on a correct
+          # config there is nothing here to unset. It stays because the
+          # failure it caught was expensive and silent: `env=` in
+          # hyprland.conf also lands in the systemd user manager's
+          # environment, so every user unit silently inherited DRI_PRIME and
+          # every hyprlock in the journal was on the dGPU (amdgpu
+          # 0000:03:00.0). A full-screen blur on the dGPU over a dmabuf the
+          # compositor produced on the iGPU is a cross-device import, which
+          # dragged it into TTM buffer migration (ttm_bo_move_memcpy ->
+          # amdgpu_bo_move) and wedged it there uninterruptibly. The locker
+          # renders where the COMPOSITOR renders, not where games do. Unset
+          # rather than pin: Mesa's default is already the compositor's
+          # device, and this stays correct on iGPU-only hosts.
           UnsetEnvironment = "DRI_PRIME";
         };
       };
