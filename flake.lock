@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "android-mirror": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "path": "./modules/android-mirror",
+        "type": "path"
+      },
+      "original": {
+        "path": "./modules/android-mirror",
+        "type": "path"
+      },
+      "parent": []
+    },
     "blipply-assistant": {
       "inputs": {
         "flake-utils": "flake-utils",
@@ -52,18 +68,14 @@
         "nixpkgs": "nixpkgs_4"
       },
       "locked": {
-        "lastModified": 1767837716,
-        "narHash": "sha256-/IRKNf+yhS5lcFtykbyORYGNm1AyOm7nIEck5p2VAbw=",
-        "ref": "refs/heads/main",
-        "rev": "0819e595bc15ab247b11c0d8b09492acfa82c8f8",
-        "revCount": 6,
-        "type": "git",
-        "url": "https://github.com/ALH477/DeMoD-IP-Blocker.git"
+        "path": "./modules/demod-ip-blocker",
+        "type": "path"
       },
       "original": {
-        "type": "git",
-        "url": "https://github.com/ALH477/DeMoD-IP-Blocker.git"
-      }
+        "path": "./modules/demod-ip-blocker",
+        "type": "path"
+      },
+      "parent": []
     },
     "demod-quanta-src": {
       "flake": false,
@@ -991,12 +1003,12 @@
     },
     "nixpkgs_4": {
       "locked": {
-        "lastModified": 1771008912,
-        "narHash": "sha256-gf2AmWVTs8lEq7z/3ZAsgnZDhWIckkb+ZnAo5RzSxJg=",
-        "owner": "nixos",
-        "repo": "nixpkgs",
-        "rev": "a82ccc39b39b621151d6732718e3e250109076fa",
-        "type": "github"
+        "lastModified": 1788179007,
+        "narHash": "sha256-hn1oU2rue2SYK8dAr8+WNZWtbsz1S2W5mnHlSEuh3bo=",
+        "rev": "34ab99075ac4f7e40cf037eef32cb1c360bb85e9",
+        "revCount": 1064949,
+        "type": "tarball",
+        "url": "https://api.flakehub.com/f/pinned/DeterminateSystems/nixpkgs-weekly/0.1.1064949%2Brev-34ab99075ac4f7e40cf037eef32cb1c360bb85e9/01a07f85-6cc4-7701-8bcf-aa05a24774e1/source.tar.gz"
       },
       "original": {
         "owner": "nixos",
@@ -1178,6 +1190,7 @@
     },
     "root": {
       "inputs": {
+        "android-mirror": "android-mirror",
         "blipply-assistant": "blipply-assistant",
         "boot-intro": "boot-intro",
         "demod-ip-blocker": "demod-ip-blocker",

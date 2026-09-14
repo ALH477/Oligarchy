@@ -16,8 +16,19 @@
     nixos-hardware.url = "github:NixOS/nixos-hardware";
 
     # Custom modules
-    demod-ip-blocker.url = "git+https://github.com/ALH477/DeMoD-IP-Blocker.git";
+    # Vendored + patched locally: upstream's update script is `set -e` +
+    # `pipefail` and dies on `grep ":"` exit-1 whenever the feed has no IPv6
+    # lines — which is always (spur-astrill-vpn is IPv4-only). 196/196 runs
+    # had failed for exactly that reason, leaving the ipsets empty while the
+    # service reported enabled. The vendored copy (modules/demod-ip-blocker)
+    # uses a pure-awk v6 filter that exits 0 on no-match. Re-point at upstream
+    # only once the grep-pipeline bug is fixed there.
+    demod-ip-blocker.url = "path:./modules/demod-ip-blocker";
     minecraft.url = "path:./modules/minecraft";
+    android-mirror = {
+      url = "path:./modules/android-mirror";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
 
     # Secure Boot (opt-in via custom.secureBoot.enable). Tracks the default
     # branch for reliable locking; pin a release tag if you prefer.
@@ -147,6 +158,7 @@
     , demod-ip-blocker
     , demod-talk
     , minecraft
+    , android-mirror
     , greeting
     , boot-intro
     , blipply-assistant
@@ -251,6 +263,15 @@
         ./modules/kernel.nix
         ./modules/personas.nix
         ./modules/dsp-rigs.nix
+
+        # Tailnet-only Paper server with Geyser/Floodgate crossplay
+        # (services.oligarchyMinecraft). In commonModules rather than on one
+        # host because it is opt-in anywhere; it defaults OFF, so unlike
+        # custom.hydramesh it needs no mkForce in the ISO block below.
+        ./modules/minecraft-server.nix
+        # USB scrcpy phone-mirror (custom.androidMirror). Opt-in, defaults OFF,
+        # so the ISO needs no mkForce. See modules/android-mirror/README.md.
+        android-mirror.nixosModules.default
         ./modules/secure-boot.nix
         ./modules/agentic-local-ai.nix
         # oligarchy-mcp.nix removed — replaced by mcp-servers.nixosModules.default
@@ -658,6 +679,9 @@
               # (hydramesh-lisp) and Faust/GCC (hydramodem) builds have no place in
               # the installer image. Drop this mkForce if the ISO must ship them.
               custom.hydramesh.enable = lib.mkForce false;
+              # Belt-and-suspenders: module defaults off (AGENTS.md rule 9
+              # exception per spec 0.2). minecraft-server has no ISO mkForce.
+              custom.tvPrivacy.enable = lib.mkForce false;
 
               boot.supportedFilesystems = lib.mkForce [
                 "btrfs"
@@ -706,6 +730,65 @@
         # directly on an already-installed system for a firmware check:
         #   nix run .#oligarchy-hw-detect
         oligarchy-hw-detect = oligarchyHwDetect;
+
+        # ════════════════════════════════════════════════════════════════════
+        # Run the real Paper + Geyser + Floodgate stack in a scratch directory,
+        # as the invoking user, without touching the system:
+        #   nix run .#minecraft-server-dev -- --accept-eula
+        #
+        # This is the half `.#test-minecraft-server` cannot cover. That gate
+        # stubs Paper — a test VM is offline and Paper ships Paperclip, which
+        # downloads Mojang's server jar on first start — so it proves the
+        # module's wiring and nothing about whether a Bedrock client actually
+        # connects. Both share modules/minecraft-server/config.nix, so the
+        # runner exercises the configuration the service will run.
+        # ════════════════════════════════════════════════════════════════════
+        minecraft-server-dev = pkgs.callPackage ./modules/minecraft-server/dev-run.nix { };
+
+        # USB scrcpy game-display wrapper. Same derivation the NixOS module
+        # installs when custom.androidMirror.enable is set.
+        #   nix run .#phone-mirror
+        phone-mirror = android-mirror.packages.${system}.default;
+
+        # ════════════════════════════════════════════════════════════════════
+        # DCL schema/value gate (§13 of docs/demod-config-layer-spec.md).
+        # Pure evaluation -- no KVM, no closure -- so unlike the VM gates this
+        # one is cheap enough to run on every change:
+        #   nix build .#dcl-check
+        #
+        # The spec's §13 shells out to a `dmc-validate` binary built from
+        # libdmc, which does not exist yet. This is the Nix half of the same
+        # gate and it must stay in agreement with libdmc once that lands: any
+        # check one side makes and the other does not is a values.json that
+        # passes the build and quarantines on the device.
+        #
+        # Evaluated, not run in a builder, so a failure names the offending
+        # option at eval time instead of burying it in build output.
+        # ════════════════════════════════════════════════════════════════════
+        dcl-check =
+          let
+            lib' = nixpkgs.lib;
+            unit = import ./modules/dcl/test.nix { lib = lib'; };
+            module = import ./modules/dcl/module-test.nix { lib = lib'; };
+            failures = unit.failures ++ module.failures;
+          in
+          if failures != [ ] then
+            throw
+              ("dcl-check FAILED (${toString (builtins.length failures)} of "
+                + "${toString (unit.total + module.total)}):\n"
+                + lib'.concatMapStringsSep "\n" (f: "  - ${f.name}") failures)
+          else
+            pkgs.runCommand "dcl-check"
+              {
+                meta = with nixpkgs.lib; {
+                  description = "DCL schema + value validation gate (pure eval)";
+                  platforms = platforms.linux;
+                };
+              } ''
+              mkdir -p $out
+              echo "DCL: ${toString unit.passed}/${toString unit.total} library tests passed" | tee $out/report.txt
+              echo "DCL: ${toString module.passed}/${toString module.total} module tests passed" | tee -a $out/report.txt
+            '';
 
         # ════════════════════════════════════════════════════════════════════
         # MCP self-audit build gate — runs the ports-sec `mcp_self_audit`

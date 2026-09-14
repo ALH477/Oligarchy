@@ -211,7 +211,13 @@ let
 
         udp dport { ${concatMapStringsSep ", " toString mandatoryUdpPorts} } accept
 
-        ${optionalString cfg.recovery.preserveLocalSsh "tcp sport 22 accept"}
+        # preserveLocalSsh keeps inbound-SSH REPLIES alive across conntrack
+        # flushes. Unqualified `tcp sport 22 accept` would also accept egress
+        # from any local process that bound source port 22 — an unfiltered
+        # channel for whatever got root (or a dev tool after
+        # ip_unprivileged_port_start was relaxed). `ct state established`
+        # confines it to replies on connections that were established inbound.
+        ${optionalString cfg.recovery.preserveLocalSsh "tcp sport 22 ct state established accept"}
         ${optionalString (cfg.allow.uids != [ ]) uidRules}
         ${optionalString (cfg.allow.ports != [ ]) portRules}
 

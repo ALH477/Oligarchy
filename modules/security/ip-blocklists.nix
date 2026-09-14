@@ -230,6 +230,23 @@ let
     STATE=${stateDir}
     mkdir -p "$STATE/cache"
 
+    # A panic flushes the sets but must not silently re-arm on the next timer
+    # cycle — an operator who unblocked something at 02:00 and forgot would
+    # otherwise get the full blocking surface back at 06:00 with no record.
+    # `oligarchy-blocklist panic` drops this file; delete it (`panic --rearm`)
+    # or wait for it to expire (24h) before enforcement resumes.
+    PANIC="$STATE/panicked"
+    if [ -f "$PANIC" ]; then
+      age=$(( $(date +%s) - $(stat -c %Y "$PANIC") ))
+      if [ "$age" -ge 86400 ]; then
+        echo "panic flag expired (>24h); re-arming" >&2
+        rm -f "$PANIC"
+      else
+        echo "panic flag present ($PANIC); staying inert. rm it or \`oligarchy-blocklist panic --rearm\` to re-arm." >&2
+        exit 0
+      fi
+    fi
+
     # ── Protected addresses, resolved at run time ────────────────────────────
     PROT="$STATE/protected.txt"
     : > "$PROT"
@@ -324,9 +341,17 @@ let
         # Emptying the sets makes `-m set --match-set` match nothing, so the
         # iptables rules go inert without touching the firewall. Contrast with
         # flushing an nft base chain, which keeps `policy drop` and fails closed.
+        # --rearm deletes the panic flag; without it the update service stays
+        # inert (writes the flag, refreshes skip) until you say so.
+        if [ "''${2:-}" = "--rearm" ]; then
+          rm -f "${stateDir}/panicked"
+          echo "blocklists: panic flag removed; the next update re-arms"
+          exit 0
+        fi
         ipset flush ${setV4} 2>/dev/null || true
         ipset flush ${setV6} 2>/dev/null || true
-        echo "blocklists: sets flushed — filtering is inert until the next update"
+        touch "${stateDir}/panicked"
+        echo "blocklists: sets flushed — enforcement inert. Auto-re-arms in 24h; 'oligarchy-blocklist panic --rearm' to re-arm now."
         ;;
       *)
         echo "usage: oligarchy-blocklist [status|update|test <ip>|panic]" >&2
@@ -488,7 +513,23 @@ in
         # a no-op, which is exactly how strict-egress's refresh silently never
         # ran. See modules/security/strict-egress.nix.
         RemainAfterExit = false;
+        # Wait for a real default route before the feed fetch. This laptop
+        # force-disables both wait-online units, so network-online.target can
+        # fire pre-DHCP and the updater's runtime "protected addresses" set
+        # (live addrs + gateways + egress-resolved IPs) comes back near-empty —
+        # shrinking exactly the guard that keeps LAN and self out of the sets.
+        # Retry rather than sit on the failure until the next 6h cycle.
+        ExecStartPre = pkgs.writeShellScript "blocklists-wait-route" ''
+          for _ in $(seq 1 30); do
+            ${pkgs.iproute2}/bin/ip route show default 2>/dev/null | ${pkgs.gnugrep}/bin/grep -q default && exit 0
+            sleep 1
+          done
+          echo "no default route after 30s; refusing to refresh on a blind boot" >&2
+          exit 1
+        '';
         ExecStart = "${updateScript}/bin/oligarchy-blocklists-update";
+        Restart = "on-failure";
+        RestartSec = "30s";
         StateDirectory = "oligarchy-blocklists";
         User = "root";
         NoNewPrivileges = true;

@@ -67,6 +67,13 @@ let
         # Everyone else does not. This is the gate.
         udp dport ${toString cfg.meshPort} drop
 
+        # Rate-limit the knock port. The authorizer's replay-window is the
+        # correctness check, not a flood check: an unattended listener with
+        # no rate cap lets an on-path host spray knocks indefinitely and churn
+        # CPU/log. Upstream's nftables table carries the same 20/s bound.
+        udp dport ${toString cfg.knockPort} limit rate 20/second accept
+        udp dport ${toString cfg.knockPort} drop
+
         # IPv6 is dropped unconditionally, and that is load-bearing: the knock
         # channel is IPv4-only (the authorizer discards non-SocketAddr::V4) and
         # the allow-set is ipv4_addr, so a v6 peer can never be authorized.
