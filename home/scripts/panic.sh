@@ -25,5 +25,19 @@ fi
 
 notify "locked · mic muted · clipboard wiped${radios}"
 
-# 4. Lock last (blocking).
-pidof hyprlock >/dev/null 2>&1 || hyprlock
+# 4. Lock last. `systemctl start` returns when the job finishes, which for a
+# Type=exec unit means "process spawned" — hyprlock still has --grace 3 before
+# the session is actually locked. Poll the logind LockedHint (set by
+# hyprlock's ext-session-lock handshake) until the lock is really engaged,
+# with a hard timeout so a panic lock never reports success prematurely.
+systemctl --user start hyprlock.service
+loginctl lock-session 2>/dev/null || true
+locked=0
+for _ in $(seq 1 60); do
+  if [ "$(loginctl show-session "${XDG_SESSION_ID:-self}" -p LockedHint --value 2>/dev/null)" = "yes" ]; then
+    locked=1
+    break
+  fi
+  sleep 0.25
+done
+[ "$locked" = 1 ] || notify "WARNING: lock did not engage within 15s"

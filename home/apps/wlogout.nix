@@ -7,10 +7,14 @@ in {
   # Wlogout Power Menu Configuration
   # ══════════════════════════════════════════════════════════════════════════
   home.file.".config/wlogout/layout".text = ''
-    {"label":"lock","action":"hyprlock","text":"Lock","keybind":"l"}
+    {"label":"lock","action":"systemctl --user start --no-block hyprlock.service","text":"Lock","keybind":"l"}
     {"label":"logout","action":"hyprctl dispatch exit","text":"Logout","keybind":"e"}
     {"label":"suspend","action":"systemctl suspend","text":"Sleep","keybind":"s"}
-    {"label":"hibernate","action":"systemctl hibernate","text":"Hibernate","keybind":"h"}
+    # No hibernate button, deliberately: boot.resumeDevice is unset, the
+    # cpuSecurity hardened preset puts nohibernate on the kernel cmdline, and
+    # the only disk swap is an external btrfs chattr +C swapfile with no
+    # resume_offset — `systemctl hibernate` here writes an image nothing can
+    # resume from. Offer it again only when resume actually works end-to-end.
     {"label":"reboot","action":"systemctl reboot","text":"Reboot","keybind":"r"}
     {"label":"shutdown","action":"systemctl poweroff","text":"Shutdown","keybind":"p"}
   '';
@@ -71,11 +75,6 @@ in {
 
     #suspend:focus, #suspend:hover { 
       background: linear-gradient(135deg, ${p.purple} 0%, ${p.pink} 100%);
-      color: ${p.textOnAccent};
-    }
-
-    #hibernate:focus, #hibernate:hover { 
-      background: linear-gradient(135deg, ${p.accentDim} 0%, ${p.purple} 100%);
       color: ${p.textOnAccent};
     }
 

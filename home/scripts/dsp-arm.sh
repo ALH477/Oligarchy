@@ -15,10 +15,12 @@ is_armed() { systemctl is-active --quiet "$VM"; }
 
 case "${1:-toggle}" in
   on)
-    if systemctl start "$VM" "$BRIDGE" 2>/dev/null; then
+    err=$(systemctl start "$VM" "$BRIDGE" 2>&1)
+    if [ -z "$err" ]; then
       notify "coprocessor armed — patch your rig in"
     else
-      notify "arm failed (is the DSP VM built, and the polkit rule present?)"
+      notify "arm failed (is the DSP VM built, and the polkit rule present?)
+$err"
     fi
     ;;
   off)

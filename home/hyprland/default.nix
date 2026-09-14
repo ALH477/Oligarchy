@@ -840,9 +840,13 @@ in
       on-resume = brightnessctl -r
     }
   '' + ''
+    # Start the hyprlock unit directly instead of `loginctl lock-session`:
+    # lock-session is a no-op when no ext-session-lock client is running yet
+    # (hyprlock registers the handler only once started), which left a gap
+    # where the session looked "about to lock" but nothing was listening.
     listener {
       timeout = 600
-      on-timeout = loginctl lock-session
+      on-timeout = systemctl --user start --no-block hyprlock.service
     }
     listener {
       timeout = 660
