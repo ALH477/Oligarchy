@@ -485,19 +485,21 @@ in
           gamemoded -d 2>/dev/null &
         fi
         
+        # NOTE: no misc:vrr / misc:vfr here. vrr is deliberately 0 in
+        # home/hyprland/default.nix (Framework 16 BOE panel flickers stale
+        # buffers below the LFC floor; fullscreen games are exactly where it
+        # bites). Forcing vrr=2/vfr flips re-introduced that freeze/flicker.
         hyprctl --batch "\
           keyword animations:enabled 0; \
           keyword decoration:blur:enabled 0; \
           keyword decoration:shadow:enabled 0; \
           keyword decoration:dim_inactive 0; \
-          keyword misc:vfr 0; \
-          keyword misc:vrr 2; \
           keyword general:gaps_in 0; \
           keyword general:gaps_out 0; \
           keyword general:border_size 1"
         
         touch "$STATEFILE"
-        notify "Game Mode ON" "Animations disabled, VRR forced, gaps removed"
+        notify "Game Mode ON" "Animations disabled, gaps removed"
       }
       
       gamemode_off() {
@@ -505,13 +507,13 @@ in
           gamemoded -r 2>/dev/null || true
         fi
         
+        # vrr/vfr are NOT touched (see gamemode_on): leave them at the
+        # deliberately-fixed misc:vrr=0 / vfr=true from hyprland settings.
         hyprctl --batch "\
           keyword animations:enabled 1; \
           keyword decoration:blur:enabled 1; \
           keyword decoration:shadow:enabled 1; \
           keyword decoration:dim_inactive 1; \
-          keyword misc:vfr 1; \
-          keyword misc:vrr 1; \
           keyword general:gaps_in 5; \
           keyword general:gaps_out 10; \
           keyword general:border_size 2"

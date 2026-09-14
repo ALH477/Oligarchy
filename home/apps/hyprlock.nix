@@ -6,14 +6,27 @@ let
   # See home/apps/wofi.nix for why this is factored into a function of `p`.
   renderConf = p: ''
     general {
-      disable_loading_bar = false
       hide_cursor = true
-      grace = 3
+      # Draw immediately instead of waiting on background resources. Without
+      # this the lock surface is not finished (and so never becomes the
+      # keyboard focus) until its background resolves -- which is exactly what
+      # fails across a dpms-off/resume cycle. `disable_loading_bar` and `grace`
+      # used to live here and were REMOVED in hyprlock 0.9.x: they parsed as
+      # "config option does not exist" errors on every single lock, and `grace`
+      # silently did nothing. Grace is a CLI flag now, passed in the
+      # hyprlock.service ExecStart (see home/hyprland/default.nix).
+      immediate_render = true
     }
 
     background {
       monitor =
-      path = screenshot
+      # NOT `screenshot`. That routes the background through screencopy ->
+      # dmabuf import, which (a) cannot complete against an output that dpms
+      # tore down, leaving a lock surface that never takes the keyboard, and
+      # (b) is the amdgpu/TTM path hyprlock wedged in uninterruptibly -- a
+      # process SIGKILL cannot touch, which cost one shutdown 3m44s. Blur over
+      # a static image is a one-shot GL cost and needs neither.
+      path = ~/.config/hypr/wallpapers/default.jpg
       blur_passes = 4
       blur_size = 10
       brightness = 0.6
@@ -93,7 +106,14 @@ in {
   # Hyprlock Screen Lock Configuration
   # ══════════════════════════════════════════════════════════════════════════
   home.file = {
-    ".config/hypr/hyprlock.conf".text = renderConf p;
+    # force = true: home/scripts/theme-switch.sh live-repoints this path with
+    # `ln -sfn` as a theme preview. Without force, that foreign symlink blocks
+    # Home Manager's link step and EVERY activation fails (clobbered-file
+    # error), silently freezing the deployed generation -- which is exactly
+    # how the `env=DRI_PRIME` + `screenshot`-hyprlock bugs stayed live for
+    # weeks after their fixes merged. Force wins: HM owns the path on switch;
+    # theme-switch remains a next-boot-reset preview.
+    ".config/hypr/hyprlock.conf" = { text = renderConf p; force = true; };
   } // (lib.mapAttrs'
     (id: pal: lib.nameValuePair ".config/oligarchy/themes/${id}/hyprlock.conf" {
       text = renderConf pal;

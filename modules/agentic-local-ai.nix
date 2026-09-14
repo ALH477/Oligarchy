@@ -150,7 +150,7 @@ let
         OLLAMA_MAX_QUEUE = toString currentPreset.maxQueue;
         OLLAMA_CONTEXT_LENGTH = toString currentPreset.contextLength;
       } // lib.optionalAttrs (effectiveAcceleration == "rocm") {
-        ROCR_VISIBLE_DEVICES = "1, 0";
+        ROCR_VISIBLE_DEVICES = cfg.advanced.rocm.visibleDevices;
       } // lib.optionalAttrs (effectiveAcceleration == "rocm" && cfg.advanced.rocm.gfxVersionOverride != null) {
         HSA_OVERRIDE_GFX_VERSION = cfg.advanced.rocm.gfxVersionOverride;
       } // lib.optionalAttrs (effectiveAcceleration != null && currentPreset.gpuOverheadBytes != null) {
@@ -356,6 +356,22 @@ in
       default = null;
       description = "HSA_OVERRIDE_GFX_VERSION for ROCm (e.g., '11.0.2' for RDNA3).";
       example = "11.0.2";
+    };
+
+    advanced.rocm.visibleDevices = mkOption {
+      type = types.str;
+      # ROCm node indices follow /sys/class/kfd/kfd/topology order, which is
+      # PCI scan order on this host: node 1 = 0000:03:00.0 (dGPU, renderD128)
+      # and node 2 = 0000:c5:00.0 (780M iGPU, renderD129). Default to the iGPU
+      # ONLY: the iGPU is already resident driving the internal panel, so AI
+      # compute on it never wakes another device. Any value naming node 1
+      # (the old "1, 0") keeps the dGPU's kfd fd open for as long as the
+      # unless-stopped container runs, defeating amdgpu runtime PM -- the
+      # "dGPU struggles to shut down" symptom. Set "1" to opt back into the
+      # much faster dGPU at the cost of idle power.
+      default = "2";
+      description = "ROCR_VISIBLE_DEVICES for the Ollama container. See comment in module for the node->PCI mapping and the dGPU-awake trade-off.";
+      example = "1";
     };
 
     dedicatedSwap = {

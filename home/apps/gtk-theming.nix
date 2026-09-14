@@ -342,7 +342,7 @@ in
       gtk-xft-rgba=rgb
     '';
 
-    ".config/gtk-3.0/gtk.css".text = renderGtk3Css p;
+    ".config/gtk-3.0/gtk.css" = { text = renderGtk3Css p; force = true; };
 
     # GTK 4 Settings (not palette-dependent — no variants needed)
     ".config/gtk-4.0/settings.ini".text = ''
@@ -361,7 +361,7 @@ in
       gtk-xft-rgba=rgb
     '';
 
-    ".config/gtk-4.0/gtk.css".text = renderGtk4Css p;
+    ".config/gtk-4.0/gtk.css" = { text = renderGtk4Css p; force = true; };
   }
   // (lib.mapAttrs'
     (id: pal: lib.nameValuePair ".config/oligarchy/themes/${id}/gtk3.css" {
