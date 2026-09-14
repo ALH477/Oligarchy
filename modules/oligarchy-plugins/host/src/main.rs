@@ -172,6 +172,7 @@ fn main() -> Result<()> {
                 Authority::Local {
                     allow_unsigned: asked_for_unsigned(&cli.cmd),
                 },
+                declared_key_set(&cli)?,
             )
         } else {
             anyhow::ensure!(
@@ -332,6 +333,7 @@ fn daemon(cli: &Cli, policy: &Policy) -> Result<()> {
     let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
 
     let state_dir = cli.state_dir.clone();
+    let declared_path = cli.declared.clone();
     let policy = policy.clone();
     control::serve(listener, move |req| {
         // Re-open per request rather than holding one Store for the daemon's
@@ -343,8 +345,22 @@ fn daemon(cli: &Cli, policy: &Policy) -> Result<()> {
         // Authority::Socket is not a check that could be forgotten in a
         // refactor: the wire type has no field that could express either
         // concession it withholds. See control.rs.
-        apply(&mut store, &req, &policy, Authority::Socket)
+        let declared = declared_key_set_file(&declared_path)?;
+        apply(&mut store, &req, &policy, Authority::Socket, declared)
     })
+}
+
+/// The ids custom.plugins.declaredPlugins pins, for the shadowing guard in
+/// install. An unreadable index is NOT silently skipped — an install that
+/// lands on top of a declared id puts the registry ahead of a drop-in
+/// generated for a different manifest, which is exactly the sandbox-mismatch
+/// the guard exists to prevent. Fail closed.
+fn declared_key_set_file(path: &Path) -> Result<std::collections::BTreeSet<String>> {
+    Ok(declared::load(path)?.keys().cloned().collect())
+}
+
+fn declared_key_set(cli: &Cli) -> Result<std::collections::BTreeSet<String>> {
+    declared_key_set_file(&cli.declared)
 }
 
 /// The registry-mutating verbs, dispatched in exactly one place.
@@ -358,10 +374,16 @@ fn daemon(cli: &Cli, policy: &Policy) -> Result<()> {
 /// point: `control::Request` can express neither of the concessions
 /// `Authority::Local` carries, so a request that arrived over the socket can
 /// only ever be `Authority::Socket`.
-fn apply(store: &mut Store, req: &Request, policy: &Policy, who: Authority) -> Result<Reply> {
+fn apply(
+    store: &mut Store,
+    req: &Request,
+    policy: &Policy,
+    who: Authority,
+    declared: std::collections::BTreeSet<String>,
+) -> Result<Reply> {
     Ok(match req {
         Request::Install { source } => {
-            let id = store.install(source, policy, who)?;
+            let id = store.install(source, policy, who, Some(&declared))?;
             let e = store
                 .get(&id)
                 .context("plugin vanished from the registry immediately after install")?;
@@ -478,14 +500,31 @@ fn run_one(cli: &Cli, policy: &Policy, id: &str) -> Result<()> {
     let store = Store::open(&cli.state_dir)?;
     let index = declared::load(&cli.declared)?;
 
-    let (manifest, store_path, vsock_cid) = match store.get(id) {
-        Some(e) => (e.manifest.clone(), e.store_path.clone(), None),
-        None => declared::resolve(&index, id)?.with_context(|| {
-            format!(
-                "no such plugin {id}: not in the registry and not in {}",
-                cli.declared.display()
-            )
-        })?,
+    // Declared wins, not the registry. The drop-in on disk for a declared id
+    // was generated from the DECLARED manifest's tier/jit; running a registry
+    // artifact under it would confine it as something it is not. install()
+    // refuses the collision outright, so a hit here means an older plugind
+    // let one through — run what the sandbox describes, and say so.
+    let (manifest, store_path, vsock_cid) = match declared::resolve(&index, id)? {
+        Some(d) => {
+            if store.get(id).is_some() {
+                tracing::warn!(
+                    plugin = %id,
+                    "a registry entry shadows declared plugin {id}; running the \
+                     declared one, whose drop-in is what is on disk"
+                );
+            }
+            d
+        }
+        None => match store.get(id) {
+            Some(e) => (e.manifest.clone(), e.store_path.clone(), None),
+            None => declared::resolve(&index, id)?.with_context(|| {
+                format!(
+                    "no such plugin {id}: not in the registry and not in {}",
+                    cli.declared.display()
+                )
+            })?,
+        },
     };
     let config = registry::config_for(&cli.state_dir, id);
 

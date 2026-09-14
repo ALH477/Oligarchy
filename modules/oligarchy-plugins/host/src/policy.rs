@@ -249,6 +249,14 @@ fn is_under(path: &str, prefix: &str) -> bool {
         // matching every prefix so it is always refused.
         return true;
     }
+    // A relative spelling is also unanswerable: every enforcement layer
+    // resolves it against the unit's cwd, which for a systemd service is
+    // "/". "proc" IS /proc there. Refuse relative caps outright rather than
+    // guess a reference frame; manifest validation rejects them before this
+    // is ever consulted, so a hit here means validate() was bypassed.
+    if !Path::new(path).is_absolute() && !path.starts_with('$') {
+        return true;
+    }
     let mut p = Path::new(path).components();
     for want in Path::new(prefix).components() {
         match (p.next(), want) {
@@ -373,6 +381,23 @@ mod tests {
             SigVerdict::NeedsExplicitFlag
         );
         assert_eq!(p.authorize_signature(false, true), SigVerdict::Accept);
+    }
+
+    #[test]
+    fn relative_cap_spellings_are_refused_unconditionally() {
+        // A relative cap resolves against the unit's cwd ("/" for a systemd
+        // service), so "proc" IS /proc to Landlock — but the prefix matcher
+        // could never see that. Refuse the spelling regardless of prefix.
+        assert!(is_under("proc", "/proc"));
+        assert!(is_under("proc/self/mem", "/proc"));
+        assert!(is_under("etc/shadow", "/home"));
+        assert!(is_under("home/asher/.ssh", "/does/not/matter"));
+        // $-anchored caps are expanded by the manifest before use; they are
+        // the allowed non-absolute form (expansion targets are host-chosen).
+        assert!(!is_under("$STATE", "/home"));
+        // Absolute spellings keep working normally.
+        assert!(is_under("//proc/self/mem", "/proc"));
+        assert!(!is_under("/opt/plugin/data", "/home"));
     }
 
     #[test]
