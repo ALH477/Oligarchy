@@ -29,7 +29,7 @@ let
 
   # Must agree with `allowlist::ASPECTS`, `umbrella::is_known_aspect`, the
   # sub-flake's aspectNames, and the repo-root `.mcp.json`.
-  aspectNames = [ "system" "net" "dcf" "dsp" "ai" "secrets" "vm" "ports-sec" "hydramesh" ];
+  aspectNames = [ "system" "net" "dcf" "dsp" "ai" "secrets" "vm" "ports-sec" "hydramesh" "storage" ];
 
   aspectPkg = name: packages."oligarchy-${name}-mcp" or null;
   # The `aspects` attrsOf submodule has per-name overrides; missing keys
@@ -82,8 +82,13 @@ in
 
     stateDir = mkOption {
       type = types.str;
-      default = "~/.local/state/oligarchy-mcp";
-      description = "Per-aspect audit log root. Expanded at runtime.";
+      default = "/var/lib/oligarchy-mcp";
+      description = ''
+        Per-aspect audit log root. NOTE: "~" is never expanded inside an
+        environment variable, so a "~/…" default here would create a
+        literal tilde directory in the caller's cwd (from a systemd unit,
+        cwd=/) and the audit log would vanish. Use a real path.
+      '';
     };
 
     systemdUnit.enable = mkOption {
@@ -141,7 +146,12 @@ in
           PrivateTmp = true;
           ProtectSystem = "strict";
           SystemCallFilter = [ "@system-service" "~@privileged" ];
-          RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+          # stdio-only surface: no crate except ports-sec binds a socket, and
+          # that one needs loopback TCP for local_api_scan — which AF_UNIX
+          # cannot express. Granting AF_INET/AF_INET6 here would let any
+          # aspect exec'd by this unit open non-loopback sockets, breaking
+          # the read-only posture the aspect allowlists are built around.
+          RestrictAddressFamilies = [ "AF_UNIX" ];
         };
       };
     })

@@ -8,7 +8,6 @@
 //! [`local_api_scan::scan_all`].
 
 use oligarchy_mcp_core::audit;
-use oligarchy_mcp_core::runner::{self, HEAVY_TIMEOUT};
 use oligarchy_mcp_core::runner_mcp;
 
 use rmcp::{ServerHandler, model::{ServerCapabilities, ServerInfo}, tool};
@@ -46,29 +45,27 @@ impl Server {
         local_api_scan::scan_all().unwrap_or_else(|e| format!("[error] {e}"))
     }
 
-    #[tool(description = "nmap self-scan: loopback TCP scan always; optional LAN scan when lan_iface is non-empty and present on host (validated via `ip -o link`).")]
+    #[tool(description = "nmap self-scan: loopback TCP scan of 127.0.0.1 only. A non-empty lan_iface is validated for provenance but the scan is denied — this read-only surface never targets non-loopback.")]
     fn nmap_self_scan(&self, #[tool(param)] lan_iface: String) -> String {
         let opt = if lan_iface.is_empty() { None } else { Some(lan_iface.as_str()) };
         let detail = opt.unwrap_or("(loopback only)");
         audit::tool(ASPECT, "nmap_self_scan", detail);
-        let mut inv = nmap_self_scan::loopback(420).unwrap_or_else(|e| format!("[error] {e}"));
-        if let Some(iface) = opt {
-            inv.push_str(&format!("\n\n--- LAN scan (iface={iface}) ---\n"));
-            let validated = nmap_self_scan::validate_lan_iface(iface).unwrap_or(false);
-            if !validated {
-                inv.push_str(&format!(
-                    "[denied] iface {iface} not present on host (run `ip -o link`)"
-                ));
-            } else {
-                inv.push_str(&runner::run(
-                    ASPECT,
-                    "nmap",
-                    &["-sT", "-p-", "127.0.0.1"],
-                    HEAVY_TIMEOUT,
-                ).unwrap_or_else(|e| format!("[error] {e}")));
+        let inv = nmap_self_scan::loopback(420).unwrap_or_else(|e| format!("[error] {e}"));
+        // A non-empty lan_iface used to run an nmap -sT against 127.0.0.1
+        // AGAIN and label it "--- LAN scan (iface=…) ---", i.e. claimed a
+        // LAN scan it never performed: the interface was validated and then
+        // never passed to nmap. LAN scanning is out of scope for this
+        // read-only surface — say so instead of faking the header.
+        match opt {
+            None => inv,
+            Some(iface) => {
+                let validated = nmap_self_scan::validate_lan_iface(iface).unwrap_or(false);
+                format!(
+                    "{inv}\n\n[denied] LAN scanning is out of scope for this read-only surface (iface {iface} {})",
+                    if validated { "present" } else { "not present on host" }
+                )
             }
         }
-        inv
     }
 
     #[tool(description = "Meta-security: scan every crate's source for forbidden patterns (TcpListener, reqwest outside ports-sec, etc.) and verify .mcp.json has no URL/HTTP transport entries. Doubles as the `nix build .#mcp-self-audit` build gate.")]

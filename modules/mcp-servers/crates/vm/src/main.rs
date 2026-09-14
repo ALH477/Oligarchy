@@ -48,8 +48,14 @@ impl Server {
         if let Ok(entries) = std::fs::read_dir(&cfg_dir) {
             for e in entries.flatten() {
                 let p = e.path();
-                if p.is_file() {
-                    out.push(p.file_name().unwrap().to_string_lossy().into_owned());
+                if !p.is_file() {
+                    continue;
+                }
+                // The one non-test unwrap() in the aspect handlers: file_name()
+                // returns None only for `..`, which read_dir never emits, but a
+                // panic inside an rmcp handler kills the whole serving task.
+                if let Some(name) = p.file_name() {
+                    out.push(name.to_string_lossy().into_owned());
                 }
             }
         }
