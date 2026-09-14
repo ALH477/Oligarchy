@@ -695,9 +695,6 @@
               # (hydramesh-lisp) and Faust/GCC (hydramodem) builds have no place in
               # the installer image. Drop this mkForce if the ISO must ship them.
               custom.hydramesh.enable = lib.mkForce false;
-              # Belt-and-suspenders: module defaults off (AGENTS.md rule 9
-              # exception per spec 0.2). minecraft-server has no ISO mkForce.
-              custom.tvPrivacy.enable = lib.mkForce false;
               # Rule 9 says the ISO stays light *by default*, not merely when a
               # module's `enable` default happens to be false. Personal apps
               # (android-mirror udev rules, adbusers, scrcpy) ride a
