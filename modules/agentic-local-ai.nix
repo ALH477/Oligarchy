@@ -391,12 +391,15 @@ in
 
       priority = mkOption {
         type = types.int;
-        default = 50;
+        default = 5;
         description = ''
-          swapDevices priority. Should sit between zram (typically 100) and
-          the system's generic backup swap (typically 10) — AI overflow
-          drains here first, before falling through to the shared backup
-          tier used by everything else on the box.
+          swapDevices priority. Below the system's generic backup swap
+          (typically 10): swap tiers are host-wide, nothing can actually
+          reserve this file for the Ollama container, and a priority-50 tier
+          would be drained FIRST under pressure — i.e. ahead of the real
+          last-resort swap. 5 makes it the true last resort instead. The
+          container-level bound comes from the unit's MemorySwapMax, not
+          from this file's priority.
         '';
       };
     };

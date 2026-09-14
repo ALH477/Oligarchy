@@ -392,6 +392,7 @@
       nixosConfigurations.nixos = mkHost [
         nixos-hardware.nixosModules.framework-16-7040-amd
         ./modules/hardware-configuration.nix
+        { networking.hostName = "nixos"; }
         { custom.platform = { gpu = "amd"; cpu = "amd"; framework = true; }; }
 
         # Tiered plugin runtime — STAGE 1 (tier 0 only), and this is the only
@@ -527,6 +528,7 @@
         nixos-hardware.nixosModules.framework-13-7040-amd
         ./hosts/framework13/hardware-configuration.nix
         {
+          networking.hostName = "nixos-fw13";
           custom.platform = {
             gpu = "amd";
             cpu = "amd";
@@ -544,7 +546,10 @@
         nixos-hardware.nixosModules.common-gpu-intel
         nixos-hardware.nixosModules.common-pc-laptop-ssd
         ./hosts/intel/hardware-configuration.nix
-        { custom.platform = { gpu = "intel"; cpu = "intel"; framework = false; }; }
+        {
+          networking.hostName = "nixos-intel";
+          custom.platform = { gpu = "intel"; cpu = "intel"; framework = false; };
+        }
       ];
 
       # Intel + Nvidia Optimus laptop (PRIME render offload, CUDA AI stack).
@@ -556,6 +561,7 @@
         nixos-hardware.nixosModules.common-pc-laptop-ssd
         ./hosts/optimus/hardware-configuration.nix
         {
+          networking.hostName = "nixos-optimus";
           custom.platform = {
             gpu = "nvidia-optimus";
             cpu = "intel";
@@ -593,6 +599,7 @@
         ./modules/ci-builder.nix
         oligarchy-plugins.nixosModules.default
         {
+          networking.hostName = "nixos-builder";
           # Set `cpu` to this box's actual vendor: it selects the nested-virt
           # modprobe line in modules/ci-builder.nix. `gpu` is irrelevant on a
           # headless host but the option is an enum with no "none" member.
@@ -658,9 +665,13 @@
 
             ({ lib, ... }: {
               # ISO-specific overrides
+              networking.hostName = "oligarchy-iso";
               services.displayManager.sddm.enable = lib.mkForce true;
               services.displayManager.sddm.wayland.enable = lib.mkForce true;
               services.desktopManager.plasma6.enable = lib.mkForce true;
+              # greetd is the production greeter but fights SDDM for tty1 on
+              # the installer; force it off wherever SDDM was forced on.
+              services.greetd.enable = lib.mkForce false;
 
               # Disable production services in ISO
               services.ollamaAgentic.enable = lib.mkForce false;
@@ -682,6 +693,16 @@
               # Belt-and-suspenders: module defaults off (AGENTS.md rule 9
               # exception per spec 0.2). minecraft-server has no ISO mkForce.
               custom.tvPrivacy.enable = lib.mkForce false;
+              # Rule 9 says the ISO stays light *by default*, not merely when a
+              # module's `enable` default happens to be false. Personal apps
+              # (android-mirror udev rules, adbusers, scrcpy) ride a
+              # `custom.desktopFeatures` default — force the whole feature off.
+              custom.desktopFeatures.enablePersonalApps = lib.mkForce false;
+              custom.androidMirror.enable = lib.mkForce false;
+
+              # fwupd is enabled above for oligarchy-hw-detect, but the weekly
+              # refresh timer phones LVFS the moment the live image nets up.
+              systemd.timers.fwupd-refresh.wantedBy = lib.mkForce [ ];
 
               boot.supportedFilesystems = lib.mkForce [
                 "btrfs"
