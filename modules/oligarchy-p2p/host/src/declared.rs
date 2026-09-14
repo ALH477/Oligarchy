@@ -73,12 +73,15 @@ pub fn key_name(secret: &str) -> Result<&str> {
     Ok(name)
 }
 
-/// Refuse a key anyone but its owner can read.
+/// Refuse a key anyone but its owner can read — including when that owner IS
+/// the network-facing daemon's user.
 ///
 /// Cheap, and it catches a real footgun: a signing key that leaked to the
 /// `oligarchy-p2p` user would put it in reach of the network-facing daemon,
 /// which is precisely the thing the separate-unit split exists to prevent.
-pub fn check_key_mode(mode: u32, path: &Path) -> Result<()> {
+/// Mode alone cannot see "owned BY the daemon user", so the uid is checked
+/// too: seeding runs as root, and the key must be root-owned.
+pub fn check_key(mode: u32, uid: u32, path: &Path) -> Result<()> {
     if mode & 0o077 != 0 {
         bail!(
             "signing key {} is mode {:04o}: readable beyond its owner. \
@@ -86,6 +89,14 @@ pub fn check_key_mode(mode: u32, path: &Path) -> Result<()> {
              reason seeding runs in a separate unit.",
             path.display(),
             mode & 0o7777
+        );
+    }
+    if uid != 0 {
+        bail!(
+            "signing key {} is owned by uid {uid}, not root. A key a less \
+             privileged or network-adjacent account owns can be rotated or \
+             read through that account; `chown root:root` it.",
+            path.display()
         );
     }
     Ok(())
@@ -622,11 +633,20 @@ mod tests {
     #[test]
     fn a_world_readable_key_is_refused() {
         let p = Path::new("/tmp/k");
-        assert!(check_key_mode(0o400, p).is_ok());
-        assert!(check_key_mode(0o600, p).is_ok());
+        assert!(check_key(0o400, 0, p).is_ok());
+        assert!(check_key(0o600, 0, p).is_ok());
         for bad in [0o440, 0o444, 0o604, 0o666, 0o777] {
-            assert!(check_key_mode(bad, p).is_err(), "accepted mode {bad:04o}");
+            assert!(check_key(bad, 0, p).is_err(), "accepted mode {bad:04o}");
         }
+    }
+
+    #[test]
+    fn a_non_root_owned_key_is_refused() {
+        // Mode 0400 owned by the daemon's user is exactly "a key the network-
+        // facing daemon can read", which the mode bits alone cannot see.
+        let p = Path::new("/tmp/k");
+        assert!(check_key(0o400, 999, p).is_err());
+        assert!(check_key(0o400, 1000, p).is_err());
     }
 
     #[test]

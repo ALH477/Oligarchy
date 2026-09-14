@@ -109,6 +109,32 @@ pub const PORTS_SEC: &[&str] = &[
     "nmap",
 ];
 
+/// CLIs the `storage` aspect may invoke.
+///
+/// Every entry is read-only, and that is structural rather than a convention:
+/// there is deliberately no binary here capable of deleting anything.
+/// `nix-collect-garbage` was tried behind a hard-coded `--dry-run` guard and
+/// removed — it produces no output at all for a non-root caller, which is how
+/// this surface always runs, and keeping it would have left one constant
+/// standing between the aspect and a real collection.
+///
+/// `nix-env` is likewise absent: `--list-generations` takes a write lock on the
+/// profile and fails with "Permission denied" unprivileged, so the storage
+/// crate reads the generation symlinks directly instead.
+///
+/// `du` and `find` are read-only walkers, but both interpret arguments
+/// beginning with `-` as options — and `find`'s options include `-delete`.
+/// That is why `crates/storage` refuses any path argument that is not
+/// absolute; see `checked_path` there.
+pub const STORAGE: &[&str] = &[
+    "df",
+    "du",
+    "find",
+    "nix",
+    "nix-store",
+    "journalctl",
+];
+
 /// Every known aspect name. The umbrella router (`crates/umbrella`), the
 /// sub-flake's `aspectNames` and `nixos-module.nix`'s `aspectNames` must agree
 /// with this list.
@@ -122,6 +148,7 @@ pub const ASPECTS: &[&str] = &[
     "vm",
     "ports-sec",
     "hydramesh",
+    "storage",
 ];
 
 /// The allowlist for `aspect`, or `None` if the aspect is unknown. Single
@@ -138,6 +165,7 @@ pub fn list_for(aspect: &str) -> Option<&'static [&'static str]> {
         "vm" => VM,
         "ports-sec" => PORTS_SEC,
         "hydramesh" => HYDRAMESH,
+        "storage" => STORAGE,
         _ => return None,
     })
 }

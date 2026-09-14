@@ -636,7 +636,11 @@ in
   config = mkIf cfg.enable {
     assertions = [
       {
-        assertion = builtins.elem cfg.bindAddress [ "127.0.0.1" "::1" "localhost" ];
+        # Numeric literals only: "localhost" would pass this check but the
+        # daemon parses an IP literal and refuses to start on a hostname — an
+        # eval-pass/runtime-fail split is exactly what this assertion exists
+        # to prevent.
+        assertion = builtins.elem cfg.bindAddress [ "127.0.0.1" "::1" ];
         message = ''
           custom.p2pCache.bindAddress is "${cfg.bindAddress}", which is not
           loopback. The adapter speaks the Nix binary cache protocol with no

@@ -362,10 +362,12 @@ Every control is a declarative NixOS option, default-off unless noted. See [`doc
   - `source = "generate"` (FFmpeg from your `soundFile`) or `"file"` (pre-rendered)
   - Config: `services.boot-intro`
 
-- **DSP Coprocessor** (arm it with the `studio` persona, or `services.dsp-vm.enable`):
+- **DSP Coprocessor** (the `studio` persona only documents intent — it does not arm the VM; `services.dsp-vm.enable` no longer exists):
+  - Set `custom.vm.dsp.enable = true` in `~/.config/oligarchy/local.nix`, `nixos-rebuild switch --impure`.
   - Enable IOMMU in BIOS.
   - Set audio PCI ID.
-  - `dsp-status` to verify; `dsp-bench` to measure the round-trip yourself (`jack_iodelay` across the NETJACK bridge).
+  - Arm at runtime with `dsp-arm` or `systemctl start archibaldos-dsp` (`autoStart` is off by default — starting it hands the second xHCI controller to VFIO).
+  - `dsp-status` to verify; `dsp-bench` to measure the round-trip yourself (`jack_iodelay` across the NETJACK bridge, carried over virtio-net).
 
 ## Troubleshooting – Crush the Resistance
 

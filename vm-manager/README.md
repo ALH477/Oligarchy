@@ -17,13 +17,22 @@ The VM Manager provides a declarative way to configure and run multiple virtual 
 
 ### 1. Build the Guest Image
 
+The guest is defined in-tree (`modules/dsp-guest.nix`, a plain NixOS
+config: `linuxPackages_xanmod_latest`, not PREEMPT_RT — that kernel and
+CachyOS RT were both removed from nixpkgs) and built as a reproducible,
+UEFI-bootable `qcow-efi` image by the top-level flake:
+
 ```bash
-git clone https://github.com/ALH477/ArchibaldOS
-cd ArchibaldOS
-nix build .#dsp-vm-qcow2
-mkdir -p ~/vms
-cp result-dsp-vm/nixos.qcow2 ~/vms/archibaldos-dsp.qcow2
+nix build .#dsp-vm-qcow
 ```
+
+On `nixosConfigurations.nixos` the resulting derivation is already wired
+into `custom.vm.dsp.archibaldOS.diskImage` (see `flake.nix`), so there is
+nothing to copy anywhere — the store path *is* the disk image, booted
+through a writable qcow2 overlay under `/var/lib/qemu` (see `overlay`
+below). There is no external `ArchibaldOS` repo to clone for this; the
+`modules/ArchibaldOS/` sub-flake in this tree is an unrelated desktop/ISO
+project and is not wired to the DSP guest at all.
 
 ### 2. Configure Hardware-Specific Settings
 
@@ -42,16 +51,24 @@ ls -l /sys/kernel/iommu_groups/*/devices/
 
 ### 3. Deploy the Host Configuration
 
-```bash
-git clone https://github.com/ALH477/Oligarchy
-cd Oligarchy
+`configuration.nix` on the `nixos` host already carries the DSP VM's
+hardware-specific settings (cores, hugepages, VFIO ids) with
+`custom.vm.dsp.enable = lib.mkDefault false;` — flip it to `true` (in
+`~/.config/oligarchy/local.nix` if you keep personal toggles out of the
+repo; that path needs `--impure` to be seen, see `CLAUDE.md`), then:
 
-# Edit configuration.nix to match your hardware (see Hardware Configuration below)
-# Then deploy:
-sudo nixos-rebuild switch --flake .#nixos
+```bash
+sudo nixos-rebuild switch --flake .#nixos --impure
 ```
 
-The VM auto-starts as a systemd service.
+`autoStart` defaults to **false**, on purpose: starting the VM binds the
+passed-through USB (xHCI) controller to `vfio-pci` and hands it to the
+guest, so every audio interface on that controller disappears from the
+host mid-session. Start it deliberately once you're ready:
+
+```bash
+sudo systemctl start archibaldos-dsp
+```
 
 ## Hardware Configuration
 
@@ -138,10 +155,18 @@ lspci -nn | grep -i "USB.*controller"
 ```nix
 custom.vm.dsp = {
   archibaldOS = {
-    diskImage = "/home/asher/vms/archibaldos-dsp.qcow2";  # Path to built image
+    diskImage = self.packages.x86_64-linux.dsp-vm-qcow;  # reproducible, GC-rooted
   };
 };
 ```
+
+A bare path string is still accepted for a hand-managed image (the
+option type is `path` or `str`), but only the derivation form is rebuilt
+by `nix build .#dsp-vm-qcow` — a plain path under `/home` is not produced
+by anything in this repo. Either way `diskImage` is booted read-only
+through a writable qcow2 overlay under `/var/lib/qemu` (`archibaldOS.overlay`,
+default `true`); delete the overlay file to reset the guest to a clean
+image.
 
 ### NETJACK Audio Settings
 
@@ -197,7 +222,7 @@ custom.vm.dsp = {
   # Guest image
   archibaldOS = {
     enable = true;
-    diskImage = "/home/YOUR_USERNAME/vms/archibaldos-dsp.qcow2";
+    diskImage = self.packages.x86_64-linux.dsp-vm-qcow;  # from `nix build .#dsp-vm-qcow`
     
     netjack = {
       enable = true;
@@ -235,11 +260,11 @@ custom.vm.dsp = {
   
   archibaldOS = {
     enable = true;
-    diskImage = ~/vms/archibaldos-dsp.qcow2;
+    diskImage = self.packages.x86_64-linux.dsp-vm-qcow;
     netjack = {
       enable = true;
       sourcePort = 4713;
-      bufferSize = 128;      # 1.33ms @ 96kHz
+      bufferSize = 128;      # 128/96000 = 1.33ms buffer period
       sampleRate = 96000;     # HD audio
       channels = 2;
     };
@@ -248,10 +273,14 @@ custom.vm.dsp = {
 ```
 
 **Features:**
-- CachyOS RT kernel with BORE scheduler
+- XanMod kernel (`linuxPackages_xanmod_latest`), carrying the RT patch
+  set — PREEMPT_RT and CachyOS RT were both removed from nixpkgs, so
+  neither is available; see `modules/dsp-guest.nix`
 - CPU isolation (isolcpus, nohz_full, rcu_nocbs)
 - NETJACK2 audio routing to host PipeWire
-- 128 samples @ 96kHz = 1.33ms latency
+- Buffer math above is arithmetic, not a measured round trip — no
+  latency has been re-measured against the XanMod guest yet (the old
+  CachyOS-RT figures no longer apply); see `docs/architecture.md` §10
 - VFIO passthrough for USB audio devices
 
 **Helper Commands:**
@@ -350,16 +379,21 @@ custom.vm.quickemu = {
 
 ## Building VM Images
 
-### ArchibaldOS DSP VM
+### DSP VM guest
 
-The DSP VM requires building from the ArchibaldOS flake:
+Built straight from this repo's top-level flake — no separate clone,
+and no conversion step:
 
 ```bash
-# From ArchibaldOS directory
-cd modules/ArchibaldOS
-nix build .#hydramesh-iso
-qemu-img convert -O raw result ~/vms/archibaldos-dsp.qcow2
+nix build .#dsp-vm-qcow
 ```
+
+The format is `qcow-efi` (a real ESP for the OVMF firmware the host
+runner supplies) — converting to a raw/BIOS image here would reproduce
+the exact failure this guest used to have: OVMF finds no EFI entry,
+falls through to a PXE netboot loop, and the isolated cores spin at
+100% forever. `modules/ArchibaldOS/` is a separate, unrelated sub-flake
+(a desktop/ISO project) and building it does not produce this guest.
 
 ### OpenWRT Router
 
@@ -444,21 +478,33 @@ quickemu --vm /var/lib/quickemu/vm-name/vm-name.conf
 
 ```
 vm-manager/
-├── flake.nix              # Flake entry point
+├── flake.nix              # Flake entry point — exposes nixosModules
+│                          # dsp-vm, quickemu-vm, coding-sandbox,
+│                          # kali-linux, openwrt-router
 ├── modules/
-│   ├── dsp-vm.nix        # DSP VM with ArchibaldOS
+│   ├── dsp-vm.nix        # THE live DSP VM module (custom.vm.dsp)
 │   ├── quickemu-vm.nix   # General Quickemu VM
-│   └── archibaldos-dsp-audio.nix  # DSP audio config
+│   └── archibaldos-dsp-audio.nix  # dead: only imported by
+│                          # config/archibaldos-dsp.nix below, which
+│                          # is itself exposed by no nixosModule and
+│                          # imported nowhere in this repo
 └── config/
-    ├── archibaldos-dsp.nix   # ArchibaldOS DSP config
+    ├── archibaldos-dsp.nix   # dead, see above — not `dsp-vm.nix`
     ├── sandbox.nix        # Coding sandbox
     ├── kali.nix           # Kali Linux
     └── openwrt-router.nix # OpenWRT router
 ```
 
+The guest OS itself (what actually boots inside the VM `dsp-vm.nix`
+launches) is defined outside this sub-flake entirely, at the top level:
+`modules/dsp-guest.nix`, built by `nix build .#dsp-vm-qcow`.
+
 ## See Also
 
 - [DSP VM with NETJACK](./docs/dsp-vm.md)
 - [OpenWRT Router Setup](./docs/openwrt-router.md)
-- [ArchibaldOS Documentation](../modules/ArchibaldOS/README.md)
+- [DSP guest OS (in-tree, what actually boots)](../modules/dsp-guest.nix)
+- `../modules/ArchibaldOS/README.md` is a separate, unrelated
+  desktop/ISO sub-flake — not the DSP guest, despite its own README
+  claiming otherwise
 - [DeMoD Voice](../modules/demod-voice/README.md)

@@ -109,11 +109,15 @@ in
       #!/usr/bin/env bash
       set -u
 
-      # desc: (EDID-based) rather than a connector name (eDP-1/eDP-2/...):
-      # connector numbering can shift across kernel/driver updates, which
-      # silently breaks a literal name match — hyprctl no-ops on an unmatched
-      # output instead of erroring, so this was hard to notice when it broke.
-      internal_display="desc:BOE 0x0BC9"
+      # desc: (EDID-based), not a connector name: eDP-N numbering can shift
+      # across kernel/driver updates and Hyprland no-ops unmatched names.
+      # Prefer resolving the BOE panel live from `hyprctl monitors all` (which
+      # lists disabled outputs too); the literal desc: is the documented
+      # fallback for this board's panel, kept in one place.
+      internal_display=$(hyprctl monitors all -j 2>/dev/null \
+        | jq -r '.[] | select(.make == "BOE") | "desc:\(.description)"' \
+        | head -n1)
+      [[ -n "$internal_display" ]] || internal_display="desc:BOE 0x0BC9"
 
       # Only disable internal display if external monitor is connected
       case "''${1:-}" in
@@ -304,8 +308,11 @@ in
 
       DIR="$HOME/Videos/Recordings"
       REPLAY_DIR="$HOME/Videos/Replays"
-      PIDFILE="/tmp/gpu-recorder.pid"
-      MODEFILE="/tmp/gpu-recorder.mode"
+      # $XDG_RUNTIME_DIR, not /tmp: a world-writable pidfile lets another user
+      # plant a PID here and have us SIGINT/SIGUSR1 an innocent process (or
+      # hit a recycled PID).
+      PIDFILE="''${XDG_RUNTIME_DIR:-/tmp}/gpu-recorder.pid"
+      MODEFILE="''${XDG_RUNTIME_DIR:-/tmp}/gpu-recorder.mode"
       REPLAY_DURATION=60  # seconds
 
       mkdir -p "$DIR" "$REPLAY_DIR"
@@ -319,7 +326,14 @@ in
       }
 
       is_recording() {
-        [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+        [[ -f "$PIDFILE" ]] || return 1
+        local pid
+        pid=$(cat "$PIDFILE") || return 1
+        [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+        # Verify the pid is actually gpu-screen-recorder: PIDs get recycled,
+        # and SIGUSR1/SIGINT to a wrong process is not a benign mistake.
+        [[ -d "/proc/$pid" ]] || return 1
+        [[ "$(cat "/proc/$pid/comm" 2>/dev/null)" == gpu-screen-recor* ]]
       }
 
       get_mode() {
@@ -472,8 +486,9 @@ in
     text = ''
       #!/usr/bin/env bash
       # DeMoD Gamemode Toggle - Optimizes system for gaming
-      
-      STATEFILE="/tmp/demod-gamemode-active"
+      set -u
+
+      STATEFILE="''${XDG_RUNTIME_DIR:-/tmp}/demod-gamemode-active"
       
       notify() {
         notify-send -t 3000 -i applications-games "$1" "$2" 2>/dev/null || true
@@ -485,19 +500,24 @@ in
           gamemoded -d 2>/dev/null &
         fi
         
-        hyprctl --batch "\
+        # NOTE: no misc:vrr / misc:vfr here. vrr is deliberately 0 in
+        # home/hyprland/default.nix (Framework 16 BOE panel flickers stale
+        # buffers below the LFC floor; fullscreen games are exactly where it
+        # bites). Forcing vrr=2/vfr flips re-introduced that freeze/flicker.
+        if ! hyprctl --batch "\
           keyword animations:enabled 0; \
           keyword decoration:blur:enabled 0; \
           keyword decoration:shadow:enabled 0; \
           keyword decoration:dim_inactive 0; \
-          keyword misc:vfr 0; \
-          keyword misc:vrr 2; \
           keyword general:gaps_in 0; \
           keyword general:gaps_out 0; \
-          keyword general:border_size 1"
-        
+          keyword general:border_size 1"; then
+          notify "Game Mode FAILED" "Hyprland did not accept the batch — not claiming ON"
+          exit 1
+        fi
+
         touch "$STATEFILE"
-        notify "Game Mode ON" "Animations disabled, VRR forced, gaps removed"
+        notify "Game Mode ON" "Animations disabled, gaps removed"
       }
       
       gamemode_off() {
@@ -505,17 +525,23 @@ in
           gamemoded -r 2>/dev/null || true
         fi
         
-        hyprctl --batch "\
+        # vrr/vfr are NOT touched (see gamemode_on): leave them at the
+        # deliberately-fixed misc:vrr=0 / vfr=true from hyprland settings.
+        if ! hyprctl --batch "\
           keyword animations:enabled 1; \
           keyword decoration:blur:enabled 1; \
+          keyword decoration:blur:size 8; \
+          keyword decoration:blur:passes 3; \
           keyword decoration:shadow:enabled 1; \
           keyword decoration:dim_inactive 1; \
-          keyword misc:vfr 1; \
-          keyword misc:vrr 1; \
+          keyword decoration:dim_strength 0.08; \
           keyword general:gaps_in 5; \
           keyword general:gaps_out 10; \
-          keyword general:border_size 2"
-        
+          keyword general:border_size 2"; then
+          notify "Game Mode restore FAILED" "Hyprland did not accept the batch"
+          exit 1
+        fi
+
         rm -f "$STATEFILE"
         notify "Game Mode OFF" "Desktop effects restored"
       }
@@ -556,13 +582,12 @@ in
       #!/usr/bin/env bash
       set -u
 
-      # desc: (EDID-based) rather than a connector name: when the panel is
-      # currently disabled it won't appear in `hyprctl monitors -j` at all, so
-      # there's nothing to dynamically detect a connector name from in the
-      # enable branch below — desc: is the one identifier that stays valid
-      # whether the output is listed or not, and survives connector
-      # renumbering across kernel/driver updates either way.
-      internal_display="desc:BOE 0x0BC9"
+      # desc: rather than a connector name; resolve the panel live when
+      # possible (see lid.sh for why), with the board-known desc as fallback.
+      internal_display=$(hyprctl monitors all -j 2>/dev/null \
+        | jq -r '.[] | select(.make == "BOE") | "desc:\(.description)"' \
+        | head -n1)
+      [[ -n "$internal_display" ]] || internal_display="desc:BOE 0x0BC9"
 
       if ! hyprctl monitors -j 2>/dev/null | jq -e '.[] | select(.name | test("^(DP|HDMI)"))' >/dev/null 2>&1; then
         notify-send -u warning -i dialog-warning "Clamshell" "No external monitor detected" 2>/dev/null || true
@@ -588,10 +613,16 @@ in
       #!/usr/bin/env bash
       set -euo pipefail
 
-      # Get the focused monitor
-      monitor=$(hyprctl monitors -j | jq -r '.[0].name')
-      current_w=$(hyprctl monitors -j | jq -r '.[0].width')
-      current_h=$(hyprctl monitors -j | jq -r '.[0].height')
+      # Focused monitor (not .[0] — with an external attached, index 0 may not
+      # be what you're looking at) and preserve its position/scale: writing a
+      # bare `0x0` collapses a multi-monitor layout.
+      monjson=$(hyprctl monitors -j | jq '.[] | select(.focused==true)')
+      [[ -n "$monjson" ]] || monjson=$(hyprctl monitors -j | jq '.[0]')
+      monitor=$(jq -r '.name' <<<"$monjson")
+      pos=$(jq -r '"\(.x)x\(.y)"' <<<"$monjson")
+      scale=$(jq -r '.scale' <<<"$monjson")
+      current_w=$(jq -r '.width' <<<"$monjson")
+      current_h=$(jq -r '.height' <<<"$monjson")
       current_res="''${current_w}x''${current_h}"
 
       # Resolution presets per monitor type (width x height only, refresh handled separately)
@@ -617,7 +648,7 @@ in
       next_res="''${presets[$next_idx]}@''${refreshes[$next_idx]}"
 
       # Apply
-      hyprctl keyword monitor "$monitor, $next_res, 0x0, 1"
+      hyprctl keyword monitor "$monitor, $next_res, $pos, $scale"
       notify-send -t 2000 "Resolution" "$monitor → $next_res"
     '';
   };
@@ -702,24 +733,29 @@ in
   # Create demod config directory and theme.json (runtime theme switching support)
   # (The theme.json entry below creates the parent dir; a bare
   # home.file.".config/demod".recursive without a source is invalid.)
-  home.file.".config/demod/theme.json".text = ''
-    {
-      "name": "${p.name}",
-      "bg": "${p.bg}",
-      "surface": "${p.surface}",
-      "border": "${p.border}",
-      "borderFocus": "${p.borderFocus}",
-      "accent": "${p.accent}",
-      "text": "${p.text}",
-      "textDim": "${p.textDim}",
-      "success": "${p.success}",
-      "warning": "${p.warning}",
-      "error": "${p.error}",
-      "info": "${p.info}",
-      "purple": "${p.purple}",
-      "pink": "${p.pink}"
-    }
-  '';
+  # force = true: theme-switch.sh `cp`s the active palette.json onto this path;
+  # without it a live-switched copy silently survives the next HM activation.
+  home.file.".config/demod/theme.json" = {
+    force = true;
+    text = ''
+      {
+        "name": "${p.name}",
+        "bg": "${p.bg}",
+        "surface": "${p.surface}",
+        "border": "${p.border}",
+        "borderFocus": "${p.borderFocus}",
+        "accent": "${p.accent}",
+        "text": "${p.text}",
+        "textDim": "${p.textDim}",
+        "success": "${p.success}",
+        "warning": "${p.warning}",
+        "error": "${p.error}",
+        "info": "${p.info}",
+        "purple": "${p.purple}",
+        "pink": "${p.pink}"
+      }
+    '';
+  };
 
   # ════════════════════════════════════════════════════════════════════════════
   # Repo update notifier — quiet, deduped check for new commits on

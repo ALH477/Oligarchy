@@ -17,7 +17,7 @@ let
 
   securityCli = pkgs.writeShellScriptBin "oligarchy-security" ''
     set -u
-    export PATH=${makeBinPath [ pkgs.systemd pkgs.gnugrep pkgs.gawk pkgs.coreutils pkgs.jq pkgs.openssh ]}:$PATH
+    export PATH=${makeBinPath [ pkgs.systemd pkgs.gnugrep pkgs.gawk pkgs.coreutils pkgs.jq pkgs.openssh pkgs.nftables ]}:$PATH
 
     have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -32,7 +32,15 @@ let
     q_unit() { systemctl is-active "$1" 2>/dev/null || echo "inactive"; }
     q_egress_mode() {
       if systemctl is-enabled strict-egress-resolve.service >/dev/null 2>&1; then
-        if grep -q "policy drop" /run/strict-egress/* 2>/dev/null; then echo "enforcing"; else echo "dry-run/active"; fi
+        # Read the live rule set, not /run: /run/strict-egress holds resolved
+        # IPs, not the policy, and a grep over it never matched "policy drop"
+        # (an enforcing host reported dry-run forever). cache-status runs as
+        # root, so nft list works here. The chain holds the policy line.
+        if nft list chain inet strict-egress egress 2>/dev/null | grep -q "policy drop"; then
+          echo "enforcing"
+        else
+          echo "dry-run/active"
+        fi
       else echo "off"; fi
     }
     q_events() { [ -f /var/lib/malware-shield/events.log ] && wc -l < /var/lib/malware-shield/events.log || echo 0; }

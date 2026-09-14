@@ -150,7 +150,7 @@ let
         OLLAMA_MAX_QUEUE = toString currentPreset.maxQueue;
         OLLAMA_CONTEXT_LENGTH = toString currentPreset.contextLength;
       } // lib.optionalAttrs (effectiveAcceleration == "rocm") {
-        ROCR_VISIBLE_DEVICES = "1, 0";
+        ROCR_VISIBLE_DEVICES = cfg.advanced.rocm.visibleDevices;
       } // lib.optionalAttrs (effectiveAcceleration == "rocm" && cfg.advanced.rocm.gfxVersionOverride != null) {
         HSA_OVERRIDE_GFX_VERSION = cfg.advanced.rocm.gfxVersionOverride;
       } // lib.optionalAttrs (effectiveAcceleration != null && currentPreset.gpuOverheadBytes != null) {
@@ -358,6 +358,22 @@ in
       example = "11.0.2";
     };
 
+    advanced.rocm.visibleDevices = mkOption {
+      type = types.str;
+      # ROCm node indices follow /sys/class/kfd/kfd/topology order, which is
+      # PCI scan order on this host: node 1 = 0000:03:00.0 (dGPU, renderD128)
+      # and node 2 = 0000:c5:00.0 (780M iGPU, renderD129). Default to the iGPU
+      # ONLY: the iGPU is already resident driving the internal panel, so AI
+      # compute on it never wakes another device. Any value naming node 1
+      # (the old "1, 0") keeps the dGPU's kfd fd open for as long as the
+      # unless-stopped container runs, defeating amdgpu runtime PM -- the
+      # "dGPU struggles to shut down" symptom. Set "1" to opt back into the
+      # much faster dGPU at the cost of idle power.
+      default = "2";
+      description = "ROCR_VISIBLE_DEVICES for the Ollama container. See comment in module for the node->PCI mapping and the dGPU-awake trade-off.";
+      example = "1";
+    };
+
     dedicatedSwap = {
       enable = mkEnableOption "a swapfile dedicated to AI-stack overflow, separate from the system's generic backup swap";
 
@@ -375,12 +391,15 @@ in
 
       priority = mkOption {
         type = types.int;
-        default = 50;
+        default = 5;
         description = ''
-          swapDevices priority. Should sit between zram (typically 100) and
-          the system's generic backup swap (typically 10) — AI overflow
-          drains here first, before falling through to the shared backup
-          tier used by everything else on the box.
+          swapDevices priority. Below the system's generic backup swap
+          (typically 10): swap tiers are host-wide, nothing can actually
+          reserve this file for the Ollama container, and a priority-50 tier
+          would be drained FIRST under pressure — i.e. ahead of the real
+          last-resort swap. 5 makes it the true last resort instead. The
+          container-level bound comes from the unit's MemorySwapMax, not
+          from this file's priority.
         '';
       };
     };

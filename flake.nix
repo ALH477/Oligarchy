@@ -19,7 +19,14 @@
     nixos-hardware.url = "github:NixOS/nixos-hardware";
 
     # Custom modules
-    demod-ip-blocker.url = "git+https://github.com/ALH477/DeMoD-IP-Blocker.git";
+    # Vendored + patched locally: upstream's update script is `set -e` +
+    # `pipefail` and dies on `grep ":"` exit-1 whenever the feed has no IPv6
+    # lines — which is always (spur-astrill-vpn is IPv4-only). 196/196 runs
+    # had failed for exactly that reason, leaving the ipsets empty while the
+    # service reported enabled. The vendored copy (modules/demod-ip-blocker)
+    # uses a pure-awk v6 filter that exits 0 on no-match. Re-point at upstream
+    # only once the grep-pipeline bug is fixed there.
+    demod-ip-blocker.url = "path:./modules/demod-ip-blocker";
     minecraft.url = "path:./modules/minecraft";
     android-mirror = {
       url = "path:./modules/android-mirror";
@@ -261,6 +268,12 @@
         ./modules/kernel.nix
         ./modules/personas.nix
         ./modules/dsp-rigs.nix
+
+        # Tailnet-only Paper server with Geyser/Floodgate crossplay
+        # (services.oligarchyMinecraft). In commonModules rather than on one
+        # host because it is opt-in anywhere; it defaults OFF, so unlike
+        # custom.hydramesh it needs no mkForce in the ISO block below.
+        ./modules/minecraft-server.nix
         # USB scrcpy phone-mirror (custom.androidMirror). Opt-in, defaults OFF,
         # so the ISO needs no mkForce. See modules/android-mirror/README.md.
         android-mirror.nixosModules.default
@@ -384,6 +397,7 @@
       nixosConfigurations.nixos = mkHost [
         nixos-hardware.nixosModules.framework-16-7040-amd
         ./modules/hardware-configuration.nix
+        { networking.hostName = "nixos"; }
         { custom.platform = { gpu = "amd"; cpu = "amd"; framework = true; }; }
 
         # Tiered plugin runtime — STAGE 1 (tier 0 only), and this is the only
@@ -519,6 +533,7 @@
         nixos-hardware.nixosModules.framework-13-7040-amd
         ./hosts/framework13/hardware-configuration.nix
         {
+          networking.hostName = "nixos-fw13";
           custom.platform = {
             gpu = "amd";
             cpu = "amd";
@@ -536,7 +551,10 @@
         nixos-hardware.nixosModules.common-gpu-intel
         nixos-hardware.nixosModules.common-pc-laptop-ssd
         ./hosts/intel/hardware-configuration.nix
-        { custom.platform = { gpu = "intel"; cpu = "intel"; framework = false; }; }
+        {
+          networking.hostName = "nixos-intel";
+          custom.platform = { gpu = "intel"; cpu = "intel"; framework = false; };
+        }
       ];
 
       # Intel + Nvidia Optimus laptop (PRIME render offload, CUDA AI stack).
@@ -548,6 +566,7 @@
         nixos-hardware.nixosModules.common-pc-laptop-ssd
         ./hosts/optimus/hardware-configuration.nix
         {
+          networking.hostName = "nixos-optimus";
           custom.platform = {
             gpu = "nvidia-optimus";
             cpu = "intel";
@@ -585,6 +604,7 @@
         ./modules/ci-builder.nix
         oligarchy-plugins.nixosModules.default
         {
+          networking.hostName = "nixos-builder";
           # Set `cpu` to this box's actual vendor: it selects the nested-virt
           # modprobe line in modules/ci-builder.nix. `gpu` is irrelevant on a
           # headless host but the option is an enum with no "none" member.
@@ -650,9 +670,13 @@
 
             ({ lib, ... }: {
               # ISO-specific overrides
+              networking.hostName = "oligarchy-iso";
               services.displayManager.sddm.enable = lib.mkForce true;
               services.displayManager.sddm.wayland.enable = lib.mkForce true;
               services.desktopManager.plasma6.enable = lib.mkForce true;
+              # greetd is the production greeter but fights SDDM for tty1 on
+              # the installer; force it off wherever SDDM was forced on.
+              services.greetd.enable = lib.mkForce false;
 
               # Disable production services in ISO
               services.ollamaAgentic.enable = lib.mkForce false;
@@ -671,6 +695,16 @@
               # (hydramesh-lisp) and Faust/GCC (hydramodem) builds have no place in
               # the installer image. Drop this mkForce if the ISO must ship them.
               custom.hydramesh.enable = lib.mkForce false;
+              # Rule 9 says the ISO stays light *by default*, not merely when a
+              # module's `enable` default happens to be false. Personal apps
+              # (android-mirror udev rules, adbusers, scrcpy) ride a
+              # `custom.desktopFeatures` default — force the whole feature off.
+              custom.desktopFeatures.enablePersonalApps = lib.mkForce false;
+              custom.androidMirror.enable = lib.mkForce false;
+
+              # fwupd is enabled above for oligarchy-hw-detect, but the weekly
+              # refresh timer phones LVFS the moment the live image nets up.
+              systemd.timers.fwupd-refresh.wantedBy = lib.mkForce [ ];
 
               boot.supportedFilesystems = lib.mkForce [
                 "btrfs"
@@ -724,6 +758,60 @@
         # installs when custom.androidMirror.enable is set.
         #   nix run .#phone-mirror
         phone-mirror = android-mirror.packages.${system}.default;
+
+        # ════════════════════════════════════════════════════════════════════
+        # Run the real Paper + Geyser + Floodgate stack in a scratch directory,
+        # as the invoking user, without touching the system:
+        #   nix run .#minecraft-server-dev -- --accept-eula
+        #
+        # This is the half `.#test-minecraft-server` cannot cover. That gate
+        # stubs Paper — a test VM is offline and Paper ships Paperclip, which
+        # downloads Mojang's server jar on first start — so it proves the
+        # module's wiring and nothing about whether a Bedrock client actually
+        # connects. Both share modules/minecraft-server/config.nix, so the
+        # runner exercises the configuration the service will run.
+        # ════════════════════════════════════════════════════════════════════
+        minecraft-server-dev = pkgs.callPackage ./modules/minecraft-server/dev-run.nix { };
+
+        # ════════════════════════════════════════════════════════════════════
+        # DCL schema/value gate (§13 of docs/demod-config-layer-spec.md).
+        # Pure evaluation -- no KVM, no closure -- so unlike the VM gates this
+        # one is cheap enough to run on every change:
+        #   nix build .#dcl-check
+        #
+        # The spec's §13 shells out to a `dmc-validate` binary built from
+        # libdmc, which does not exist yet. This is the Nix half of the same
+        # gate and it must stay in agreement with libdmc once that lands: any
+        # check one side makes and the other does not is a values.json that
+        # passes the build and quarantines on the device.
+        #
+        # Evaluated, not run in a builder, so a failure names the offending
+        # option at eval time instead of burying it in build output.
+        # ════════════════════════════════════════════════════════════════════
+        dcl-check =
+          let
+            lib' = nixpkgs.lib;
+            unit = import ./modules/dcl/test.nix { lib = lib'; };
+            module = import ./modules/dcl/module-test.nix { lib = lib'; };
+            failures = unit.failures ++ module.failures;
+          in
+          if failures != [ ] then
+            throw
+              ("dcl-check FAILED (${toString (builtins.length failures)} of "
+                + "${toString (unit.total + module.total)}):\n"
+                + lib'.concatMapStringsSep "\n" (f: "  - ${f.name}") failures)
+          else
+            pkgs.runCommand "dcl-check"
+              {
+                meta = with nixpkgs.lib; {
+                  description = "DCL schema + value validation gate (pure eval)";
+                  platforms = platforms.linux;
+                };
+              } ''
+              mkdir -p $out
+              echo "DCL: ${toString unit.passed}/${toString unit.total} library tests passed" | tee $out/report.txt
+              echo "DCL: ${toString module.passed}/${toString module.total} module tests passed" | tee -a $out/report.txt
+            '';
 
         # ════════════════════════════════════════════════════════════════════
         # MCP self-audit build gate — runs the ports-sec `mcp_self_audit`

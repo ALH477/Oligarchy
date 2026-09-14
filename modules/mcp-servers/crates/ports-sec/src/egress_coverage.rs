@@ -27,7 +27,6 @@ pub fn report() -> String {
     .unwrap_or_default();
 
     let live_tokens = allowed_tokens(&live, &resolved);
-
     let mut out = String::from("── egress coverage vs known endpoints ──────────────\n");
     let mut gaps = Vec::new();
     let mut proposals = String::new();
@@ -66,21 +65,26 @@ pub fn report() -> String {
 }
 
 /// Reduce the live ruleset JSON + resolver log into the set of hostnames
-/// already covered. The nft JSON contains set elements with the resolved IP
-/// strings but not the originating hostnames — so we use the resolver log
-/// (which lists "<host> <ip>" pairs) as the source of hostnames.
-fn allowed_tokens(_live: &str, resolved: &str) -> HashSet<&'static str> {
-    // The resolver log is line-oriented `<hostname> <ip>`; we hash the
-    // hostname string and compare to the static table. We turn the log
-    // hostname into a &'static str by matching against `KNOWN` (the static
-    // set drives the comparison anyway, so this gives us set intersection
-    // semantics for free).
-    let mut allowed: HashSet<&'static str> = HashSet::new();
-    for ep in KNOWN {
-        for remote in ep.remote_endpoints {
-            if resolved.lines().any(|line| line.split_whitespace().next() == Some(*remote)) {
-                allowed.insert(remote);
-            }
+/// already covered. A hostname counts only when it appears in the resolver
+/// log AND at least one of its resolved IPs is currently a set element in
+/// the table — earlier this checked the log alone, so a domain whose nft
+/// set was emptied (table recreated, another module fighting nftables)
+/// still reported "covered by the ruleset" while the ruleset held nothing.
+fn allowed_tokens<'a>(live: &str, resolved: &'a str) -> HashSet<&'a str> {
+    let mut allowed: HashSet<&'a str> = HashSet::new();
+    let table_present = !live.starts_with("[no strict-egress table");
+    for line in resolved.lines() {
+        // Line shape from strict-egress-resolve is exactly "<hostname> <ip>",
+        // one line per answer (`echo "$domain $ip" >> resolved.txt.new`).
+        let mut it = line.split_whitespace();
+        let (Some(host), Some(ip)) = (it.next(), it.next()) else { continue };
+        // Without a live table nothing is covered, no matter what the log
+        // says about what was resolved a moment ago.
+        if !table_present {
+            break;
+        }
+        if live.contains(ip) {
+            allowed.insert(host);
         }
     }
     allowed

@@ -17,6 +17,21 @@ use crate::nixhash::Sha256Digest;
 use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Process-wide uniquifier for temp names. PID alone was not enough: two
+/// concurrent fetches of the SAME NarHash in one process got the same temp
+/// path and interleaved writes, so both failed verification (fail closed, but
+/// a self-inflicted miss under ordinary parallel substitution).
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn temp_stem(stem: &str, ext: &str) -> String {
+    format!(
+        "{stem}.{}.{}.{ext}",
+        std::process::id(),
+        TEMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    )
+}
 
 pub struct Cache {
     nar_dir: PathBuf,
@@ -143,7 +158,7 @@ impl Cache {
 
     pub fn put_narinfo(&self, hash_part: &str, text: &str) -> Result<()> {
         let final_path = self.narinfo_path(hash_part);
-        let tmp = self.tmp_dir.join(format!("{hash_part}.{}.narinfo", std::process::id()));
+        let tmp = self.tmp_dir.join(temp_stem(hash_part, "narinfo"));
         fs::write(&tmp, text)?;
         fs::rename(&tmp, &final_path)?;
         Ok(())
@@ -193,7 +208,9 @@ impl Cache {
         // startup, and the emitter is a different process that may run while
         // the daemon is mid-fetch. Same filesystem either way, so the rename
         // is still atomic.
-        let tmp = self.declared_dir.join(format!(".{hash_part}.{}.part", std::process::id()));
+        let tmp = self
+            .declared_dir
+            .join(format!(".{}", temp_stem(hash_part, "part")));
         fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
         fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644))?;
         fs::rename(&tmp, &final_path).with_context(|| {
@@ -270,8 +287,17 @@ impl Cache {
     pub fn remove_narinfo(&self, hash_part: &str) -> Result<()> {
         // Read the digest out before unlinking; afterwards there is no way to
         // learn which artifact this named.
-        let orphan = self
-            .get_narinfo(hash_part)
+        //
+        // Deliberately NOT `get_narinfo`, which reads the declared tier first.
+        // This unlinks from `narinfo/`, so it must read from `narinfo/` too: on
+        // a hash part present in BOTH tiers, reading declared and deleting
+        // fetched would compute the orphan from the wrong entry and take out
+        // the artifact the declared narinfo still needs — leaving a published
+        // package whose bytes are gone. The one caller today guards with
+        // `is_declared`, which is why this has never fired; that guard is not
+        // this function's to assume.
+        let orphan = fs::read_to_string(self.narinfo_path(hash_part))
+            .ok()
             .and_then(|t| crate::narinfo::NarInfo::parse(&t).ok())
             .map(|ni| self.path_for(&ni.nar_hash()));
         match fs::remove_file(self.narinfo_path(hash_part)) {
@@ -307,10 +333,12 @@ impl Cache {
     }
 
     /// Reserve a slot. The temp name includes the target so a stray file is
-    /// traceable to the fetch that produced it.
+    /// traceable to the fetch that produced it, and a per-process counter so
+    /// two concurrent fetches of the same NarHash cannot collide (see
+    /// TEMP_SEQ).
     pub fn slot(&self, nar_hash: &Sha256Digest) -> Result<Slot> {
         let stem = nar_hash.to_nix32();
-        let tmp = self.tmp_dir.join(format!("{stem}.{}.part", std::process::id()));
+        let tmp = self.tmp_dir.join(temp_stem(&stem, "part"));
         let _ = fs::remove_file(&tmp);
         Ok(Slot {
             tmp,
@@ -487,6 +515,35 @@ mod tests {
         c.remove_narinfo(hp).unwrap();
         assert!(c.get_narinfo(hp).is_none());
         assert!(c.get(&digest, 3).is_none(), "the artifact outlived its metadata");
+    }
+
+    #[test]
+    fn dropping_a_fetched_narinfo_spares_the_declared_tier() {
+        // Both tiers hold the same hash part, naming DIFFERENT artifacts.
+        // Dropping the fetched one must not take out the declared one's bytes:
+        // that would leave a published package whose NAR is gone, and the
+        // daemon would keep advertising it.
+        let d = tempfile::tempdir().unwrap();
+        let c = Cache::new(d.path(), 1 << 30).unwrap();
+        let hp = "18bbdvag5v2f3d4y37pdbkzvh7s71cw4";
+        let mk = |nh: &str| format!(
+            "StorePath: /nix/store/{hp}-thing\nURL: nar/{hp}/{nh}.nar\nCompression: none\n\
+             NarHash: sha256:{nh}\nNarSize: 3\nReferences: \n"
+        );
+        let declared_nh = "0k8cwb9i02mp6zi35ip898zwnd16xj89mbipw1fvrklpd9qmm7xv";
+        let fetched_nh = "1k8cwb9i02mp6zi35ip898zwnd16xj89mbipw1fvrklpd9qmm7xv";
+        c.put_declared(hp, &mk(declared_nh)).unwrap();
+        c.put_narinfo(hp, &mk(fetched_nh)).unwrap();
+        let dd = Sha256Digest::from_nix32(declared_nh).unwrap();
+        let fd = Sha256Digest::from_nix32(fetched_nh).unwrap();
+        fs::write(c.path_for(&dd), b"abc").unwrap();
+        fs::write(c.path_for(&fd), b"xyz").unwrap();
+
+        c.remove_narinfo(hp).unwrap();
+
+        assert!(c.get(&fd, 3).is_none(), "the fetched artifact survived");
+        assert!(c.get(&dd, 3).is_some(), "dropping a FETCHED narinfo destroyed a DECLARED artifact");
+        assert!(c.get_narinfo(hp).is_some(), "the declared narinfo was removed");
     }
 
     #[test]

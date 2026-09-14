@@ -70,6 +70,7 @@
             "vm"
             "ports-sec"
             "hydramesh"
+            "storage"
           ];
 
           aspectPackages = builtins.listToAttrs (

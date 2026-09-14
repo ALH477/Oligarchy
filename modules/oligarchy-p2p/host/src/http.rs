@@ -441,9 +441,21 @@ async fn nar(st: &AppState, hash_part: &str, name: &str, head_only: bool) -> Res
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    // A narinfo resolved from disk carries no upstream base. Recover one: any
-    // configured upstream can serve the body, and `ni.url()` may be absolute
-    // anyway.
+    // A narinfo resolved from disk or from a peer carries UNSIGNED text we
+    // cannot fully trust. Its `URL:` may legally be absolute, but following an
+    // absolute URL from a non-upstream narinfo lets any LAN peer aim this
+    // daemon's reqwest client at an arbitrary host:port — an SSRF channel and
+    // an egress bypass beyond the private-peer confinement the transports
+    // enforce. Only a narinfo that came from a configured upstream (base is
+    // non-empty) may carry an absolute URL; anything else must be relative.
+    if base.is_empty() && (ni.url().starts_with("http://") || ni.url().starts_with("https://")) {
+        tracing::warn!(
+            hash_part,
+            url = ni.url(),
+            "refusing an absolute URL from a non-upstream narinfo (SSRF guard)"
+        );
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let base = if base.is_empty() {
         match st.upstream.first_base() {
             Some(b) => b,

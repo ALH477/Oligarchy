@@ -37,6 +37,20 @@ pub fn run(aspect: &str, prog: &str, args: &[&str], timeout: Duration) -> Result
 
     let mut cmd = Command::new(&cmd_path);
     cmd.args(args);
+    // These CLIs run with the MCP client's environment, and a few of them
+    // silently reach the network based on it: `docker inspect` follows a
+    // remote DOCKER_HOST, breaking the stdio-only posture from a variable
+    // nobody sees. Strip the known remoting knobs rather than scrub env
+    // wholesale (tools legitimately need PATH/HOME/XDG).
+    for var in [
+        "DOCKER_HOST",
+        "DOCKER_CONTEXT",
+        "PODMAN_HOST",
+        "CONTAINER_HOST",
+        "KUBECONFIG",
+    ] {
+        cmd.env_remove(var);
+    }
     let output = wait_with_timeout(cmd, prog, args, timeout)?;
     let mut combined = String::new();
     if !output.stdout.is_empty() {

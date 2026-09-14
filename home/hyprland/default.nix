@@ -302,7 +302,13 @@ in
         mouse_move_enables_dpms = true;
         key_press_enables_dpms = true;
         vfr = true;
-        vrr = 1;
+        # VRR is OFF on purpose. With vrr = 1 (always on) the Framework 16's
+        # BOE panel flickers stale buffers / the wallpaper through windows the
+        # moment vfr lets the frame rate fall under the panel's LFC floor —
+        # visible on the desktop and fatal in games. Confirmed live via
+        # `hyprctl keyword misc:vrr 0`, which stopped it immediately. Do not
+        # set 2 (fullscreen-only) either: games are exactly where it bites.
+        vrr = 0;
         enable_swallow = true;
         swallow_regex = "^(kitty|foot)$";
         focus_on_activate = true;
@@ -694,10 +700,17 @@ in
   # docs/dgpu-steam-forcing.md): turns the
   # comment-only warning into a build-time check.
   assertions = [{
+    # Also reject session-wide DRI_PRIME: `env=` in hyprland.conf lands in the
+    # systemd user manager's environment, so every user unit (hyprlock
+    # included) silently inherited it and rendered on the dGPU -- the
+    # flicker/pinned-awake/TTM-shutdown-wedge class documented in
+    # docs/dgpu-steam-forcing.md. dGPU offload is opt-in per app only
+    # (steam extraEnv / dgpu-run / per-unit Environment=).
     assertion = !(lib.any
-      (v: lib.hasPrefix "AQ_DRM_DEVICES," v || lib.hasPrefix "WLR_DRM_DEVICES," v)
+      (v: lib.hasPrefix "AQ_DRM_DEVICES," v || lib.hasPrefix "WLR_DRM_DEVICES," v
+        || lib.hasPrefix "DRI_PRIME," v)
       (lib.flatten (config.wayland.windowManager.hyprland.settings.env or [])));
-    message = "Do not set AQ_DRM_DEVICES/WLR_DRM_DEVICES toward the dGPU — it has no display path and fatally SIGABRTs Hyprland (see docs/dgpu-steam-forcing.md).";
+    message = "Do not set AQ_DRM_DEVICES/WLR_DRM_DEVICES toward the dGPU (no display path, fatal SIGABRT) nor a session-wide DRI_PRIME (whole desktop on dGPU; hyprlock TTM wedge; dGPU pinned awake). Offload is opt-in per-app. See docs/dgpu-steam-forcing.md.";
   }];
 
   # Session daemon supervision — bound to hyprland-session.target (see the
@@ -827,9 +840,13 @@ in
       on-resume = brightnessctl -r
     }
   '' + ''
+    # Start the hyprlock unit directly instead of `loginctl lock-session`:
+    # lock-session is a no-op when no ext-session-lock client is running yet
+    # (hyprlock registers the handler only once started), which left a gap
+    # where the session looked "about to lock" but nothing was listening.
     listener {
       timeout = 600
-      on-timeout = loginctl lock-session
+      on-timeout = systemctl --user start --no-block hyprlock.service
     }
     listener {
       timeout = 660

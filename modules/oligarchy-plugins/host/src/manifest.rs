@@ -173,6 +173,37 @@ impl Manifest {
             }
         }
 
+        // Fs capabilities must name a place, not a spelling. Every
+        // enforcement layer downstream (bwrap binds, Landlock PathFd, WASI
+        // preopens) resolves a relative path against the plugin unit's cwd
+        // — which for a systemd service is "/". "proc/self/mem" *is*
+        // /proc/self/mem there, but policy.rs's forbidden-prefix check can
+        // never match a relative spelling, so a cap written relatively
+        // silently bypasses forbidden_paths (including the /proc W^X entry).
+        // Require an explicit anchor: an absolute path, or exactly one of
+        // the three expansion variables.
+        for cap in self
+            .caps
+            .fs_read
+            .iter()
+            .chain(self.caps.fs_read_write.iter())
+        {
+            if cap.is_empty() {
+                bail!("fs capability must not be empty");
+            }
+            let anchored = cap.starts_with('/')
+                || cap.starts_with("$STATE")
+                || cap.starts_with("$CONFIG")
+                || cap.starts_with("$STORE");
+            if !anchored {
+                bail!(
+                    "fs capability {cap:?} must be absolute or start with \
+                     $STATE/$CONFIG/$STORE; a relative path resolves against \
+                     the unit's cwd and bypasses forbidden-prefix policy checks"
+                );
+            }
+        }
+
         // The core invariant of the whole design.
         match (self.tier, self.jit) {
             (Tier::Wasm, Jit::SelfJit) => bail!(
@@ -415,6 +446,33 @@ mod tests {
         assert!(evil("/etc/shadow").is_err());
         assert!(evil("/dev/../etc/shadow").is_err());
         assert!(evil("/dev/$(id)").is_err());
+    }
+
+    #[test]
+    fn fs_caps_must_be_anchored() {
+        let with_cap = |cap: &str| {
+            parse(&format!(
+                r#"
+                id = "caps"
+                version = "1.0.0"
+                tier = "native"
+                entry = "lib/x.so"
+                abi = "oligarchy:plugin@0.1.0"
+                [caps]
+                fs_read = ["{cap}"]
+            "#
+            ))
+        };
+        assert!(with_cap("/usr/share/fonts").is_ok());
+        assert!(with_cap("$STATE/ro").is_ok());
+        assert!(with_cap("$CONFIG").is_ok());
+        assert!(with_cap("$STORE/lib").is_ok());
+        // The bypass class: resolved against cwd="/" in every enforcement
+        // layer, this names /proc without ever matching the prefix check.
+        assert!(with_cap("proc").is_err());
+        assert!(with_cap("proc/self/mem").is_err());
+        assert!(with_cap("etc/shadow").is_err());
+        assert!(with_cap("").is_err());
     }
 
     #[test]

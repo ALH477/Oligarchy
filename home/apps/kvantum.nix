@@ -126,10 +126,16 @@ in
     # Main Kvantum config — selects the active theme by directory name.
     # theme-switch.sh rewrites this line to switch live; every palette's own
     # directory already exists below, so it never needs to render anything.
-    ".config/Kvantum/kvantum.kvconfig".text = ''
-      [General]
-      theme=${p.name}
-    '';
+    # force = true: theme-switch.sh replaces this path with a regular file
+    # (a `>` redirect onto a store symlink just fails read-only). Same
+    # clobber-override class as hyprlock.conf/waybar style.css.
+    ".config/Kvantum/kvantum.kvconfig" = {
+      force = true;
+      text = ''
+        [General]
+        theme=${p.name}
+      '';
+    };
   }
   // (lib.mapAttrs'
     (id: pal: lib.nameValuePair ".config/Kvantum/${pal.name}/${pal.name}.kvconfig" {

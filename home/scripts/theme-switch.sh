@@ -32,6 +32,17 @@ theme_ids() { jq -r '.[].id' "$MANIFEST"; }
 theme_display_name() { jq -r --arg id "$1" '.[] | select(.id==$id) | .name' "$MANIFEST"; }
 theme_exists() { [[ -f "$THEMES_DIR/$1/palette.json" ]]; }
 
+# HM writes kvantum.kvconfig and demod/theme.json as symlinks into the
+# read-only store, so redirecting/`cp` over them fails. Both paths carry
+# `force = true` on the HM side (see home/apps/kvantum.nix,
+# home/scripts/default.nix) — meaning HM replaces whatever is here on
+# activation — so replacing the symlink with a regular file is safe and
+# HM-rebuild loses nothing it can't regenerate.
+replace_into() { # $1=dest path, stdin=content
+    rm -f "$1"
+    cat > "$1"
+}
+
 get_current_theme() {
     if [[ -f "$CURRENT_FILE" ]]; then
         cat "$CURRENT_FILE"
@@ -44,6 +55,9 @@ get_next_theme() {
     local current="$1"
     local ids found=0
     mapfile -t ids < <(theme_ids)
+    # Empty manifest (mid-rewrite?) -> nothing to cycle to; die in the caller,
+    # not inside a $(...) subshell where exit would go unnoticed.
+    [[ ${#ids[@]} -gt 0 ]] || return 1
     for id in "${ids[@]}"; do
         if [[ "$found" -eq 1 ]]; then
             echo "$id"
@@ -54,13 +68,27 @@ get_next_theme() {
     echo "${ids[0]}"
 }
 
-# Exact label → id. Labels are "<name>" or "<name> ✓". Never prefix-match.
+# Exact label → id. Labels are "<name>", "<name> (id)" when two palettes
+# share one display name, plus " ✓" on the current one. Never prefix-match.
+label_for() { # $1=id
+    local id="$1" name other dupes=0
+    name="$(theme_display_name "$id")"
+    while IFS= read -r other; do
+        [[ "$other" == "$id" ]] && continue
+        [[ "$(theme_display_name "$other")" == "$name" ]] && dupes=1
+    done < <(theme_ids)
+    if [[ "$dupes" -eq 1 ]]; then
+        printf '%s (%s)\n' "$name" "$id"
+    else
+        printf '%s\n' "$name"
+    fi
+}
+
 pick_id_from_label() {
     local choice="${1% ✓}"
-    local id name
+    local id
     while IFS= read -r id; do
-        name="$(theme_display_name "$id")"
-        if [[ "$choice" == "$name" ]]; then
+        if [[ "$choice" == "$(label_for "$id")" ]]; then
             echo "$id"
             return 0
         fi
@@ -69,13 +97,13 @@ pick_id_from_label() {
 }
 
 gui_row() { # $1=id → one wofi line (image if wallpaper exists)
-    local id="$1" name mark="" img="$THEMES_DIR/$id/wallpaper.png"
-    name="$(theme_display_name "$id")"
+    local id="$1" label mark="" img="$THEMES_DIR/$id/wallpaper.png"
+    label="$(label_for "$id")"
     [[ "$id" == "$(get_current_theme)" ]] && mark=" ✓"
     if [[ -f "$img" ]]; then
-        printf 'img:%s:text:%s%s\n' "$img" "$name" "$mark"
+        printf 'img:%s:text:%s%s\n' "$img" "$label" "$mark"
     else
-        printf '%s%s\n' "$name" "$mark"
+        printf '%s%s\n' "$label" "$mark"
     fi
 }
 
@@ -111,7 +139,7 @@ apply_theme() {
 
     # Kvantum keys themes by directory name; every palette's own named dir
     # already exists (home/apps/kvantum.nix), so switching is just this.
-    printf '[General]\ntheme=%s\n' "$display_name" > "$HOME/.config/Kvantum/kvantum.kvconfig"
+    printf '[General]\ntheme=%s\n' "$display_name" | replace_into "$HOME/.config/Kvantum/kvantum.kvconfig"
 
     # Live-recolor every already-running kitty process (each has its own
     # {kitty_pid}-suffixed socket). Requires allow_remote_control/listen_on
@@ -125,6 +153,7 @@ apply_theme() {
     shopt -u nullglob
 
     mkdir -p "$(dirname "$THEME_JSON")" "$(dirname "$CURRENT_FILE")"
+    rm -f "$THEME_JSON"
     cp "$dir/palette.json" "$THEME_JSON"
     echo "$id" > "$CURRENT_FILE"
 
@@ -145,10 +174,9 @@ show_gui_menu() {
     local choice
     choice="$(theme_ids | while read -r id; do gui_row "$id"; done | wofi --dmenu -I -i -p "Theme")"
     [[ -n "$choice" ]] || return 1
-    # wofi -I may return "img:...:text:Name" or just "Name" depending on version;
-    # strip the img prefix if present, then exact-match.
-    choice="${choice##*:text:}"
-    pick_id_from_label "$choice"
+    # wofi -I may return "img:...:text:Name" or just "Name" depending on
+    # version; strip the img prefix if present, then exact-match.
+    pick_id_from_label "${choice##*:text:}"
 }
 
 show_cli_menu() {
@@ -160,7 +188,7 @@ show_cli_menu() {
 
     local i=1 id name
     for id in "${ids[@]}"; do
-        name=$(theme_display_name "$id")
+        name=$(label_for "$id")
         if [[ "$id" == "$current" ]]; then
             echo "$i) $name *"
         else
@@ -183,7 +211,7 @@ show_cli_menu() {
 case "${1:-toggle}" in
     toggle)
         current=$(get_current_theme)
-        next=$(get_next_theme "$current")
+        next=$(get_next_theme "$current") || die "No themes in $MANIFEST"
         apply_theme "$next"
         ;;
     set)

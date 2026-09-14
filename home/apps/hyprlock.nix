@@ -106,7 +106,14 @@ in {
   # Hyprlock Screen Lock Configuration
   # ══════════════════════════════════════════════════════════════════════════
   home.file = {
-    ".config/hypr/hyprlock.conf".text = renderConf p;
+    # force = true: home/scripts/theme-switch.sh live-repoints this path with
+    # `ln -sfn` as a theme preview. Without force, that foreign symlink blocks
+    # Home Manager's link step and EVERY activation fails (clobbered-file
+    # error), silently freezing the deployed generation -- which is exactly
+    # how the `env=DRI_PRIME` + `screenshot`-hyprlock bugs stayed live for
+    # weeks after their fixes merged. Force wins: HM owns the path on switch;
+    # theme-switch remains a next-boot-reset preview.
+    ".config/hypr/hyprlock.conf" = { text = renderConf p; force = true; };
   } // (lib.mapAttrs'
     (id: pal: lib.nameValuePair ".config/oligarchy/themes/${id}/hyprlock.conf" {
       text = renderConf pal;

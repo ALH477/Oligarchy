@@ -611,6 +611,14 @@ in {
     style = renderStyle p;
   };
 
+  # force = true on the generated style.css: home/scripts/theme-switch.sh
+  # live-repoints ~/.config/waybar/style.css with `ln -sfn` as a theme preview.
+  # Without force, that foreign symlink blocks Home Manager's link step and
+  # EVERY activation fails (clobbered-file error), silently freezing the
+  # deployed generation. Force wins: HM owns the path on switch; theme-switch
+  # remains a next-boot-reset preview.
+  xdg.configFile."waybar/style.css".force = true;
+
   home.file = lib.mapAttrs'
     (id: pal: lib.nameValuePair ".config/oligarchy/themes/${id}/waybar.css" {
       text = renderStyle pal;

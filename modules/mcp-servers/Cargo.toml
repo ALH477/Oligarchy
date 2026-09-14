@@ -12,6 +12,7 @@ members = [
     "crates/vm",
     "crates/ports-sec",
     "crates/hydramesh",
+    "crates/storage",
 ]
 
 [workspace.package]

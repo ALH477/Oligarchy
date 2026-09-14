@@ -320,6 +320,9 @@
           device = "/swapfile";
           size = 32768; # 32 GiB
           priority = 10;
+          # Comment above said this was set; it was not. A swapfile whose
+          # backing fs is unmounted must not hang boot waiting for it.
+          options = [ "nofail" ];
         }
       ];
       #
@@ -855,7 +858,9 @@
       # Networking (unchanged)
       # ──────────────────────────────────────────────────────────────────────────
       networking = {
-        hostName = "nixos";
+        # hostName is set per-host in flake.nix — sharing "nixos" across every
+        # host collided Tailscale node names, avahi .local advertisements,
+        # /etc/hosts and sops host-key selection.
         networkmanager = {
           enable = true;
           wifi = {
@@ -993,6 +998,34 @@
             "shared.akamai.steamstatic.com"
             "clientconfig.akamai.steamstatic.com"
             "steamcdn-a.akamaihd.net"
+            # Minecraft server (services.oligarchyMinecraft).
+            #
+            # Build time: the Paper, Geyser and Floodgate jars. Note the Paper
+            # jar comes from fill*.papermc.io, PaperMC's v3 API — the older
+            # api.papermc.io v2 is SUNSET and returns HTTP 410, which is one of
+            # the reasons Paper is pinned in-tree rather than taken from
+            # pkgs.papermcServers.
+            "fill.papermc.io"
+            "fill-data.papermc.io"
+            "download.geysermc.org"
+            #
+            # First start: the Paper jar is a Paperclip launcher, so it
+            # downloads Mojang's vanilla server jar before it can run and
+            # crash-loops without piston-data. Geyser separately fetches the
+            # Minecraft JAR once to extract locale files ("Missing MC locale
+            # file: en_us") — both observed on a real run.
+            "piston-data.mojang.com"
+            "piston-meta.mojang.com"
+            "launcher.mojang.com"
+            "launchermeta.mojang.com"
+            #
+            # Every start: without sessionserver no Java player can authenticate
+            # at all, because online-mode stays true (Floodgate requires it).
+            "sessionserver.mojang.com"
+            "api.minecraftservices.com"
+            "api.mojang.com"
+            # Skins/capes for both editions. Without it everyone is Steve.
+            "textures.minecraft.net"
           ];
           # Steam Remote Play / Big Picture LAN device discovery (SSDP
           # NOTIFY). Multicast-scoped (TTL=1, never leaves the local
@@ -1011,6 +1044,22 @@
             { port = 27000; to = 27100; proto = "udp"; }
           ];
         };
+      };
+
+      # Minecraft server — Paper + Geyser + Floodgate, so Java AND Bedrock
+      # clients join one world. Reachable over the tailnet only: the ports are
+      # opened on tailscale0 alone, never globally (see modules/minecraft-server.nix).
+      # Enabling it also means agreeing to Mojang's EULA below.
+      services.oligarchyMinecraft = {
+        enable = false;
+        eula = true; # https://aka.ms/MinecraftEULA
+        interface = "tailscale0";
+        # Paper is pinned in modules/minecraft-server/pkgs/papermc.nix, together
+        # with Geyser, because the two must speak the same Java protocol.
+        # Override `package` only alongside that pin.
+        # serverProperties = { motd = "Oligarchy"; difficulty = "normal"; };
+        # tailscaleTag = "tag:minecraft";
+        # acknowledgeTailnetReach = true;  # only once an ACL actually narrows it
       };
 
       # Tailscale mesh — join with: sudo tailscale up

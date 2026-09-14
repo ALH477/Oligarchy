@@ -1,0 +1,10 @@
+[package]
+name = "public-id"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Deterministic HKDF public-ID derivation for Oligarchy theater face"
+
+[dependencies]
+hkdf = "0.12"
+sha2 = "0.10"

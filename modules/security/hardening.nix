@@ -91,7 +91,17 @@ in
         maxretry = 5;
         # Local + private + CGNAT (tailscale) ranges never get banned; a bad
         # key rollout on a trusted machine must not lock the front door.
-        ignoreIP = [ "127.0.0.1/8" "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "100.64.0.0/10" "fc00::/7" ];
+        # fe80::/10 is IPv6 link-local (the vector for a huge fraction of LAN
+        # brute force) and fd7a:115c:a1e0::/48 is the Tailscale v6 ULA — the
+        # CGNAT v4 range was carefully ignored while its v6 peer was not.
+        ignoreIP = [ "127.0.0.1/8" "::1/128" "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16" "100.64.0.0/10" "fc00::/7" "fe80::/10" "fd7a:115c:a1e0::/48" ];
+        # Declare the sshd jail here, not by coincidence of services.openssh
+        # being co-enabled elsewhere — turning SSH off would otherwise
+        # silently leave fail2ban running with zero jails.
+        jails.sshd.settings = {
+          enabled = true;
+          filter = "sshd";
+        };
       };
     })
 
@@ -117,7 +127,11 @@ in
       security.audit = {
         enable = true;
         rules = [
-          "-a exit,always -F arch=b64 -F euid=0 -S execve -k root-exec"
+          # Track privilege escalation by LOGIN user, not every root exec.
+          # `euid=0 -S execve` fires on sudo, nix-daemon workers, flatpak
+          # helpers — signal buried in noise on a desktop. auid is the
+          # auditd-recommended filter for "what a privileged human did".
+          "-a exit,always -F arch=b64 -F auid>=1000 -F auid!=unset -F euid=0 -S execve -k priv-esc"
           "-w /etc/sudoers -p wa -k sudoers"
           "-w /etc/ssh/sshd_config -p wa -k sshd-config"
         ];

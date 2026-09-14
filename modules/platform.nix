@@ -31,7 +31,10 @@ in
 
     displayGpu = mkOption {
       type = types.enum [ "dgpu" "igpu" ];
-      default = "dgpu";
+      # Default tracks hasDgpu rather than hardcoding "dgpu": on the intel /
+      # nvidia-optimus hosts "dgpu" is a lie that only survives because both
+      # consumers gate on gpu == "amd". Carry the honest value instead.
+      default = if cfg.hasDgpu then "dgpu" else "igpu";
       description = ''
         Which AMD GPU an app gets when it OPTS IN to offload, on hosts with
         both an iGPU and a dGPU, via Mesa's DRI_PRIME device-select. "dgpu"

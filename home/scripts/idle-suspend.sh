@@ -76,12 +76,24 @@ load_busy() {
 # scan every hwmon: mt7921_phy0 (the WiFi radio) idles at ~56C on this board and
 # acpitz/cros_ec report chassis zones, so a blanket max would sit permanently
 # above any sane threshold and quietly turn this into "never suspend".
+#
+# amdgpu is further restricted to the display iGPU by PCI slot: this board has
+# two amdgpu hwmons (780M iGPU at 0000:c5:00.0, RX 7700S dGPU at 0000:03:00.0)
+# and the dGPU's junction sensor legitimately sits warm after any offload —
+# including it here would quietly defer suspend forever after a gaming session.
 too_hot() {
   local d name v max=0
   for d in /sys/class/hwmon/hwmon*; do
     name=$(cat "$d/name" 2>/dev/null) || continue
     case "$name" in
-      k10temp | amdgpu) ;;
+      k10temp) ;;
+      amdgpu)
+        # iGPU only: skip the dGPU's hwmon (PCI 0000:03:00.0, no display path).
+        case "$(readlink -f "$d/device" 2>/dev/null)" in
+          *0000:c5:00.0*) ;;  # 780M: keep
+          *) continue ;;
+        esac
+        ;;
       *) continue ;;
     esac
     for f in "$d"/temp*_input; do

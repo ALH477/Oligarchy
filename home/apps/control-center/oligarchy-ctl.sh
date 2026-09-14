@@ -74,6 +74,7 @@ power|⚡ Power
 persona|🎚 Setup
 rig|🎸 DSP Rig
 system|⚙ System & Kernel
+tv|📺 Theater
 EOF
 }
 
@@ -195,6 +196,7 @@ repo-check|Check for repo updates now
 repo-pull|Pull repo updates (fast-forward only)
 EOF
       ;;
+    tv) echo "tv-status|TV status (not yet implemented)" ;;
   esac
 }
 

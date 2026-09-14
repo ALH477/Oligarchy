@@ -133,7 +133,7 @@ in {
       key_exit=Escape
     '';
 
-    ".config/wofi/style.css".text = renderStyle p;
+    ".config/wofi/style.css" = { text = renderStyle p; force = true; };
   } // (lib.mapAttrs'
     (id: pal: lib.nameValuePair ".config/oligarchy/themes/${id}/wofi.css" {
       text = renderStyle pal;

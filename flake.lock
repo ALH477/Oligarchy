@@ -89,18 +89,14 @@
         "nixpkgs": "nixpkgs_5"
       },
       "locked": {
-        "lastModified": 1767837716,
-        "narHash": "sha256-/IRKNf+yhS5lcFtykbyORYGNm1AyOm7nIEck5p2VAbw=",
-        "ref": "refs/heads/main",
-        "rev": "0819e595bc15ab247b11c0d8b09492acfa82c8f8",
-        "revCount": 6,
-        "type": "git",
-        "url": "https://github.com/ALH477/DeMoD-IP-Blocker.git"
+        "path": "./modules/demod-ip-blocker",
+        "type": "path"
       },
       "original": {
-        "type": "git",
-        "url": "https://github.com/ALH477/DeMoD-IP-Blocker.git"
-      }
+        "path": "./modules/demod-ip-blocker",
+        "type": "path"
+      },
+      "parent": []
     },
     "demod-quanta-src": {
       "flake": false,
@@ -1095,11 +1091,11 @@
     },
     "nixpkgs_5": {
       "locked": {
-        "lastModified": 1771008912,
-        "narHash": "sha256-gf2AmWVTs8lEq7z/3ZAsgnZDhWIckkb+ZnAo5RzSxJg=",
+        "lastModified": 1789286504,
+        "narHash": "sha256-eiEK7cKZORNEvX0GeF3RtNEF/JXhgf2RqSp3230q13E=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "a82ccc39b39b621151d6732718e3e250109076fa",
+        "rev": "ef34387ddd751e1ab8857adf4676492d32eb24ec",
         "type": "github"
       },
       "original": {

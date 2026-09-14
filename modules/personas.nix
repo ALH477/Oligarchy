@@ -57,7 +57,6 @@ let
   p = personas.${cfg.active};
 in
 {
-  options.services.dsp-vm.enable = mkEnableOption "DSP VM";
   options.custom.persona.active = mkOption {
     type = types.enum (attrNames personas);
     default = "minimal";
@@ -73,7 +72,20 @@ in
   config = {
     # Build-time knobs (mkDefault → a host or state.nix can override).
     custom.kernel.variant = mkDefault p.kernel;
-    services.dsp-vm.enable = mkDefault p.dsp;
+    # `p.dsp` is documentation of INTENT, not a live wire — it does not touch
+    # `custom.vm.dsp.enable`. That option is a deliberate, out-of-band,
+    # local.nix-only decision (see configuration.nix's comment on it):
+    # flipping it also flips `audioDevice.usbController.enable`, which steals
+    # the second xHCI controller for VFIO passthrough the moment the unit
+    # starts. A persona switch (`oligarchy-ctl persona studio`) must never
+    # trigger that as a side effect. The real runtime arm/disarm surface is
+    # `dsp-arm` (home/scripts/dsp-arm.sh, bound to the cockpit's `dsp-arm`
+    # key), which `systemctl start`s `custom.vm.dsp.name` directly — it only
+    # works once local.nix has set `custom.vm.dsp.enable = true` on hardware
+    # that supports it. `services.dsp-vm.enable` used to exist here as a
+    # same-named option that nothing in the VM module read; it has been
+    # removed rather than fixed, since keeping it would still invite reading
+    # `p.dsp` as "studio arms the VM", which it does not.
     services.ollamaAgentic.enable = mkDefault p.aiEnable;
     services.ollamaAgentic.preset = mkDefault p.aiPreset;
     programs.gamemode.enable = mkDefault p.gamemode;

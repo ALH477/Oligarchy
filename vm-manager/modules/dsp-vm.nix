@@ -85,9 +85,35 @@
       };
 
       diskImage = lib.mkOption {
-        type = lib.types.str;
+        # `path`, not `str`, so a derivation can be assigned directly and the
+        # image becomes part of the system closure — built, GC-rooted and
+        # rebuildable. The old `str` default below was a hand-copied artifact
+        # that nothing in this repo produced; when it stopped booting (no EFI
+        # system partition, so OVMF fell through to PXE) there was nothing to
+        # rebuild it from. `nix build .#dsp-vm-qcow` is that something.
+        type = lib.types.either lib.types.path lib.types.str;
         default = "/home/asher/vms/archibaldos-dsp.qcow2";
-        description = "Path to pre-built ArchibaldOS disk image.";
+        description = ''
+          ArchibaldOS disk image. Assign the `dsp-vm-qcow` derivation to get a
+          reproducible guest; a bare path is still accepted for a hand-managed
+          image. A read-only store path is booted through a writable qcow2
+          overlay (see `overlay`), so the guest can write.
+        '';
+      };
+
+      overlay = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          Boot `diskImage` through a writable qcow2 overlay under
+          /var/lib/qemu rather than writing to it in place.
+
+          Required whenever `diskImage` is a store path: the store is
+          read-only, and QEMU fails to open the drive for writing. Kept on by
+          default for a plain path too — the guest's writes then stay
+          discardable, which is what you want for a coprocessor whose state is
+          not meant to be precious. Delete the overlay to reset the guest.
+        '';
       };
 
       netjack = {
@@ -269,6 +295,34 @@
         sdlSupport = false;
         spiceSupport = false;
       };
+
+      # The guest's serial console, as an INTERACTIVE socket plus a log.
+      #
+      # It used to be `-chardev file`, which is write-only: `dsp-console` ran
+      # socat against a path QEMU never created, printed "VM not running or
+      # console unavailable", and looked exactly like a VM that had failed to
+      # start. There was no way to type at the guest at all — on a headless,
+      # display-less VM that is the only way in before sshd is up.
+      #
+      # `logfile=` keeps the transcript the file chardev used to give, so
+      # boot output is still readable after the fact without attaching.
+      consoleSocket = "/run/${cfg.name}-console.sock";
+      consoleLog = "/var/log/qemu-${cfg.name}-serial.log";
+
+      # Where the guest actually writes. See `overlay`.
+      overlayDisk = "/var/lib/qemu/${cfg.name}-overlay.qcow2";
+
+      # `dsp-vm-qcow` builds via nixos-generators' `qcow-efi` format, whose
+      # output is a DIRECTORY (nixos.qcow2 + nix-support/), not a bare qcow2
+      # file. `-drive file=` and `qemu-img -b` both require a regular file,
+      # so resolve to the qcow2 inside before either sees the path. A plain
+      # hand-managed path (the option's `str` branch) is untouched, since
+      # pathExists on a non-directory file path is simply false.
+      resolveDisk = img:
+        let s = toString img;
+        in if builtins.pathExists (s + "/nixos.qcow2") then s + "/nixos.qcow2" else s;
+
+      runtimeDisk = if cfg.archibaldOS.overlay then overlayDisk else resolveDisk cfg.archibaldOS.diskImage;
     in
     lib.mkIf cfg.enable {
       boot.kernelParams = lib.mkAfter (
@@ -332,8 +386,50 @@
 
         preStart = ''
           mkdir -p /var/log
-          touch /var/log/qemu-${cfg.name}-serial.log
-          chmod 666 /var/log/qemu-${cfg.name}-serial.log
+          touch ${consoleLog}
+          chmod 666 ${consoleLog}
+        '' + lib.optionalString cfg.archibaldOS.overlay ''
+          # Writable overlay backed by the (possibly read-only) base image.
+          #
+          # `-F qcow2` is not optional: without an explicit backing format
+          # qemu-img refuses to create the overlay on any recent QEMU rather
+          # than probing, and the unit dies in preStart with a message that
+          # says nothing about backing files.
+          #
+          # Recreated whenever the base image changes — a `nixos-rebuild` that
+          # updates the guest would otherwise leave the overlay pointing at a
+          # garbage-collected backing file, and QEMU's error for that names
+          # only the missing store path.
+          #
+          # `dsp-vm-qcow` builds via nixos-generators' `qcow-efi` format,
+          # whose output is a DIRECTORY (nixos.qcow2 + nix-support/), not a
+          # bare qcow2 file — `qemu-img -b` requires a regular file, so
+          # resolve to the file inside it here too (mirrors `resolveDisk`
+          # above; done again at runtime, not just at eval time, so a
+          # hand-copied directory-shaped image still gets caught here).
+          mkdir -p /var/lib/qemu
+          # resolveDisk at eval time covers the flake-wired dsp-vm-qcow
+          # directory. The shell check is for a hand-assigned directory that
+          # was not a store path at eval (option's `str` branch).
+          base=${lib.escapeShellArg (resolveDisk cfg.archibaldOS.diskImage)}
+          if [ -d "$base" ]; then
+            if [ -f "$base/nixos.qcow2" ]; then
+              base="$base/nixos.qcow2"
+            else
+              found=$(${pkgs.findutils}/bin/find "$base" -maxdepth 1 -name '*.qcow2' -print -quit)
+              if [ -z "$found" ]; then
+                echo "${cfg.name}: $base is a directory with no nixos.qcow2 or *.qcow2 inside it" >&2
+                exit 1
+              fi
+              base="$found"
+            fi
+          fi
+          stamp=/var/lib/qemu/${cfg.name}-overlay.base
+          if [ ! -f ${overlayDisk} ] || [ "$(cat "$stamp" 2>/dev/null)" != "$base" ]; then
+            rm -f ${overlayDisk}
+            ${headlessQemu}/bin/qemu-img create -q -f qcow2 -F qcow2 -b "$base" ${overlayDisk}
+            printf '%s' "$base" > "$stamp"
+          fi
         '' + lib.optionalString (cfg.hugepages > 0) ''
           # Allocate hugepages dynamically (released in postStop)
           echo ${toString cfg.hugepages} > /proc/sys/vm/nr_hugepages
@@ -390,7 +486,7 @@
 
               # Disk: cache=unsafe + native AIO for lowest I/O latency
               diskOpts = lib.replaceStrings [ "\n" ] [ " " ] ''
-                -drive file=${cfg.archibaldOS.diskImage},format=qcow2,if=virtio,cache=unsafe,aio=native,cache.direct=on
+                -drive file=${runtimeDisk},format=qcow2,if=virtio,cache=unsafe,aio=native,cache.direct=on
               '';
 
               # Disable all unnecessary emulated devices — no USB, no floppy,
@@ -439,7 +535,11 @@
               displayOpts =
                 lib.optionalString cfg.spice " -vga virtio -display gtk,gl=on"
                 + lib.optionalString cfg.vnc " -vnc :0"
-                + lib.optionalString (!cfg.spice && !cfg.vnc) " -display none -chardev file,id=serial0,path=/var/log/qemu-${cfg.name}-serial.log -device isa-serial,chardev=serial0";
+                + lib.optionalString (!cfg.spice && !cfg.vnc) (lib.replaceStrings [ "\n" ] [ " " ] ''
+                  -display none
+                  -chardev socket,id=serial0,path=${consoleSocket},server=on,wait=off,logfile=${consoleLog}
+                  -device isa-serial,chardev=serial0
+                '');
 
               # QEMU monitor socket for debugging
               monitorOpts = " -monitor unix:/run/qemu-${cfg.name}.sock,server,nowait";
@@ -558,10 +658,33 @@
           systemctl status dsp-netjack-bridge.service --no-pager || true
         '')
 
+        # Interactive guest console.
+        #
+        # The path here has to match the `-chardev socket` above. It used to be
+        # /run/${cfg.name}.sock, which QEMU never creates — the monitor is at
+        # /run/qemu-${cfg.name}.sock and the console was a write-only file — so
+        # this reported "VM not running or console unavailable" on a perfectly
+        # healthy VM and there was no way to tell the two apart. Say which.
         (pkgs.writeShellScriptBin "dsp-console" ''
-          echo "Connecting to DSP VM console (Ctrl-A X to exit)..."
-          ${pkgs.socat}/bin/socat -,raw,echo=0 UNIX-CONNECT:/run/${cfg.name}.sock 2>/dev/null || \
-            echo "VM not running or console unavailable"
+          sock=${consoleSocket}
+          if [ ! -S "$sock" ]; then
+            echo "No console socket at $sock." >&2
+            if ${pkgs.systemd}/bin/systemctl is-active --quiet ${cfg.name}.service; then
+              echo "${cfg.name}.service IS running — the console chardev did not come up." >&2
+              echo "Check: journalctl -u ${cfg.name} -n 50" >&2
+            else
+              echo "${cfg.name}.service is not running. Start it with:" >&2
+              echo "  sudo systemctl start ${cfg.name}" >&2
+            fi
+            exit 1
+          fi
+          echo "Connecting to DSP VM console (Ctrl-] to exit)..." >&2
+          exec ${pkgs.socat}/bin/socat -,raw,echo=0,escape=0x1d UNIX-CONNECT:"$sock"
+        '')
+
+        # The boot transcript, for when the guest died before you could attach.
+        (pkgs.writeShellScriptBin "dsp-console-log" ''
+          exec ${pkgs.coreutils}/bin/tail "''${@:--n +1}" ${consoleLog}
         '')
 
         (pkgs.writeShellScriptBin "dsp-netjack-restart" ''
