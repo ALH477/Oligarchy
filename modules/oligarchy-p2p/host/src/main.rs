@@ -157,11 +157,11 @@ fn main() -> Result<()> {
 }
 
 fn seed(cfg: &config::Config, store_paths: &std::path::Path, key_file: &PathBuf) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let meta = std::fs::metadata(key_file)
         .with_context(|| format!("reading signing key {}", key_file.display()))?;
-    declared::check_key_mode(meta.permissions().mode(), key_file)?;
+    declared::check_key(meta.permissions().mode(), meta.uid(), key_file)?;
     let secret = std::fs::read_to_string(key_file)
         .with_context(|| format!("reading signing key {}", key_file.display()))?;
 

@@ -868,6 +868,15 @@ in
               Restart = "on-failure";
               RestartSec = 2;
 
+              # PARTIAL mitigation, deliberately recorded as such: this bounds an
+              # ordinary hung stop, but it does NOT close the EXTEND_TIMEOUT_USEC
+              # gap. Tier-1 plugins require NotifyAccess=all (bwrap forks the
+              # process that reports ready -- see the landmine in CLAUDE.md and
+              # docs/plugins-roadmap.md), and a unit with NotifyAccess=all can
+              # extend past TimeoutStopSec indefinitely, with no systemd-side cap.
+              # Latent while declaredPlugins is empty; the real fix is gap-tracked.
+              TimeoutStopSec = "20s";
+
               # The supervisor's OWN runtime directory, not the one the plugin
               # instances share. systemd chowns a RuntimeDirectory to the unit's
               # User and deletes it when the unit stops, so a socket living in the
@@ -961,6 +970,15 @@ in
               Group = cfg.group;
               Restart = "on-failure";
               RestartSec = 5;
+
+              # PARTIAL mitigation, deliberately recorded as such: this bounds an
+              # ordinary hung stop, but it does NOT close the EXTEND_TIMEOUT_USEC
+              # gap. Tier-1 plugins require NotifyAccess=all (bwrap forks the
+              # process that reports ready -- see the landmine in CLAUDE.md and
+              # docs/plugins-roadmap.md), and a unit with NotifyAccess=all can
+              # extend past TimeoutStopSec indefinitely, with no systemd-side cap.
+              # Latent while declaredPlugins is empty; the real fix is gap-tracked.
+              TimeoutStopSec = "20s";
 
               StateDirectory = "oligarchy/plugins";
               # Match the tmpfiles rules below; systemd's default is 0755, which
