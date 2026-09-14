@@ -1,0 +1,83 @@
+{
+  "dcl_version": 1,
+  "schema_version": 3,
+  "id": "demod.guitar.config",
+  "title": "Guitar Settings",
+  "groups": [
+    { "id": "voice",   "label": "Voice",   "order": 10 },
+    { "id": "audio",   "label": "Audio",   "order": 20 },
+    { "id": "display", "label": "Display", "order": 30 },
+    { "id": "network", "label": "Network", "order": 40, "advanced": true },
+    { "id": "engine",  "label": "Engine",  "order": 50, "advanced": true,
+      "help": "Changed from the desktop application. Takes effect after a rebuild." }
+  ],
+  "options": [
+    { "key": "voice.preset", "type": "enum", "scope": "runtime", "group": "voice",
+      "label": "Voice", "default": "clean", "order": 10,
+      "help": "The instrument model the guitar plays through.",
+      "choices": [
+        { "value": "clean",  "label": "Clean" },
+        { "value": "crunch", "label": "Crunch", "help": "Mild asymmetric saturation." },
+        { "value": "doom",   "label": "Doom",   "help": "Heavy low-end, long decay." },
+        { "value": "bell",   "label": "Bell" }
+      ] },
+    { "key": "voice.tuning_hz", "type": "float", "scope": "runtime", "group": "voice",
+      "label": "Tuning", "default": 440.0, "order": 20,
+      "min": 415.0, "max": 466.0, "step": 0.5, "unit": "Hz", "format": "%.1f Hz",
+      "help": "Reference pitch for A4." },
+    { "key": "audio.input_gain_db", "type": "float", "scope": "runtime", "group": "audio",
+      "label": "Input Level", "default": 0.0, "order": 10,
+      "min": -20.0, "max": 20.0, "step": 0.5, "unit": "dB", "format": "%.1f dB",
+      "help": "Level of the pickup signal entering the instrument." },
+    { "key": "audio.output_gain_db", "type": "float", "scope": "runtime", "group": "audio",
+      "label": "Output Level", "default": 0.0, "order": 20,
+      "min": -60.0, "max": 12.0, "step": 0.5, "unit": "dB", "format": "%.1f dB",
+      "help": "Master level sent to the amp or headphones." },
+    { "key": "audio.mute_on_boot", "type": "bool", "scope": "runtime", "group": "audio",
+      "label": "Silent Start", "default": true, "order": 30,
+      "help": "Start muted so the guitar never makes a sound you did not ask for." },
+    { "key": "display.brightness", "type": "int", "scope": "runtime", "group": "display",
+      "label": "Brightness", "default": 70, "order": 10,
+      "min": 10, "max": 100, "step": 5, "unit": "%" },
+    { "key": "display.face_enabled", "type": "bool", "scope": "runtime", "group": "display",
+      "label": "Companion Face", "default": true, "order": 20,
+      "help": "Show the animated face when the instrument is idle." },
+    { "key": "display.face_mood", "type": "enum", "scope": "runtime", "group": "display",
+      "label": "Mood", "default": "calm", "order": 30,
+      "visible_if": { "key": "display.face_enabled", "equals": true },
+      "choices": [
+        { "value": "calm",   "label": "Calm" },
+        { "value": "lively", "label": "Lively" }
+      ] },
+    { "key": "network.mesh_enabled", "type": "bool", "scope": "runtime", "group": "network",
+      "label": "Mesh", "default": false, "order": 10,
+      "help": "Let this instrument find others on the local network." },
+    { "key": "network.peer_name", "type": "string", "scope": "runtime", "group": "network",
+      "label": "Name", "default": "guitar", "order": 20,
+      "max_length": 32, "pattern": "[a-z0-9-]+",
+      "visible_if": { "key": "network.mesh_enabled", "equals": true },
+      "help": "How this instrument appears to others. Lowercase letters, numbers, dashes." },
+    { "key": "engine.sample_rate", "type": "enum", "scope": "build", "group": "engine",
+      "label": "Sample Rate", "default": "48000", "order": 10,
+      "choices": [
+        { "value": "44100", "label": "44.1 kHz" },
+        { "value": "48000", "label": "48 kHz" },
+        { "value": "96000", "label": "96 kHz", "help": "Higher load, shorter battery life." }
+      ] },
+    { "key": "engine.buffer_frames", "type": "enum", "scope": "build", "group": "engine",
+      "label": "Buffer Size", "default": "128", "order": 20,
+      "choices": [
+        { "value": "64",  "label": "64 - lowest latency" },
+        { "value": "128", "label": "128 - balanced" },
+        { "value": "256", "label": "256 - most stable" }
+      ] }
+  ],
+  "migrations": [
+    { "from": 2, "to": 3,
+      "actions": [
+        { "op": "rename", "from": "audio.gain", "to": "audio.output_gain_db" },
+        { "op": "remap",  "key": "voice.preset", "map": { "dirty": "crunch", "heavy": "doom" } },
+        { "op": "drop",   "key": "audio.legacy_engine" }
+      ] }
+  ]
+}

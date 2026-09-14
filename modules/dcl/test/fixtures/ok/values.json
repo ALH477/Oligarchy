@@ -1,0 +1,2 @@
+{ "dcl_version": 1, "schema_version": 3,
+  "values": { "voice.preset": "doom", "audio.output_gain_db": -3.5, "display.brightness": 45 } }

@@ -76,6 +76,13 @@ pub const KNOWN: &[KnownEndpoint] = &[
         remote_endpoints: &[],
     },
     KnownEndpoint {
+        name: "oligarchy-storage-mcp",
+        host: "(stdio)",
+        port: None,
+        proto: Proto::Stdio,
+        remote_endpoints: &[],
+    },
+    KnownEndpoint {
         name: "oligarchy-system-mcp",
         host: "(stdio)",
         port: None,

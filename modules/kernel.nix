@@ -4,15 +4,16 @@
 # Optimized Kernel Module for Framework 16 AMD
 # ============================================================================
 #
-# Default: Zen kernel (pre-built, immediate availability)
-#   - Low-latency scheduler optimizations
-#   - Gaming and audio production optimized
-#   - MuQSS scheduler
+# Pre-built kernels (Immediate availability via nixpkgs / Chaotic-Nyx):
+#   - cachyos: CachyOS kernel with BORE scheduler (pre-built from Chaotic-Nyx)
+#   - cachyos-lto: CachyOS kernel with LTO optimizations (pre-built from Chaotic-Nyx)
+#   - zen: Zen kernel (pre-built from nixpkgs)
+#   - xanmod: XanMod kernel with BORE scheduler (pre-built from nixpkgs)
+#   - latest: Latest stable upstream Linux kernel (pre-built from nixpkgs)
+#   - lts: Linux 6.12 LTS (pre-built from nixpkgs)
 #
-# Alternative: CachyOS BORE (requires building from source)
-#   - Set kernelChoice = "cachyos-bore"
-#   - Update the sha256 hashes below
-#   - First build will take 30-60 minutes
+# Source-built kernel:
+#   - cachyos-bore: Build CachyOS BORE from source (requires allowCachyExperimental + hashes)
 #
 # ============================================================================
 
@@ -20,9 +21,9 @@ let
   # ─────────────────────────────────────────────────────────────────────────
   # KERNEL SELECTION
   # ─────────────────────────────────────────────────────────────────────────
-  # Variant is now a declarative option: custom.kernel.variant
-  # ("zen" | "xanmod" | "latest" | "lts" | "cachyos-bore"). Set it in
-  # configuration.nix or via the control center (writes
+  # Variant is a declarative option: custom.kernel.variant
+  # ("cachyos" | "cachyos-lto" | "cachyos-bore" | "zen" | "xanmod" | "latest" | "lts").
+  # Set it in configuration.nix or via the control center (writes
   # ~/.config/oligarchy/state.nix).
   cfg = config.custom.kernel;
 
@@ -71,46 +72,41 @@ let
     '';
 
   # ─────────────────────────────────────────────────────────────────────────
-  # CachyOS BORE Configuration (only if kernelChoice = "cachyos-bore")
+  # CachyOS BORE (Source Build Configuration for variant = "cachyos-bore")
   # ─────────────────────────────────────────────────────────────────────────
-  # To get correct hashes:
-  #   1. Set sha256 to lib.fakeHash
-  #   2. Run: nix build .#nixosConfigurations.nixos.config.system.build.toplevel 2>&1 | grep 'got:'
-  #   3. Copy the correct hash
-  
   cachyosVersion = "6.12.10";
   cachyosDir = "6.12";
-  
+
   # Kernel source
   cachyos-src = pkgs.fetchurl {
     url = "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${cachyosVersion}.tar.xz";
-    sha256 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";  # Replace with actual hash
+    sha256 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; # Replace with actual hash
   };
-  
+
   # CachyOS defconfig
   cachyos-config = pkgs.fetchurl {
     url = "https://raw.githubusercontent.com/CachyOS/linux-cachyos/master/linux-cachyos-bore/config";
-    sha256 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";  # Replace with actual hash
+    sha256 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; # Replace with actual hash
   };
-  
+
   # CachyOS patches
   cachyos-patches = [
     {
       name = "cachyos-base-all";
       patch = pkgs.fetchpatch {
         url = "https://raw.githubusercontent.com/cachyos/kernel-patches/master/${cachyosDir}/all/0001-cachyos-base-all.patch";
-        sha256 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";  # Replace with actual hash
+        sha256 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; # Replace with actual hash
       };
     }
     {
       name = "bore-scheduler";
       patch = pkgs.fetchpatch {
         url = "https://raw.githubusercontent.com/cachyos/kernel-patches/master/${cachyosDir}/sched/0001-bore-cachy.patch";
-        sha256 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";  # Replace with actual hash
+        sha256 = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; # Replace with actual hash
       };
     }
   ];
-  
+
   # Build CachyOS kernel
   cachyos-kernel = (pkgs.linuxManualConfig {
     inherit (pkgs) stdenv;
@@ -131,28 +127,23 @@ let
   # Kernel Selection Map
   # ─────────────────────────────────────────────────────────────────────────
   kernelPackagesMap = {
+    # CachyOS: from Chaotic-Nyx (includes BORE scheduler by default)
+    "cachyos" = pkgs.linuxPackages_cachyos;
+    "cachyos-lto" = pkgs.linuxPackages_cachyos-lto;
+
     # Zen: Optimized for desktop, gaming, audio. Pre-built.
     "zen" = pkgs.linuxPackages_zen;
-    
+
     # Xanmod: Uses BORE scheduler. Pre-built.
     "xanmod" = pkgs.linuxPackages_xanmod_latest;
-    
+
     # Latest stable kernel
     "latest" = pkgs.linuxPackages_latest;
 
-    # LTS: nixpkgs' current long-term-support line. Pre-built, most
-    # predictable RT/audio behavior of the four (no rolling scheduler
-    # patches). Pins to linuxPackages_6_12 (Linux 6.12 LTS, upstream EOL
-    # projected Dec 2028 — see the kernelEol* warning above). NOTE: unlike
-    # "latest" (nixpkgs itself keeps linuxPackages_latest pointed at the
-    # newest stable kernel), nixpkgs has no generic "linuxPackages_lts" /
-    # "linuxPackages_default" alias to bind to — this entry is a manually
-    # pinned attribute and MUST be bumped by hand (e.g. to linuxPackages_6_1X,
-    # or renamed to "lts-6.1X") once nixpkgs rolls its own LTS default past
-    # 6.12.
+    # LTS: Linux 6.12 LTS
     "lts" = pkgs.linuxPackages_6_12;
 
-    # CachyOS BORE (requires hash updates above)
+    # Custom CachyOS BORE built from source
     "cachyos-bore" = pkgs.linuxPackagesFor cachyos-kernel;
   };
 
@@ -161,20 +152,18 @@ let
 in {
   options.custom.kernel = {
     variant = lib.mkOption {
-      type = lib.types.enum [ "zen" "xanmod" "latest" "lts" "cachyos-bore" ];
+      type = lib.types.enum [ "zen" "cachyos" "cachyos-lto" "cachyos-bore" "xanmod" "latest" "lts" ];
       default = "zen";
       description = ''
-        Kernel package set. zen/xanmod/latest/lts are pre-built; cachyos-bore
-        is built from source (heavy) and requires allowCachyExperimental +
-        real hashes filled into the cachyos-* fetchers in this module.
+        Kernel package set.
 
-        lts pins to pkgs.linuxPackages_6_12 (Linux 6.12 LTS). It trades the
-        zen/xanmod rolling schedulers for a long-term-support branch with
-        more predictable RT/audio latency behavior — used by the "studio"
-        persona for this reason. Linux 6.12's upstream EOL is currently
-        projected for December 2028; this module emits a build-time warning
-        (not a hard failure) once the nixpkgs pin's own commit date reaches
-        that cutoff — see the kernelEol* let-bindings above.
+        zen / xanmod / latest / lts: Pre-built kernels from nixpkgs (zen is default).
+
+        cachyos / cachyos-lto: Pre-built CachyOS kernels from Chaotic-Nyx
+        (cachyos includes the BORE scheduler and upstream CachyOS optimizations).
+
+        cachyos-bore: Built from source (heavy) and requires allowCachyExperimental +
+        real hashes filled into the cachyos-* fetchers in this module.
       '';
     };
 
@@ -213,21 +202,21 @@ in {
     # Desktop/Gaming Optimized Sysctl
     # ───────────────────────────────────────────────────────────────────────
     boot.kernel.sysctl = {
-    # Memory management
-    "vm.swappiness" = lib.mkDefault 10;
-    "vm.dirty_ratio" = lib.mkDefault 10;
-    "vm.dirty_background_ratio" = lib.mkDefault 5;
-    "vm.vfs_cache_pressure" = lib.mkDefault 50;
-    
-    # Network performance
-    "net.core.rmem_default" = lib.mkDefault 1048576;
-    "net.core.wmem_default" = lib.mkDefault 1048576;
-    "net.core.rmem_max" = lib.mkDefault 16777216;
-    "net.core.wmem_max" = lib.mkDefault 16777216;
-    "net.ipv4.tcp_fastopen" = lib.mkDefault 3;
-    
-    # Real-time audio
-    "kernel.sched_rt_runtime_us" = lib.mkDefault 950000;
+      # Memory management
+      "vm.swappiness" = lib.mkDefault 10;
+      "vm.dirty_ratio" = lib.mkDefault 10;
+      "vm.dirty_background_ratio" = lib.mkDefault 5;
+      "vm.vfs_cache_pressure" = lib.mkDefault 50;
+
+      # Network performance
+      "net.core.rmem_default" = lib.mkDefault 1048576;
+      "net.core.wmem_default" = lib.mkDefault 1048576;
+      "net.core.rmem_max" = lib.mkDefault 16777216;
+      "net.core.wmem_max" = lib.mkDefault 16777216;
+      "net.ipv4.tcp_fastopen" = lib.mkDefault 3;
+
+      # Real-time audio
+      "kernel.sched_rt_runtime_us" = lib.mkDefault 950000;
     };
   };
 }

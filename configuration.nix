@@ -18,7 +18,6 @@
     ./modules/dcf-mesh-agent.nix
     ./modules/hypr-controller/nixos-module.nix
     ./modules/terminus-dev.nix
-    ./modules/tv-privacy
   ]
   # Optional local overrides, both at absolute paths OUTSIDE the repo so a
   # fresh clone never sees them (Nix's local-flake source filtering excludes

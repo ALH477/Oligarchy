@@ -1,6 +1,6 @@
 # Oligarchy MCP Servers
 
-Nine dedicated, **read-only** Model Context Protocol servers, one per OS
+Ten dedicated, **read-only** Model Context Protocol servers, one per OS
 aspect, plus a dedicated port/API security-audit server. Replaces the legacy
 monolithic Python `oligarchy-mcp`.
 
@@ -13,9 +13,28 @@ and the living roadmap.
   `stdio_runner`, build-gate tests.
 - `umbrella` — `oligarchy-mcp` binary. A JSON-RPC router that spawns one
   subprocess per aspect and holds **no capabilities itself**.
-- `system` / `net` / `dcf` / `dsp` / `ai` / `secrets` / `vm` / `hydramesh` —
-  aspect servers.
+- `system` / `net` / `dcf` / `dsp` / `ai` / `secrets` / `vm` / `hydramesh` /
+  `storage` — aspect servers.
 - `ports-sec` — the dedicated API/port security auditor.
+
+`storage` covers disk capacity and what is consuming it, including the Nix
+store's gcroots. It exists because a full disk fails indirectly: on a
+Determinate host the collector escalates under disk pressure and eventually
+logs `Relaxing the rubric`, after which it deletes store paths it would
+normally protect — a `nix build --no-link` result can vanish minutes after it
+is realised, and nothing in that failure mentions free space. `nix_gc_roots`
+is the tool that names the cause, because a large store that will not shrink
+is almost always pinned by stray `result` symlinks rather than by generations.
+
+Two constraints shaped that crate and are worth preserving. Every tool must
+work **unprivileged**, which is how this surface always runs: `nix-env
+--list-generations` takes a write lock on the system profile and fails with
+"Permission denied", so generations are read from the profile symlinks
+directly. And its allowlist deliberately contains **no binary capable of
+deleting** — `nix-collect-garbage --dry-run` was implemented behind a
+hard-coded-argument guard and then removed, both because it prints nothing at
+all for a non-root caller and because keeping it would have left the read-only
+property resting on one constant instead of on the absence of the capability.
 
 `dcf` covers the Oligarchy DCF *services* (community-node container, sops
 identity presence, tray); `hydramesh` covers the mesh/protocol stack itself

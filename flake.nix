@@ -12,6 +12,9 @@
     # Determinate Systems enhancements
     determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/*";
 
+    # Chaotic-Nyx - bleeding edge packages, pre-built CachyOS kernels & binary cache
+    chaotic.url = "github:chaotic-cx/nyx/nyxpkgs-unstable";
+
     # Hardware support
     nixos-hardware.url = "github:NixOS/nixos-hardware";
 
@@ -153,6 +156,7 @@
     { self
     , nixpkgs
     , nixpkgs-unstable
+    , chaotic
     , determinate
     , nixos-hardware
     , demod-ip-blocker
@@ -197,7 +201,7 @@
 
       # Common specialArgs passed to all modules
       specialArgs = {
-        inherit inputs nixpkgs-unstable;
+        inherit inputs nixpkgs-unstable chaotic;
         # Uncomment when archibaldos is available:
         # inherit archibaldos;
         inherit vm-manager dsp-ctl oligarchy-forge mcp-servers hydramesh;
@@ -217,6 +221,7 @@
         { nixpkgs.config = pkgsConfig; }
 
         # Third-party modules (board-specific hardware modules live per-host below)
+        chaotic.nixosModules.default
         determinate.nixosModules.default
         sops-nix.nixosModules.sops
         demod-ip-blocker.nixosModules.default
@@ -752,6 +757,11 @@
         #   nix run .#oligarchy-hw-detect
         oligarchy-hw-detect = oligarchyHwDetect;
 
+        # USB scrcpy game-display wrapper. Same derivation the NixOS module
+        # installs when custom.androidMirror.enable is set.
+        #   nix run .#phone-mirror
+        phone-mirror = android-mirror.packages.${system}.default;
+
         # ════════════════════════════════════════════════════════════════════
         # Run the real Paper + Geyser + Floodgate stack in a scratch directory,
         # as the invoking user, without touching the system:
@@ -765,11 +775,6 @@
         # runner exercises the configuration the service will run.
         # ════════════════════════════════════════════════════════════════════
         minecraft-server-dev = pkgs.callPackage ./modules/minecraft-server/dev-run.nix { };
-
-        # USB scrcpy game-display wrapper. Same derivation the NixOS module
-        # installs when custom.androidMirror.enable is set.
-        #   nix run .#phone-mirror
-        phone-mirror = android-mirror.packages.${system}.default;
 
         # ════════════════════════════════════════════════════════════════════
         # DCL schema/value gate (§13 of docs/demod-config-layer-spec.md).
