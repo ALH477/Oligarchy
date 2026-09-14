@@ -11,11 +11,11 @@
     nixosModules.default = { config, lib, pkgs, ... }:
       let
         cfg = config.services.demod-ip-blocker;
-        
+
         # Define set names
         setV4 = "demod-blk-v4";
         setV6 = "demod-blk-v6";
-        
+
         # License Text
         licenseText = ''
           Copyright (c) 2026, DeMoD LLC
@@ -146,10 +146,11 @@
           echo "DeMoD IP Blocklist applied successfully."
         '';
 
-      in {
+      in
+      {
         options.services.demod-ip-blocker = {
           enable = lib.mkEnableOption "DeMoD IP Blocker Service";
-          
+
           url = lib.mkOption {
             type = lib.types.str;
             default = "https://storage.googleapis.com/spur-astrill-vpn/ips.txt";
@@ -186,14 +187,14 @@
             description = "DeMoD IP Blocker Update Service";
             wants = [ "network-online.target" ];
             after = [ "network-online.target" "firewall.service" ];
-            
+
             # Create persistent storage for cache and boot counter
             serviceConfig = {
               Type = "oneshot";
               User = "root";
               StateDirectory = "demod-ip-blocker"; # Creates /var/lib/demod-ip-blocker
               ExecStart = "${updateScript}/bin/update-demod-blocklist";
-              
+
               # Hardening
               ProtectSystem = "strict";
               ProtectHome = true;
@@ -211,7 +212,7 @@
             timerConfig = {
               OnBootSec = "2m";
               OnUnitActiveSec = cfg.updateInterval;
-              RandomizedDelaySec = "5m"; 
+              RandomizedDelaySec = "5m";
               Persistent = true;
             };
           };

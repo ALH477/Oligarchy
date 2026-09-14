@@ -129,7 +129,7 @@ let
         host;
     in
     # A local or daemon substituter ("daemon", "auto", "file:///…") has no host
-    # to allow, and hostOf would produce nonsense for it.
+      # to allow, and hostOf would produce nonsense for it.
     unique (filter (h: h != "") (map hostOf
       (filter (u: hasInfix "://" u && !(hasPrefix "file://" u)) urls)));
 
