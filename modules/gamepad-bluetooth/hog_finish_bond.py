@@ -96,6 +96,32 @@ def plan_reconnect(*, paired: bool, connected: bool, js_exists: bool) -> List[Cm
     return []
 
 
+def reconnect_bt_args(mac: str, steps: List[Cmd]) -> List[List[str]]:
+    """One bluetoothctl argv per planned step. No extra connect after disconnect."""
+    return [[step[0], mac] for step in steps]
+
+
+def should_trust_after_pair(info: str) -> bool:
+    """Trust only if BlueZ now reports Paired=yes. rc=0 on pair is not enough."""
+    return _flag(info, "Paired") and not _flag(info, "Blocked")
+
+
+def hog_input_bound(mac: str, devices_text: str | None = None) -> bool:
+    """True only if THIS MAC already has a js handler — not some other joystick."""
+    if devices_text is None:
+        try:
+            devices_text = Path("/proc/bus/input/devices").read_text()
+        except OSError:
+            return False
+    needle = f"uniq={mac.lower()}"
+    for block in devices_text.split("\n\n"):
+        if needle not in block.lower():
+            continue
+        if re.search(r"Handlers=.*\bjs\d+", block):
+            return True
+    return False
+
+
 def _run_bluetoothctl(args: Sequence[str], *, timeout: int = 20) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bluetoothctl", *args],
@@ -119,10 +145,6 @@ def collect_infos() -> Dict[str, str]:
     return infos
 
 
-def js_exists() -> bool:
-    return any(Path("/dev/input").glob("js*"))
-
-
 def apply_commands(cmds: List[Tuple[str, str]], *, dry_run: bool) -> None:
     for op, mac in cmds:
         print(f"hog-finish-bond: {op} {mac}")
@@ -136,7 +158,13 @@ def apply_commands(cmds: List[Tuple[str, str]], *, dry_run: bool) -> None:
             )
             continue
         if op == "pair":
-            # Trust only after a successful pair. Never trust the unpaired leftover.
+            info = _run_bluetoothctl(["info", mac], timeout=10).stdout
+            if not should_trust_after_pair(info):
+                print(
+                    f"hog-finish-bond: pair {mac} did not yield Paired=yes; not trusting",
+                    file=sys.stderr,
+                )
+                continue
             trust = _run_bluetoothctl(["trust", mac], timeout=10)
             if trust.returncode != 0:
                 print(f"hog-finish-bond: trust {mac} failed\n{trust.stderr}", file=sys.stderr)
@@ -146,14 +174,15 @@ def maybe_reconnect(mac: str, *, dry_run: bool) -> None:
     info = _run_bluetoothctl(["info", mac]).stdout if not dry_run else ""
     paired = _flag(info, "Paired") if info else True
     connected = _flag(info, "Connected") if info else True
-    steps = plan_reconnect(paired=paired, connected=connected, js_exists=js_exists())
-    for step in steps:
-        print(f"hog-finish-bond: {' '.join(step)} {mac} (HID not bound)")
+    steps = plan_reconnect(
+        paired=paired, connected=connected, js_exists=hog_input_bound(mac)
+    )
+    for argv in reconnect_bt_args(mac, steps):
+        print(f"hog-finish-bond: {' '.join(argv)} (HID not bound)")
         if dry_run:
             continue
-        _run_bluetoothctl([step[0], mac], timeout=20)
+        _run_bluetoothctl(argv, timeout=20)
         time.sleep(2)
-        _run_bluetoothctl(["connect", mac], timeout=20)
 
 
 def main(argv: list[str]) -> int:

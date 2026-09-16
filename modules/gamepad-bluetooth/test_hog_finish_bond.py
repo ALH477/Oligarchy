@@ -170,6 +170,44 @@ class RunnerTests(unittest.TestCase):
             [],
         )
 
+    def test_reconnect_argv_is_one_disconnect_one_connect(self):
+        from hog_finish_bond import plan_reconnect, reconnect_bt_args
+
+        steps = plan_reconnect(paired=True, connected=True, js_exists=False)
+        self.assertEqual(
+            reconnect_bt_args("78:86:2E:BA:73:6E", steps),
+            [
+                ["disconnect", "78:86:2E:BA:73:6E"],
+                ["connect", "78:86:2E:BA:73:6E"],
+            ],
+        )
+
+    def test_trust_after_pair_requires_paired_flag(self):
+        from hog_finish_bond import should_trust_after_pair
+
+        self.assertFalse(should_trust_after_pair(XBOX_UNPAIRED))
+        self.assertTrue(should_trust_after_pair(XBOX_PAIRED))
+        self.assertTrue(should_trust_after_pair(XBOX_PAIRED_UNTRUSTED))
+
+    def test_hog_input_bound_is_per_mac_not_any_js(self):
+        from hog_finish_bond import hog_input_bound
+
+        other_js = """\
+I: Bus=0003 Vendor=044f Product=b10a Version=0111
+N: Name="T.Flight Hotas"
+H: Handlers=event21 js0
+B: KEY=0
+"""
+        xbox = """\
+I: Bus=0005 Vendor=045e Product=0b13 Version=0509
+N: Name="Xbox Wireless Controller"
+U: Uniq=78:86:2e:ba:73:6e
+H: Handlers=kbd event20 js1
+B: KEY=7fff000000000000 0 8000000000 0 0
+"""
+        self.assertFalse(hog_input_bound("78:86:2E:BA:73:6E", other_js))
+        self.assertTrue(hog_input_bound("78:86:2E:BA:73:6E", other_js + "\n\n" + xbox))
+
 
 if __name__ == "__main__":
     unittest.main()
