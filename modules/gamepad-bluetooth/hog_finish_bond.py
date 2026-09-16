@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import enum
 import re
+import subprocess
 import sys
-from typing import Dict
+import time
+from pathlib import Path
+from typing import Dict, List, Sequence, Tuple
 
 
 class Action(enum.Enum):
@@ -72,13 +75,100 @@ def classify_all(infos: Dict[str, str]) -> Dict[str, Action]:
     return {mac: classify(text) for mac, text in infos.items()}
 
 
+Cmd = Tuple[str, ...]
+
+
+def plan_commands(infos: Dict[str, str]) -> List[Tuple[str, str]]:
+    out: List[Tuple[str, str]] = []
+    for mac, text in infos.items():
+        action = classify(text)
+        mac_u = mac.upper()
+        if action is Action.PAIR:
+            out.append(("pair", mac_u))
+        elif action is Action.TRUST:
+            out.append(("trust", mac_u))
+    return out
+
+
+def plan_reconnect(*, paired: bool, connected: bool, js_exists: bool) -> List[Cmd]:
+    if paired and connected and not js_exists:
+        return [("disconnect",), ("connect",)]
+    return []
+
+
+def _run_bluetoothctl(args: Sequence[str], *, timeout: int = 20) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bluetoothctl", *args],
+        check=False,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+    )
+
+
+def collect_infos() -> Dict[str, str]:
+    listed = _run_bluetoothctl(["devices"])
+    infos: Dict[str, str] = {}
+    for line in listed.stdout.splitlines():
+        m = re.match(r"Device\s+([0-9A-Fa-f:]{17})\s+", line)
+        if not m:
+            continue
+        mac = m.group(1)
+        info = _run_bluetoothctl(["info", mac])
+        infos[mac.upper()] = info.stdout
+    return infos
+
+
+def js_exists() -> bool:
+    return any(Path("/dev/input").glob("js*"))
+
+
+def apply_commands(cmds: List[Tuple[str, str]], *, dry_run: bool) -> None:
+    for op, mac in cmds:
+        print(f"hog-finish-bond: {op} {mac}")
+        if dry_run:
+            continue
+        proc = _run_bluetoothctl([op, mac], timeout=30)
+        if proc.returncode != 0:
+            print(
+                f"hog-finish-bond: {op} {mac} failed rc={proc.returncode}\n{proc.stderr}",
+                file=sys.stderr,
+            )
+            continue
+        if op == "pair":
+            # Trust only after a successful pair. Never trust the unpaired leftover.
+            trust = _run_bluetoothctl(["trust", mac], timeout=10)
+            if trust.returncode != 0:
+                print(f"hog-finish-bond: trust {mac} failed\n{trust.stderr}", file=sys.stderr)
+
+
+def maybe_reconnect(mac: str, *, dry_run: bool) -> None:
+    info = _run_bluetoothctl(["info", mac]).stdout if not dry_run else ""
+    paired = _flag(info, "Paired") if info else True
+    connected = _flag(info, "Connected") if info else True
+    steps = plan_reconnect(paired=paired, connected=connected, js_exists=js_exists())
+    for step in steps:
+        print(f"hog-finish-bond: {' '.join(step)} {mac} (HID not bound)")
+        if dry_run:
+            continue
+        _run_bluetoothctl([step[0], mac], timeout=20)
+        time.sleep(2)
+        _run_bluetoothctl(["connect", mac], timeout=20)
+
+
 def main(argv: list[str]) -> int:
-    # Filled in Task 4. Keep a stub so `python3 hog_finish_bond.py --help` exists.
-    if argv[1:] in (["-h"], ["--help"]):
+    dry_run = "--dry-run" in argv
+    if "-h" in argv or "--help" in argv:
         print("usage: hog_finish_bond.py [--dry-run]")
         return 0
-    print("hog_finish_bond: runner not wired", file=sys.stderr)
-    return 2
+    infos = collect_infos()
+    cmds = plan_commands(infos)
+    apply_commands(cmds, dry_run=dry_run)
+    # Reconnect only MACs we just paired (HID often needs a new HoG session).
+    for op, mac in cmds:
+        if op == "pair":
+            maybe_reconnect(mac, dry_run=dry_run)
+    return 0
 
 
 if __name__ == "__main__":

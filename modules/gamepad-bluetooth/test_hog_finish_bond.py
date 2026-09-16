@@ -135,5 +135,41 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(classify(BLOCKED_GAMEPAD), Action.NOOP)
 
 
+class RunnerTests(unittest.TestCase):
+    def test_dry_run_pair_then_not_trust_unpaired(self):
+        from hog_finish_bond import plan_commands
+
+        cmds = plan_commands({"78:86:2E:BA:73:6E": XBOX_UNPAIRED})
+        self.assertEqual(cmds, [("pair", "78:86:2E:BA:73:6E")])
+
+    def test_dry_run_trust_only_when_paired(self):
+        from hog_finish_bond import plan_commands
+
+        cmds = plan_commands({"78:86:2E:BA:73:6E": XBOX_PAIRED_UNTRUSTED})
+        self.assertEqual(cmds, [("trust", "78:86:2E:BA:73:6E")])
+
+    def test_dry_run_keyboard_emits_nothing(self):
+        from hog_finish_bond import plan_commands
+
+        cmds = plan_commands({"AA:BB:CC:DD:EE:FF": KEYBOARD_UNPAIRED})
+        self.assertEqual(cmds, [])
+
+    def test_reconnect_needed_when_paired_connected_but_no_js(self):
+        from hog_finish_bond import plan_reconnect
+
+        self.assertEqual(
+            plan_reconnect(paired=True, connected=True, js_exists=False),
+            [("disconnect",), ("connect",)],
+        )
+
+    def test_no_reconnect_when_js_exists(self):
+        from hog_finish_bond import plan_reconnect
+
+        self.assertEqual(
+            plan_reconnect(paired=True, connected=True, js_exists=True),
+            [],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
