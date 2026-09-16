@@ -148,7 +148,7 @@ Option namespaces in play:
 
 | Namespace | Handles |
 |---|---|
-| `custom.*` | `custom.steam`, `custom.androidMirror`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.secrets`, `custom.secureBoot`, `custom.kernel.variant`, `custom.platform.gpu`, `custom.platform.displayGpu`, `custom.security.hardening`, `custom.dsp.enable` |
+| `custom.*` | `custom.steam`, `custom.gamepadBluetooth`, `custom.androidMirror`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.secrets`, `custom.secureBoot`, `custom.kernel.variant`, `custom.platform.gpu`, `custom.platform.displayGpu`, `custom.security.hardening`, `custom.dsp.enable` |
 | `services.*` | project-defined services like `services.ollamaAgentic`, `services.dcf-tray`, `services.boot-intro`, `services.oligarchyGreeting`, `services.dsp-vm` |
 | `networking.firewall.strictEgress` | the nftables egress firewall (`modules/security/strict-egress.nix`) |
 | `hardware.cpuSecurity` | CPU/kernel mitigations (forced spectre/MDS/SRSO + MSR-write block) |
