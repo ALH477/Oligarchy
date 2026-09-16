@@ -18,6 +18,7 @@
     ./modules/dcf-mesh-agent.nix
     ./modules/hypr-controller/nixos-module.nix
     ./modules/terminus-dev.nix
+    ./modules/gamepad-bluetooth
   ]
   # Optional local overrides, both at absolute paths OUTSIDE the repo so a
   # fresh clone never sees them (Nix's local-flake source filtering excludes
@@ -461,6 +462,9 @@
         };
       };
       hardware.steam-hardware.enable = lib.mkIf config.custom.steam.enable true;
+      # BLE Xbox pads connect unbonded (Trusted=yes, Paired=no) and HoG fails
+      # until Pair()+reconnect. Follows Steam so a fresh clone stays quiet.
+      custom.gamepadBluetooth.enable = lib.mkDefault config.custom.steam.enable;
       # gamemode is owned by the active persona (on for the "gaming" persona).
 
       # ──────────────────────────────────────────────────────────────────────────
@@ -1147,7 +1151,10 @@
               # Do NOT set Enable= — modern bluez rejects it ("Unknown key Enable")
               Experimental = true;
               FastConnectable = true;
-              JustWorksRepairing = "always";
+              # "always" is a silent re-bond / repair-attack hole. First-time
+              # Xbox Just-Works pairing is not "repairing"; leave that to the
+              # gamepad-bluetooth oneshot. Headphones/keyboards must confirm.
+              JustWorksRepairing = "confirm";
               MultiProfile = "multiple";
               KernelExperimental = true;
             };
