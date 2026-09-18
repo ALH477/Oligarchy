@@ -580,8 +580,16 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(str(exc)) from exc
 
     if cmd == "daily":
-        if args.on_date:
-            when = date.fromisoformat(args.on_date)
+        # Every attribute here must be read with getattr. `cmd = args.cmd or
+        # "daily"` above routes a BARE invocation into this branch, but argparse
+        # only adds subparser-scoped dests when that subparser actually runs —
+        # so with no subcommand the Namespace has `cmd=None` and none of
+        # on_date/plain/pool/full. Reading them directly raised AttributeError
+        # for `scrollmapper` with no args, the `sm` alias, and
+        # `nix run path:./modules/scrollmapper` (whose default app passes none).
+        on_date = getattr(args, "on_date", None)
+        if on_date:
+            when = date.fromisoformat(on_date)
         else:
             when = datetime.now().astimezone().date()
         use_full = bool(getattr(args, "full", False))
@@ -595,7 +603,14 @@ def main(argv: list[str] | None = None) -> int:
             rows = load_pool(root)
             salt = f"{args.translation}|{args.canon}|pool"
             sub = f"daily · {when.isoformat()} · pool · {args.canon}"
-        return cmd_daily(when, width, args.plain, rows=rows, salt=salt, subtitle=sub)
+        return cmd_daily(
+            when,
+            width,
+            bool(getattr(args, "plain", False)),
+            rows=rows,
+            salt=salt,
+            subtitle=sub,
+        )
 
     lib = load_lib()
     if cmd in {"read", "verse"}:

@@ -1,4 +1,4 @@
-flake: { config, lib, pkgs, options, ... }:
+{ config, lib, pkgs, options, ... }:
 
 let
   cfg = config.custom.scrollmapper;
@@ -148,13 +148,6 @@ in
 
   config = lib.mkIf cfg.enable (lib.mkMerge [
     {
-      assertions = [
-        {
-          assertion = cfg.package != null || builtins.elem cfg.translation [ "KJVA" "KJV" "CPDV" "ASV" "BSB" ];
-          message = "custom.scrollmapper.translation is not packaged.";
-        }
-      ];
-
       environment.systemPackages = [ pkg ];
 
       # Session env only — not dumped into every systemd unit.
@@ -187,10 +180,14 @@ in
         conflicts = [ "shutdown.target" ];
         unitConfig = {
           DefaultDependencies = false;
-          SuccessExitStatus = "0 1";
         };
         serviceConfig = {
           Type = "oneshot";
+          # [Service], not [Unit]: systemd logs "Unknown key name
+          # SuccessExitStatus in section Unit" and ignores it there, which
+          # silently removed the guard that keeps a failed dialogue from
+          # failing the boot. AUDIT.md F4 cites this setting by name.
+          SuccessExitStatus = "0 1";
           RemainAfterExit = true;
           TimeoutStartSec = 5;
           StandardOutput = "null";
@@ -230,7 +227,7 @@ in
     (lib.mkIf cfg.dailyVerse.enable {
       programs.bash.interactiveShellInit = lib.mkIf cfg.dailyVerse.onLogin ''
         if [ -z "''${SCROLLMAPPER_DAILY_SHOWN-}" ] && [ -z "''${SSH_CONNECTION-}" ] && [ -t 1 ]; then
-          ${pkg}/bin/scrollmapper --canon ${lib.escapeShellArg cfg.canon} --translation ${lib.escapeShellArg cfg.translation} daily ${lib.optionalString (!cfg.dailyVerse.fullCanon) "--pool"}
+          ${pkg}/bin/scrollmapper --canon ${lib.escapeShellArg cfg.canon} --translation ${lib.escapeShellArg cfg.translation} daily ${if cfg.dailyVerse.fullCanon then "--full" else "--pool"}
           export SCROLLMAPPER_DAILY_SHOWN=1
         fi
       '';
@@ -253,14 +250,15 @@ in
         };
         script = ''
           set -euo pipefail
-          text="$(${pkg}/bin/scrollmapper --canon ${lib.escapeShellArg cfg.canon} --translation ${lib.escapeShellArg cfg.translation} daily --plain ${lib.optionalString (!cfg.dailyVerse.fullCanon) "--pool"})"
+          text="$(${pkg}/bin/scrollmapper --canon ${lib.escapeShellArg cfg.canon} --translation ${lib.escapeShellArg cfg.translation} daily --plain ${if cfg.dailyVerse.fullCanon then "--full" else "--pool"})"
           mkdir -p "''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/scrollmapper"
           printf '%s\n' "$text" > "''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/scrollmapper/daily"
-          if command -v ${pkgs.libnotify}/bin/notify-send >/dev/null 2>&1; then
-            ref=$(printf '%s\n' "$text" | head -n1)
-            body=$(printf '%s\n' "$text" | tail -n +2)
-            ${pkgs.libnotify}/bin/notify-send --app-name=scrollmapper "Daily verse" "$ref — $body" || true
-          fi
+          ref=$(printf '%s\n' "$text" | head -n1)
+          body=$(printf '%s\n' "$text" | tail -n +2)
+          # `|| true` is the guard that matters: notify-send fails when there
+          # is no session bus. A `command -v` test on this absolute store path
+          # could never fail — libnotify is a runtime dep of this script.
+          ${pkgs.libnotify}/bin/notify-send --app-name=scrollmapper "Daily verse" "$ref — $body" || true
         '';
       };
     })

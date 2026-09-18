@@ -31,7 +31,7 @@
         };
       });
 
-      nixosModules.scrollmapper = import ./module.nix self;
+      nixosModules.scrollmapper = import ./module.nix;
       nixosModules.default = self.nixosModules.scrollmapper;
 
       overlays.default = final: prev: {
