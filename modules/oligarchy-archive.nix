@@ -115,7 +115,13 @@ let
       blob="$outdir/$base.tar.gz.age"
       [ -e "$blob" ] && die "refusing to overwrite existing blob: $blob"
 
-      oligarchy-vault pack "$path" "$blob"
+      # Vault's `pack` prints the blob path on stdout so callers can do
+      # `blob=$(oligarchy-vault pack ...)`. Here that would prepend a bare path
+      # to reliquary's JSON manifest, so `oligarchy-archive PATH | jq .id` — the
+      # obvious next composition, and the reason ingest emits JSON at all —
+      # would choke on the first line. Send it to stderr with the rest of this
+      # script's progress output and leave stdout to the manifest alone.
+      oligarchy-vault pack "$path" "$blob" >&2
       printf 'oligarchy-archive: packed -> %s\n' "$blob" >&2
 
       ingest_args=(ingest "$blob" --profile "$profile")
@@ -138,6 +144,13 @@ in
     "oligarchy-archive (pack with oligarchy-vault, then ingest into reliquary)";
 
   config = lib.mkIf cfg.enable {
-    environment.systemPackages = [ archiveCli ];
+    # The two tools this wraps go on PATH alongside it, not just into the
+    # wrapper's runtimeInputs. The help text above tells the operator to finish
+    # the job with `reliquary push` / `iso` / `burn`, and `services.reliquary`
+    # — the only other thing that installs reliquary system-wide — is a
+    # separate opt-in. Without this, following the documented workflow ends in
+    # `command not found` with a valid block stranded in the local store and no
+    # advertised way to get it onto media.
+    environment.systemPackages = [ archiveCli vaultCli reliquaryCli ];
   };
 }
