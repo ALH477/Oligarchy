@@ -4,8 +4,9 @@
 //! - no `TcpListener::bind`,
 //! - no `reqwest::Client` builder outside `crates/ports-sec`,
 //! - `.mcp.json` has no URL/`http` transport entries,
-//! - `.mcp.json` does not wire in the read-write `dcf-mesh-agent` or
-//!   `dcf-hypr-agent` endpoints.
+//! - `.mcp.json` does not wire in a read-write tool: the `dcf-mesh-agent` /
+//!   `dcf-hypr-agent` endpoints, or `reliquary` (whose tools format USB media,
+//!   burn optical discs and extract archives).
 //!
 //! It does NOT check `Command::new` literals against the const allowlist in
 //! `crates/core` — that enforcement is at runtime, in `runner::run`.
@@ -78,18 +79,26 @@ pub fn run() -> anyhow::Result<String> {
                     ));
                 }
             }
-            for forbidden in [
-                "dcf-mesh-mcp",
-                "mesh_mcp.py",
-                "dcf-mesh-agent",
-                "dcf-hypr-agent",
-                "demod-hypr-bridge",
+            // Each entry carries its own reason: these are kept out of the
+            // read-only surface for different reasons, and a violation message
+            // that names the wrong one sends the reader looking for a UDP
+            // socket that isn't there.
+            for (forbidden, why) in [
+                ("dcf-mesh-mcp", "a read-write, UDP-bound endpoint"),
+                ("mesh_mcp.py", "a read-write, UDP-bound endpoint"),
+                ("dcf-mesh-agent", "a read-write, UDP-bound endpoint"),
+                ("dcf-hypr-agent", "a read-write, UDP-bound endpoint"),
+                ("demod-hypr-bridge", "a read-write, UDP-bound endpoint"),
+                (
+                    "reliquary",
+                    "a read-write archival tool whose tools format USB media, \
+                     burn optical discs and extract archives",
+                ),
             ] {
                 if text.contains(forbidden) {
                     violations.push(format!(
-                        "{}: .mcp.json wires in `{forbidden}` — this is a \
-                         read-write, UDP-bound endpoint and must stay out of the \
-                         read-only MCP surface",
+                        "{}: .mcp.json wires in `{forbidden}` — this is {why} \
+                         and must stay out of the read-only MCP surface",
                         mcp_file.display()
                     ));
                 }
@@ -199,6 +208,42 @@ mod tests {
 
     fn lock_env() -> MutexGuard<'static, ()> {
         ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// A deny-list entry that cannot fail is not a guard. Reliquary's MCP
+    /// server exposes `reliquary_push_usb`, `reliquary_burn_cd`,
+    /// `reliquary_extract` and `reliquary_ingest` — it formats media, burns
+    /// discs and unpacks archives — so it must never join the read-only
+    /// surface. This asserts the audit actually says so.
+    #[test]
+    fn a_reliquary_entry_in_mcp_json_is_refused() {
+        let _guard = lock_env();
+        let path = std::env::temp_dir().join(format!(
+            "ports-sec-reliquary-deny-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            r#"{"mcpServers":{"reliquary":{"command":"reliquary","args":["mcp"]}}}"#,
+        )
+        .unwrap();
+        std::env::set_var("OLIGARCHY_MCP_JSON", &path);
+        let out = run();
+        std::env::remove_var("OLIGARCHY_MCP_JSON");
+        let _ = std::fs::remove_file(&path);
+
+        let report = match out {
+            Ok(s) => s,
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            report.contains("reliquary"),
+            "the audit must name reliquary as a violation, got: {report}"
+        );
+        assert!(
+            report.to_lowercase().contains("read-only mcp surface"),
+            "the violation must say why, got: {report}"
+        );
     }
 
     #[test]

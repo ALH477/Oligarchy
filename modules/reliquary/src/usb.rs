@@ -65,6 +65,18 @@ fn node_mountpoints(node: &Value) -> Vec<String> {
     out
 }
 
+/// The first mountpoint lsblk reports for this node, in either spelling.
+///
+/// Every mountpoint lookup goes through here. Four call sites used to read the
+/// scalar `mountpoint` directly, so on a util-linux that emits only the
+/// `mountpoints` array a mounted stick looked unmounted: `status` showed
+/// SEEN-but-not-READY, `push` reported "not mounted" per role, `pull` errored
+/// and `usb seed` skipped the sticks — all while the volumes were mounted and
+/// writable. One helper means the next format change is one edit.
+fn node_mountpoint(node: &Value) -> Option<String> {
+    node_mountpoints(node).into_iter().next()
+}
+
 fn node_size(node: &Value) -> Option<u64> {
     node.get("size").and_then(|v| v.as_u64()).or_else(|| {
         node.get("size")
@@ -221,18 +233,8 @@ pub fn volume_status(cfg: &Config) -> Result<Value> {
         let meta = find_by_label(role.meta_label)?;
         let data = find_by_label(role.data_label)?;
         let present = meta.is_some() || data.is_some();
-        let ready = data
-            .as_ref()
-            .and_then(|d| d.get("mountpoint"))
-            .and_then(|v| v.as_str())
-            .map(|s| !s.is_empty())
-            .unwrap_or(false)
-            && meta
-                .as_ref()
-                .and_then(|d| d.get("mountpoint"))
-                .and_then(|v| v.as_str())
-                .map(|s| !s.is_empty())
-                .unwrap_or(false);
+        let ready = data.as_ref().and_then(node_mountpoint).is_some()
+            && meta.as_ref().and_then(node_mountpoint).is_some();
         map.insert(
             role.role.to_string(),
             json!({
@@ -315,12 +317,7 @@ fn partition_nodes(device: &Path) -> (String, String) {
 
 pub fn mountpoint_for(label: &str) -> Result<PathBuf> {
     let node = find_by_label(label)?;
-    match node.and_then(|n| {
-        n.get("mountpoint")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-    }) {
+    match node.as_ref().and_then(node_mountpoint).map(PathBuf::from) {
         Some(p) => Ok(p),
         None => Err(Error::store(format!(
             "partition labelled {label} is not mounted. e.g. mkdir -p /mnt/{label} && mount -L {label} /mnt/{label}"
@@ -334,46 +331,78 @@ pub fn seed_meta(cfg: &Config, store: &Store) -> Result<Vec<String>> {
     for role in [&cfg.usb_a, &cfg.usb_b] {
         let node = find_by_label(role.meta_label)?;
         let Some(n) = node else { continue };
-        let Some(mp) = n.get("mountpoint").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) else {
+        let Some(mp) = node_mountpoint(&n) else {
             continue;
         };
-        let root = Path::new(mp);
+        let root = Path::new(&mp);
         std::fs::write(root.join("README-RELIQUARY.txt"), meta_readme(role))?;
         crate::manifest::write_json(&root.join("catalog.json"), &catalog)?;
-        written.push(mp.to_string());
+        written.push(mp);
     }
     Ok(written)
 }
 
+/// Resolve a `--roles` string to the roles it names.
+///
+/// Errors rather than selecting nothing. The old test was
+/// `roles.contains(role.role)` against the `&'static str`s `"A"` and `"B"`, so
+/// `--roles a`, `--roles ""` and `--roles "a,b"` matched neither role, took the
+/// `continue` arm on both iterations, and returned an empty object that a
+/// caller reads as "pushed, nothing to report". Someone could unplug or evict
+/// their only local copy on the strength of that — the precise data loss this
+/// tool exists to prevent.
+///
+/// Accepts `A`, `b`, `AB`, `a,b`, `a b`: every alphanumeric character is a role
+/// letter, anything unrecognized is refused by name.
+fn parse_roles<'a>(cfg: &'a Config, roles: &str) -> Result<Vec<&'a UsbRole>> {
+    let known: [&'a UsbRole; 2] = [&cfg.usb_a, &cfg.usb_b];
+    let mut want: Vec<&'a UsbRole> = Vec::new();
+    let mut unknown = String::new();
+
+    for ch in roles.chars().filter(|c| c.is_alphanumeric()) {
+        let up = ch.to_ascii_uppercase();
+        match known.iter().copied().find(|r| r.role == up.to_string()) {
+            Some(r) => {
+                if !want.iter().any(|w| w.role == r.role) {
+                    want.push(r);
+                }
+            }
+            None => unknown.push(ch),
+        }
+    }
+
+    if !unknown.is_empty() {
+        return Err(Error::store(format!(
+            "unknown USB role(s) {unknown:?} in {roles:?}; expected A, B, or AB"
+        )));
+    }
+    if want.is_empty() {
+        return Err(Error::store(format!(
+            "no USB role selected by {roles:?}; expected A, B, or AB"
+        )));
+    }
+    Ok(want)
+}
+
 pub fn push_block(cfg: &Config, store: &Store, block_id: &str, roles: &str) -> Result<Value> {
     crate::store::validate_block_id(block_id)?;
+    let targets = parse_roles(cfg, roles)?;
     let mut map = serde_json::Map::new();
-    for role in [&cfg.usb_a, &cfg.usb_b] {
-        if !roles.contains(role.role) {
-            continue;
-        }
-        match find_by_label(role.data_label)? {
-            Some(n) => {
-                let mp = n
-                    .get("mountpoint")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty());
-                match mp {
-                    Some(mp) => {
-                        let dest = Path::new(mp).join("blocks");
-                        let path = store.copy_block(block_id, &dest, &format!("usb-{}", role.role))?;
-                        map.insert(
-                            role.role.to_string(),
-                            json!({"ok": true, "path": path.display().to_string()}),
-                        );
-                    }
-                    None => {
-                        map.insert(
-                            role.role.to_string(),
-                            json!({"ok": false, "error": format!("{} not mounted", role.data_label)}),
-                        );
-                    }
-                }
+    let mut wrote = 0usize;
+
+    for role in targets {
+        let mp = find_by_label(role.data_label)?
+            .as_ref()
+            .and_then(node_mountpoint);
+        match mp {
+            Some(mp) => {
+                let dest = Path::new(&mp).join("blocks");
+                let path = store.copy_block(block_id, &dest, &format!("usb-{}", role.role))?;
+                wrote += 1;
+                map.insert(
+                    role.role.to_string(),
+                    json!({"ok": true, "path": path.display().to_string()}),
+                );
             }
             None => {
                 map.insert(
@@ -383,6 +412,18 @@ pub fn push_block(cfg: &Config, store: &Store, block_id: &str, roles: &str) -> R
             }
         }
     }
+
+    // A push that copied nothing is a failure, not a result. Returning Ok here
+    // would put the "no USB copy exists" case behind a per-role `ok: false` that
+    // a caller has to go looking for; the whole point of the verb is that after
+    // it returns Ok, the bytes are somewhere else too.
+    if wrote == 0 {
+        return Err(Error::store(format!(
+            "pushed {block_id} to no USB volume: {}",
+            serde_json::to_string(&Value::Object(map)).unwrap_or_default()
+        )));
+    }
+
     let _ = seed_meta(cfg, store);
     Ok(Value::Object(map))
 }
@@ -443,6 +484,94 @@ fn meta_readme(role: &UsbRole) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn test_cfg() -> Config {
+        Config {
+            store_root: PathBuf::from("/tmp/reliquary-test"),
+            work_root: PathBuf::from("/tmp/reliquary-test/work"),
+            par2_redundancy: 20,
+            par2_volumes: 4,
+            zstd_level: 19,
+            cd_capacity_bytes: 700 * 1024 * 1024,
+            cd_payload_bytes: 600 * 1024 * 1024,
+            usb_a: UsbRole::a(),
+            usb_b: UsbRole::b(),
+        }
+    }
+
+    fn roles_of(cfg: &Config, s: &str) -> Vec<String> {
+        parse_roles(cfg, s)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.role.to_string())
+            .collect()
+    }
+
+    /// The regression this guards: `roles.contains("A")` is case-sensitive, so
+    /// a lowercase or empty selector matched nothing, skipped both roles and
+    /// returned `{}` — read by a caller as a push that succeeded.
+    #[test]
+    fn a_role_selector_that_names_nothing_is_refused_not_ignored() {
+        let cfg = test_cfg();
+        assert!(parse_roles(&cfg, "").is_err());
+        assert!(parse_roles(&cfg, "   ").is_err());
+        assert!(parse_roles(&cfg, ",").is_err());
+    }
+
+    #[test]
+    fn an_unknown_role_is_refused_by_name() {
+        let cfg = test_cfg();
+        let err = parse_roles(&cfg, "c").unwrap_err().to_string();
+        assert!(err.contains('c'), "error should name the bad role: {err}");
+        assert!(parse_roles(&cfg, "ax").is_err());
+    }
+
+    #[test]
+    fn role_selectors_are_case_and_separator_insensitive() {
+        let cfg = test_cfg();
+        assert_eq!(roles_of(&cfg, "a"), ["A"]);
+        assert_eq!(roles_of(&cfg, "A"), ["A"]);
+        assert_eq!(roles_of(&cfg, "b"), ["B"]);
+        for both in ["AB", "ab", "a,b", "a b", "A, B", "ba"] {
+            let got = roles_of(&cfg, both);
+            assert_eq!(got.len(), 2, "{both:?} should select both roles, got {got:?}");
+            assert!(got.contains(&"A".to_string()) && got.contains(&"B".to_string()));
+        }
+    }
+
+    #[test]
+    fn a_repeated_role_is_selected_once() {
+        let cfg = test_cfg();
+        assert_eq!(roles_of(&cfg, "aa"), ["A"]);
+        assert_eq!(roles_of(&cfg, "aab").len(), 2);
+    }
+
+    /// Newer util-linux emits only the `mountpoints` array. Every lookup goes
+    /// through `node_mountpoint`, so a mounted stick must never look free.
+    #[test]
+    fn a_mountpoint_is_found_in_either_lsblk_spelling() {
+        let scalar = json!({ "mountpoint": "/mnt/reliquary/data-a" });
+        let array = json!({ "mountpoints": ["/mnt/reliquary/data-a"] });
+        let both = json!({
+            "mountpoint": "/mnt/reliquary/data-a",
+            "mountpoints": ["/mnt/reliquary/data-a"]
+        });
+        for node in [&scalar, &array, &both] {
+            assert_eq!(
+                node_mountpoint(node).as_deref(),
+                Some("/mnt/reliquary/data-a")
+            );
+        }
+    }
+
+    #[test]
+    fn an_unmounted_node_reports_no_mountpoint_in_either_spelling() {
+        assert_eq!(node_mountpoint(&json!({ "mountpoint": null })), None);
+        assert_eq!(node_mountpoint(&json!({ "mountpoint": "" })), None);
+        assert_eq!(node_mountpoint(&json!({ "mountpoints": [null] })), None);
+        assert_eq!(node_mountpoint(&json!({ "mountpoints": [] })), None);
+        assert_eq!(node_mountpoint(&json!({})), None);
+    }
 
     /// Stand-in for `Path::canonicalize`: an alias table plus slash squashing,
     /// with anything unknown reported as non-existent (canonicalize's ENOENT).

@@ -54,6 +54,7 @@ pub fn verify_sum_file(directory: &Path, name: &str) -> Result<Vec<String>> {
     }
     let algo256 = name.contains("256");
     let mut problems = Vec::new();
+    let mut parsed_any = false;
     let f = File::open(&sums)?;
     for line in BufReader::new(f).lines() {
         let line = line?;
@@ -68,6 +69,7 @@ pub fn verify_sum_file(directory: &Path, name: &str) -> Result<Vec<String>> {
         } else {
             continue;
         };
+        parsed_any = true;
         // The sums file may have arrived from an untrusted medium (usb::pull_block
         // copies a whole block directory in before anything is verified), so the
         // filename is attacker data. write_sum_files only ever emits bare
@@ -93,6 +95,16 @@ pub fn verify_sum_file(directory: &Path, name: &str) -> Result<Vec<String>> {
             ));
         }
     }
+    // A sums file that yielded no entry at all is itself the failure. Empty,
+    // all-comments, truncated to zero by a failed USB write, or separated by
+    // something other than the two spellings above — every one of those used to
+    // return no problems, and `store::verify` reports a block as verified when
+    // `problems.is_empty() && par.ok`. That silently demoted the independent
+    // checksum leg to "par2 said yes", which is exactly the single point of
+    // failure carrying two hash files is meant to avoid.
+    if !parsed_any {
+        problems.push(format!("{name}: no parseable entries"));
+    }
     Ok(problems)
 }
 
@@ -101,4 +113,81 @@ pub fn write_text(path: &Path, text: &str) -> Result<()> {
     let mut f = File::create(path)?;
     f.write_all(text.as_bytes())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn tmpdir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "reliquary-hashing-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// The regression: a sums file that parsed to zero entries returned zero
+    /// problems, and `store::verify` reports a block verified when
+    /// `problems.is_empty() && par.ok`. That quietly reduced two independent
+    /// integrity legs to one.
+    #[test]
+    fn a_sums_file_with_no_parseable_entries_is_itself_a_problem() {
+        let d = tmpdir("empty");
+        for (name, body) in [
+            ("SHA256SUMS", ""),
+            ("SHA512SUMS", "# only a comment\n\n"),
+            // Single-space and tab separators are neither of the two accepted
+            // spellings, so every line falls through the parser.
+            ("SHA256SUMS.alt", "abc payload.tar.zst\n"),
+        ] {
+            std::fs::write(d.join(name), body).unwrap();
+            let problems = verify_sum_file(&d, name).unwrap();
+            assert!(
+                problems.iter().any(|p| p.contains("no parseable entries")),
+                "{name} with body {body:?} should be refused, got {problems:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_missing_sums_file_is_still_reported_as_missing() {
+        let d = tmpdir("missing");
+        let problems = verify_sum_file(&d, "SHA256SUMS").unwrap();
+        assert_eq!(problems, vec!["missing SHA256SUMS".to_string()]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A well-formed file that verifies must still report nothing — the new
+    /// check must not turn every success into a problem.
+    #[test]
+    fn a_good_sums_file_reports_no_problems() {
+        let d = tmpdir("good");
+        std::fs::write(d.join("payload.bin"), b"hello reliquary").unwrap();
+        let got = hash_file(&d.join("payload.bin")).unwrap();
+        std::fs::write(
+            d.join("SHA256SUMS"),
+            format!("{}  payload.bin\n", got.sha256),
+        )
+        .unwrap();
+        assert!(verify_sum_file(&d, "SHA256SUMS").unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_traversing_filename_is_refused_and_still_counts_as_parsed() {
+        let d = tmpdir("traversal");
+        std::fs::write(d.join("SHA256SUMS"), "deadbeef  ../../etc/shadow\n").unwrap();
+        let problems = verify_sum_file(&d, "SHA256SUMS").unwrap();
+        assert!(problems.iter().any(|p| p.contains("invalid filename")));
+        assert!(
+            !problems.iter().any(|p| p.contains("no parseable entries")),
+            "a refused filename is a parsed line, not an unparseable one: {problems:?}"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

@@ -44,6 +44,16 @@ payload tarball may one day be someone else's.
   The NixOS module automounts by label. Pin by PARTUUID once the pair
   is minted, or Reliquary will happily write the archive onto a
   hostile stick.
+- That forgery was not only an integrity problem. Until fixed, the four
+  automounts carried no `nosuid,nodev,noexec`, so a forged-label ext4
+  stick — whose on-disk permission bits are honored — could carry a
+  setuid root binary that any local user then executed as root. The
+  automount fires on first *access*, which `reliquary status` and the
+  TUI's volume reads do unprompted, so it needed no cooperation beyond
+  the stick being present. All four mounts now carry the three flags;
+  nothing is ever executed from these volumes, so it costs nothing.
+  Label forgery remains an integrity weakness — PARTUUID pinning is
+  still the real fix.
 - `format` still takes a raw `/dev/sdX`. The phrase `WIPE-THIS-USB`
   is the only interlock besides size. Read `lsblk -o NAME,MODEL,SERIAL,SIZE`
   twice.
