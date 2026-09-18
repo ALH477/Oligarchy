@@ -1,0 +1,14 @@
+result
+result-*
+.direnv
+.envrc
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+.reliquary-work/
+*.iso
+flake.lock
+target/
