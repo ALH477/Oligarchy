@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "reliquary": {
+      "command": "reliquary",
+      "args": ["mcp"],
+      "env": {
+        "RELIQUARY_STORE": "/var/lib/reliquary"
+      }
+    }
+  }
+}
