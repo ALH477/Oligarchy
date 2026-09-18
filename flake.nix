@@ -233,7 +233,7 @@
         # Uncomment when archibaldos is available:
         # inherit archibaldos;
         inherit vm-manager dsp-ctl oligarchy-forge mcp-servers hydramesh;
-        inherit demod-talk;
+        inherit demod-talk oligarchy-vault reliquary;
       };
 
       # ════════════════════════════════════════════════════════════════════════
@@ -320,6 +320,13 @@
         # (label-based USB detection, unauthenticated destructive MCP tools)
         # before enabling this anywhere real data will touch it.
         reliquary.nixosModules.default
+
+        # oligarchy-archive — pack a path with oligarchy-vault, then ingest it
+        # into reliquary (custom.archive.enable). Opt-in, defaults OFF, no
+        # ISO mkForce needed. On-demand CLI only: no timer, no service, and it
+        # stops at ingest — pushing to USB / burning a CD-R stays manual. See
+        # modules/oligarchy-archive.nix.
+        ./modules/oligarchy-archive.nix
 
         ./modules/secure-boot.nix
         ./modules/agentic-local-ai.nix
