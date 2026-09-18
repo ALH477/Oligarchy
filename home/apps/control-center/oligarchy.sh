@@ -3,6 +3,9 @@
 # oligarchy — unified command center for the War Machine.
 # fzf-driven TUI that delegates to existing oligarchy-* commands.
 # Run with no args for the interactive menu, or pass a subcommand.
+# DEPRECATED: the redundant third fzf front-end. Prefer `warroom` (the Ratatui
+# command center, modules/warroom/) or `oligarchy-control`; `oligarchy-ctl`
+# remains the shared action registry both of them drive.
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
 
