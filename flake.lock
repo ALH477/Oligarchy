@@ -1219,6 +1219,22 @@
       },
       "parent": []
     },
+    "oligarchy-vault": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "path": "./modules/oligarchy-vault",
+        "type": "path"
+      },
+      "original": {
+        "path": "./modules/oligarchy-vault",
+        "type": "path"
+      },
+      "parent": []
+    },
     "pre-commit": {
       "inputs": {
         "flake-compat": "flake-compat_2",
@@ -1284,6 +1300,7 @@
         "oligarchy-forge": "oligarchy-forge",
         "oligarchy-p2p": "oligarchy-p2p",
         "oligarchy-plugins": "oligarchy-plugins",
+        "oligarchy-vault": "oligarchy-vault",
         "sops-nix": "sops-nix",
         "vm-manager": "vm-manager",
         "yara-rules": "yara-rules"

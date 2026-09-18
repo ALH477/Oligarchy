@@ -33,6 +33,18 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # oligarchy-vault — user-data encryption (custom.vault.*): age blobs,
+    # fscrypt directories, gocryptfs overlays. Opt-in, defaults OFF, no
+    # always-on unit, so the ISO needs no mkForce.
+    #
+    # NOT the secrets story: activation secrets stay on sops-nix
+    # (custom.secrets / modules/secrets.nix) and disks stay on LUKS. This is
+    # read-write USER data, which is also why it must stay out of .mcp.json.
+    oligarchy-vault = {
+      url = "path:./modules/oligarchy-vault";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # Secure Boot (opt-in via custom.secureBoot.enable). Tracks the default
     # branch for reliable locking; pin a release tag if you prefer.
     lanzaboote = {
@@ -174,6 +186,7 @@
     , oligarchy-forge
     , oligarchy-plugins
     , oligarchy-p2p
+    , oligarchy-vault
     , demod-voice
     , mcp-servers
     , hydramesh
@@ -277,6 +290,12 @@
         # USB scrcpy phone-mirror (custom.androidMirror). Opt-in, defaults OFF,
         # so the ISO needs no mkForce. See modules/android-mirror/README.md.
         android-mirror.nixosModules.default
+        # User-data encryption (custom.vault.*): age blobs, fscrypt dirs,
+        # gocryptfs overlays. Opt-in, defaults OFF — like android-mirror it
+        # declares no always-on unit, so the ISO needs no mkForce. Turn it on
+        # in configuration.nix or ~/.config/oligarchy/local.nix; see
+        # modules/oligarchy-vault/README.md and example-local.nix.
+        oligarchy-vault.nixosModules.default
         ./modules/secure-boot.nix
         ./modules/agentic-local-ai.nix
         # oligarchy-mcp.nix removed — replaced by mcp-servers.nixosModules.default
