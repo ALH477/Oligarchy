@@ -80,6 +80,19 @@
     # Blipply Assistant - AI Voice Assistant (as flake input)
     blipply-assistant.url = "path:./modules/blipply-assistant";
 
+    # Scrollmapper — low-footprint scripture reader (Orthodox canon default)
+    # with a boot-dialogue verse. Opt-in, defaults OFF; see
+    # modules/scrollmapper/README.md and its own AUDIT.md.
+    #
+    # follows added here even though the module's own README snippet omits
+    # it: without it this path subflake pins a SECOND nixpkgs and you build
+    # two closures — the exact footgun every other path input in this file
+    # avoids.
+    scrollmapper = {
+      url = "path:./modules/scrollmapper";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # ArchibaldOS DSP coprocessor (uncomment when available)
     # archibaldos = {
     #   url = "github:YOUR_ORG/archibaldos";
@@ -192,6 +205,7 @@
     , greeting
     , boot-intro
     , blipply-assistant
+    , scrollmapper
     , home-manager
     , nixos-generators
     , sops-nix
@@ -343,6 +357,13 @@
 
         # Blipply Assistant - AI Voice Assistant (integrated from local source)
         blipply-assistant.nixosModules.default
+
+        # Scrollmapper — scripture reader + boot-dialogue verse
+        # (custom.scrollmapper.*). Opt-in, defaults OFF, no always-on unit
+        # beyond the boot-dialogue oneshot itself gated by bootDialogue.enable
+        # (which only fires when custom.scrollmapper.enable is set) — no ISO
+        # mkForce needed. See modules/scrollmapper/README.md and AUDIT.md.
+        scrollmapper.nixosModules.scrollmapper
 
         # VM Manager - Hybrid VM management
         vm-manager.nixosModules.quickemu-vm
