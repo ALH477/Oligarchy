@@ -1301,6 +1301,7 @@
         "oligarchy-p2p": "oligarchy-p2p",
         "oligarchy-plugins": "oligarchy-plugins",
         "oligarchy-vault": "oligarchy-vault",
+        "scrollmapper": "scrollmapper",
         "sops-nix": "sops-nix",
         "vm-manager": "vm-manager",
         "yara-rules": "yara-rules"
@@ -1404,6 +1405,22 @@
         "repo": "rust-overlay",
         "type": "github"
       }
+    },
+    "scrollmapper": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "path": "./modules/scrollmapper",
+        "type": "path"
+      },
+      "original": {
+        "path": "./modules/scrollmapper",
+        "type": "path"
+      },
+      "parent": []
     },
     "sops-nix": {
       "inputs": {
