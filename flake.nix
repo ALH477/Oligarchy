@@ -135,6 +135,20 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # Reliquary — cold-storage preservation (tarball + checksum + PAR2)
+    # across duplicated USB mirrors and CD-R. Opt-in, defaults OFF
+    # (services.reliquary.enable). Read-write and can format raw block
+    # devices / burn optical media, same category as oligarchy-forge and
+    # oligarchy-vault, so it must stay out of the read-only MCP surface —
+    # its `reliquary mcp` stdio server is NOT wired into .mcp.json, on
+    # purpose: its own docs/ADVERSARY_REVIEW.md documents that server as
+    # unauthenticated and root-equivalent for media. See
+    # modules/reliquary/README.md and docs/ADVERSARY_REVIEW.md.
+    reliquary = {
+      url = "path:./modules/reliquary";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # DCF-Talk — decentralized voice + text over the 17-byte DeModFrame.
     # Off by default (services.demod-talk.enable); see modules/demod-talk/README.md.
     # Plaintext by design, so the module REQUIRES a WireGuard interface.
@@ -187,6 +201,7 @@
     , oligarchy-plugins
     , oligarchy-p2p
     , oligarchy-vault
+    , reliquary
     , demod-voice
     , mcp-servers
     , hydramesh
@@ -296,6 +311,16 @@
         # in configuration.nix or ~/.config/oligarchy/local.nix; see
         # modules/oligarchy-vault/README.md and example-local.nix.
         oligarchy-vault.nixosModules.default
+
+        # Reliquary — cold-storage USB/CD-R preservation (services.reliquary.*).
+        # Opt-in, defaults OFF: with enable = false this adds no automount, no
+        # package, no tmpfiles rules, so no ISO mkForce needed. NOT part of the
+        # MCP surface — see the flake input comment above and
+        # modules/reliquary/docs/ADVERSARY_REVIEW.md for the residual risks
+        # (label-based USB detection, unauthenticated destructive MCP tools)
+        # before enabling this anywhere real data will touch it.
+        reliquary.nixosModules.default
+
         ./modules/secure-boot.nix
         ./modules/agentic-local-ai.nix
         # oligarchy-mcp.nix removed — replaced by mcp-servers.nixosModules.default
