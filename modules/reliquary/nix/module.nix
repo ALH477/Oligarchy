@@ -45,25 +45,40 @@ in
 
     # Mount the dedicated Reliquary partitions by filesystem label whenever
     # either 256 GB stick is plugged in.
+    #
+    # `nosuid,nodev,noexec` is load-bearing, not hygiene. A filesystem label is
+    # attacker-forgeable — `mkfs.ext4 -L RLQ-DATA-A` on any stick is enough, and
+    # docs/ADVERSARY_REVIEW.md already records that pair identity rests on it.
+    # Without these, plugging in such a stick (or getting someone to) mounts
+    # attacker-controlled ext4 with on-disk permission bits honored, so a setuid
+    # root binary sitting on it executes as root for any local user: a local
+    # privilege escalation out of what is supposed to be a data-integrity
+    # weakness. `x-systemd.automount` makes it worse by firing on first access,
+    # which `reliquary status` and the TUI's own volume reads do unprompted.
+    #
+    # Nothing is ever executed from these volumes — they hold tar payloads, par2
+    # parity and checksum files — so noexec costs nothing. The vfat pair carries
+    # the same three: `umask=022` yields mode 0755 files, and defense in depth
+    # here is one word per mount.
     fileSystems."${cfg.mountRoot}/meta-a" = {
       device = "/dev/disk/by-label/RLQ-META-A";
       fsType = "vfat";
-      options = [ "nofail" "x-systemd.automount" "x-systemd.idle-timeout=300" "uid=0" "gid=0" "umask=022" ];
+      options = [ "nofail" "x-systemd.automount" "x-systemd.idle-timeout=300" "uid=0" "gid=0" "umask=022" "nosuid" "nodev" "noexec" ];
     };
     fileSystems."${cfg.mountRoot}/data-a" = {
       device = "/dev/disk/by-label/RLQ-DATA-A";
       fsType = "ext4";
-      options = [ "nofail" "x-systemd.automount" "x-systemd.idle-timeout=300" "noatime" ];
+      options = [ "nofail" "x-systemd.automount" "x-systemd.idle-timeout=300" "noatime" "nosuid" "nodev" "noexec" ];
     };
     fileSystems."${cfg.mountRoot}/meta-b" = {
       device = "/dev/disk/by-label/RLQ-META-B";
       fsType = "vfat";
-      options = [ "nofail" "x-systemd.automount" "x-systemd.idle-timeout=300" "uid=0" "gid=0" "umask=022" ];
+      options = [ "nofail" "x-systemd.automount" "x-systemd.idle-timeout=300" "uid=0" "gid=0" "umask=022" "nosuid" "nodev" "noexec" ];
     };
     fileSystems."${cfg.mountRoot}/data-b" = {
       device = "/dev/disk/by-label/RLQ-DATA-B";
       fsType = "ext4";
-      options = [ "nofail" "x-systemd.automount" "x-systemd.idle-timeout=300" "noatime" ];
+      options = [ "nofail" "x-systemd.automount" "x-systemd.idle-timeout=300" "noatime" "nosuid" "nodev" "noexec" ];
     };
   };
 }
