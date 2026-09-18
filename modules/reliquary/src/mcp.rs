@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 
 use serde_json::{json, Value};
 
@@ -208,22 +208,53 @@ fn req_str<'a>(args: &'a Value, key: &str) -> std::result::Result<&'a str, Strin
         .ok_or_else(|| format!("missing {key}"))
 }
 
+/// Largest single MCP message accepted. Generous next to any real request —
+/// the biggest thing this server takes is a path plus a note — and small enough
+/// that a hostile or runaway host cannot grow the process without bound.
+const MAX_MESSAGE_BYTES: u64 = 8 * 1024 * 1024;
+
 /// MCP's stdio transport is newline-delimited JSON: one JSON object per line,
 /// terminated by `\n`, no headers of any kind. (The LSP-style `Content-Length`
 /// framing this used to implement is a different protocol; no MCP host speaks
 /// it.) Blank lines are skipped, EOF is `Ok(None)`.
 ///
-/// The line is read into a `String` that grows as bytes arrive, so there is no
-/// caller-supplied length driving an allocation — the deliberate replacement for
-/// the old `vec![0u8; length]`.
+/// The read is bounded at [`MAX_MESSAGE_BYTES`].
+///
+/// Dropping the old `Content-Length` header removed a caller-supplied *number*
+/// driving one `vec![0u8; length]` allocation, but not the unbounded growth:
+/// `BufRead::read_line` grows its buffer until it sees `\n` or EOF, so a writer
+/// that streams bytes and never sends a newline walks this process to an
+/// OOM kill just as effectively. The framing changed; the DoS did not. The cap
+/// is what actually closes it.
+///
+/// This matters beyond this repo. Reliquary's MCP server is deliberately kept
+/// out of Oligarchy's own `.mcp.json` (its tools burn, format and extract), but
+/// `examples/mcp.json` documents wiring it into someone else's client, so an
+/// external host drives this parser directly.
 fn read_message(stdin: &mut impl BufRead) -> io::Result<Option<Value>> {
     loop {
-        let mut line = String::new();
-        let n = stdin.read_line(&mut line)?;
+        let mut buf = Vec::new();
+        // `by_ref` so the limit applies to this message, not to the stream: a
+        // fresh `Take` per line, with the underlying buffer preserved.
+        let n = stdin
+            .by_ref()
+            .take(MAX_MESSAGE_BYTES + 1)
+            .read_until(b'\n', &mut buf)?;
         if n == 0 {
             return Ok(None);
         }
-        let trimmed = line.trim();
+        if n as u64 > MAX_MESSAGE_BYTES {
+            // The rest of the oversized line is still queued, so there is no
+            // resynchronising to a message boundary from here — refuse and let
+            // the caller tear the session down.
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("MCP message exceeds {MAX_MESSAGE_BYTES} bytes"),
+            ));
+        }
+        let text = String::from_utf8(buf)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let trimmed = text.trim();
         if trimmed.is_empty() {
             continue;
         }
@@ -240,6 +271,50 @@ fn write_message(stdout: &mut impl Write, msg: &Value) -> io::Result<()> {
     stdout.write_all(b"\n")?;
     stdout.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod read_bound_tests {
+    use super::*;
+    use std::io::Cursor;
+
+    /// The bug the cap closes: newline-delimited framing removed the
+    /// attacker-supplied *length*, but `read_line` still grew without bound, so
+    /// a writer that never sends `\n` walks the process to an OOM kill.
+    #[test]
+    fn a_message_without_a_newline_cannot_grow_without_bound() {
+        let huge = "x".repeat((MAX_MESSAGE_BYTES + 1024) as usize);
+        let mut cur = Cursor::new(huge.into_bytes());
+        let err = read_message(&mut cur).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("exceeds"), "{err}");
+    }
+
+    #[test]
+    fn an_oversized_but_newline_terminated_message_is_still_refused() {
+        let mut line = "{\"a\":\"".to_string();
+        line.push_str(&"y".repeat((MAX_MESSAGE_BYTES + 16) as usize));
+        line.push_str("\"}\n");
+        let mut cur = Cursor::new(line.into_bytes());
+        assert!(read_message(&mut cur).is_err());
+    }
+
+    #[test]
+    fn ordinary_messages_still_round_trip() {
+        let mut cur = Cursor::new(b"\n  \n{\"jsonrpc\":\"2.0\",\"id\":1}\n".to_vec());
+        let got = read_message(&mut cur).unwrap().unwrap();
+        assert_eq!(got["id"], 1);
+        assert!(read_message(&mut cur).unwrap().is_none(), "EOF is None");
+    }
+
+    #[test]
+    fn a_message_just_under_the_cap_is_accepted() {
+        let filler = (MAX_MESSAGE_BYTES as usize) - 32;
+        let line = format!("{{\"a\":\"{}\"}}\n", "z".repeat(filler));
+        assert!(line.len() as u64 <= MAX_MESSAGE_BYTES);
+        let mut cur = Cursor::new(line.into_bytes());
+        assert!(read_message(&mut cur).unwrap().is_some());
+    }
 }
 
 #[cfg(test)]

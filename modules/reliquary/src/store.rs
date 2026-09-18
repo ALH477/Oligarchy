@@ -99,31 +99,63 @@ impl Store {
         );
         let dest = self.block_dir(&block_id);
         if dest.exists() {
-            let _ = std::fs::remove_dir_all(&work);
-            return self.load_manifest(&block_id);
+            // A dest WITH a manifest is a completed ingest of identical content
+            // (block ids are content-derived), so hand it back.
+            //
+            // A dest WITHOUT one is debris from an ingest that died after the
+            // payload was renamed into place. Because the id is deterministic,
+            // every retry of that same content landed here and `load_manifest`
+            // turned it into `UnknownBlock` — a permanently un-ingestable block
+            // id, fixable only by reaching into a root-owned 0750 store and
+            // deleting by hand. Treat it as what it is: nothing was ever
+            // successfully ingested, so ingest it now.
+            if dest.join("manifest.json").exists() {
+                let _ = std::fs::remove_dir_all(&work);
+                return self.load_manifest(&block_id);
+            }
+            std::fs::remove_dir_all(&dest)?;
         }
         std::fs::create_dir_all(&dest)?;
-        let payload = dest.join("payload.tar.zst");
-        std::fs::rename(&payload_tmp, &payload)?;
 
-        let par = parity::create_par2(&payload, self.cfg.par2_redundancy, self.cfg.par2_volumes)?;
+        // From the rename to the manifest write is the window that produces the
+        // debris described above — par2 can fail on ENOSPC or a missing binary,
+        // and either sums or manifest write can fail on I/O. Unwind it here
+        // rather than leaving it for the next run to trip over. Past the
+        // manifest write the block is loadable, so a later failure is safe.
+        let built = (|| -> Result<Value> {
+            let payload = dest.join("payload.tar.zst");
+            std::fs::rename(&payload_tmp, &payload)?;
 
-        // Hash only immutable payload + PAR2. Manifest and copies.json are
-        // allowed to gain provenance later; including them in SHA256SUMS made
-        // every USB push fail verification.
-        write_payload_sums(&dest, &payload)?;
+            let par =
+                parity::create_par2(&payload, self.cfg.par2_redundancy, self.cfg.par2_volumes)?;
 
-        let payload_json = serde_json::to_value(&packed)?;
-        let par_json = serde_json::to_value(&par)?;
-        let man = manifest::new_block_manifest(
-            &block_id,
-            &source.to_string_lossy(),
-            payload_json,
-            par_json,
-            profile,
-            notes,
-        );
-        manifest::write_json(&dest.join("manifest.json"), &man)?;
+            // Hash only immutable payload + PAR2. Manifest and copies.json are
+            // allowed to gain provenance later; including them in SHA256SUMS made
+            // every USB push fail verification.
+            write_payload_sums(&dest, &payload)?;
+
+            let payload_json = serde_json::to_value(&packed)?;
+            let par_json = serde_json::to_value(&par)?;
+            let man = manifest::new_block_manifest(
+                &block_id,
+                &source.to_string_lossy(),
+                payload_json,
+                par_json,
+                profile,
+                notes,
+            );
+            manifest::write_json(&dest.join("manifest.json"), &man)?;
+            Ok(man)
+        })();
+
+        let man = match built {
+            Ok(man) => man,
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&dest);
+                let _ = std::fs::remove_dir_all(&work);
+                return Err(e);
+            }
+        };
         manifest::write_json(&dest.join("copies.json"), &serde_json::json!([]))?;
 
         let mut cat = self.catalog()?;
