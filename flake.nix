@@ -80,6 +80,19 @@
     # Blipply Assistant - AI Voice Assistant (as flake input)
     blipply-assistant.url = "path:./modules/blipply-assistant";
 
+    # Scrollmapper — low-footprint scripture reader (Orthodox canon default)
+    # with a boot-dialogue verse. Opt-in, defaults OFF; see
+    # modules/scrollmapper/README.md and its own AUDIT.md.
+    #
+    # follows added here even though the module's own README snippet omits
+    # it: without it this path subflake pins a SECOND nixpkgs and you build
+    # two closures — the exact footgun every other path input in this file
+    # avoids.
+    scrollmapper = {
+      url = "path:./modules/scrollmapper";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # ArchibaldOS DSP coprocessor (uncomment when available)
     # archibaldos = {
     #   url = "github:YOUR_ORG/archibaldos";
@@ -132,6 +145,20 @@
     # surface (.#mcp-self-audit fails the build if it lands in .mcp.json).
     oligarchy-p2p = {
       url = "path:./modules/oligarchy-p2p";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    # Reliquary — cold-storage preservation (tarball + checksum + PAR2)
+    # across duplicated USB mirrors and CD-R. Opt-in, defaults OFF
+    # (services.reliquary.enable). Read-write and can format raw block
+    # devices / burn optical media, same category as oligarchy-forge and
+    # oligarchy-vault, so it must stay out of the read-only MCP surface —
+    # its `reliquary mcp` stdio server is NOT wired into .mcp.json, on
+    # purpose: its own docs/ADVERSARY_REVIEW.md documents that server as
+    # unauthenticated and root-equivalent for media. See
+    # modules/reliquary/README.md and docs/ADVERSARY_REVIEW.md.
+    reliquary = {
+      url = "path:./modules/reliquary";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -191,6 +218,7 @@
     , greeting
     , boot-intro
     , blipply-assistant
+    , scrollmapper
     , home-manager
     , nixos-generators
     , sops-nix
@@ -200,6 +228,7 @@
     , oligarchy-plugins
     , oligarchy-p2p
     , oligarchy-vault
+    , reliquary
     , warroom
     , demod-voice
     , mcp-servers
@@ -232,7 +261,7 @@
         # Uncomment when archibaldos is available:
         # inherit archibaldos;
         inherit vm-manager dsp-ctl oligarchy-forge mcp-servers hydramesh;
-        inherit demod-talk;
+        inherit demod-talk oligarchy-vault reliquary;
       };
 
       # ════════════════════════════════════════════════════════════════════════
@@ -310,6 +339,23 @@
         # in configuration.nix or ~/.config/oligarchy/local.nix; see
         # modules/oligarchy-vault/README.md and example-local.nix.
         oligarchy-vault.nixosModules.default
+
+        # Reliquary — cold-storage USB/CD-R preservation (services.reliquary.*).
+        # Opt-in, defaults OFF: with enable = false this adds no automount, no
+        # package, no tmpfiles rules, so no ISO mkForce needed. NOT part of the
+        # MCP surface — see the flake input comment above and
+        # modules/reliquary/docs/ADVERSARY_REVIEW.md for the residual risks
+        # (label-based USB detection, unauthenticated destructive MCP tools)
+        # before enabling this anywhere real data will touch it.
+        reliquary.nixosModules.default
+
+        # oligarchy-archive — pack a path with oligarchy-vault, then ingest it
+        # into reliquary (custom.archive.enable). Opt-in, defaults OFF, no
+        # ISO mkForce needed. On-demand CLI only: no timer, no service, and it
+        # stops at ingest — pushing to USB / burning a CD-R stays manual. See
+        # modules/oligarchy-archive.nix.
+        ./modules/oligarchy-archive.nix
+
         ./modules/secure-boot.nix
         ./modules/agentic-local-ai.nix
         # oligarchy-mcp.nix removed — replaced by mcp-servers.nixosModules.default
@@ -325,6 +371,13 @@
 
         # Blipply Assistant - AI Voice Assistant (integrated from local source)
         blipply-assistant.nixosModules.default
+
+        # Scrollmapper — scripture reader + boot-dialogue verse
+        # (custom.scrollmapper.*). Opt-in, defaults OFF, no always-on unit
+        # beyond the boot-dialogue oneshot itself gated by bootDialogue.enable
+        # (which only fires when custom.scrollmapper.enable is set) — no ISO
+        # mkForce needed. See modules/scrollmapper/README.md and AUDIT.md.
+        scrollmapper.nixosModules.scrollmapper
 
         # VM Manager - Hybrid VM management
         vm-manager.nixosModules.quickemu-vm

@@ -1,0 +1,13 @@
+pub mod archive;
+pub mod cli;
+pub mod config;
+pub mod error;
+pub mod hashing;
+pub mod manifest;
+pub mod mcp;
+pub mod optical;
+pub mod parity;
+pub mod store;
+pub mod tui;
+pub mod usb;
+pub mod util;

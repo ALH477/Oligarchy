@@ -1,0 +1,74 @@
+{
+  "orthodox": {
+    "label": "Eastern Orthodox (Septuagint tradition)",
+    "notes": "Greek/Slavic printed Bibles vary slightly. 3 Maccabees and Psalm 151 are included when the translation ships them. 4 Maccabees is appendix-only in Greek editions and is omitted here. II Esdras in KJVA is 4 Ezra / Slavic 3 Esdras.",
+    "books": [
+      "Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy",
+      "Joshua", "Judges", "Ruth",
+      "I Samuel", "II Samuel", "I Kings", "II Kings",
+      "I Chronicles", "II Chronicles",
+      "I Esdras", "Ezra", "Nehemiah",
+      "Tobit", "Judith", "Esther", "Additions to Esther",
+      "I Maccabees", "II Maccabees", "III Maccabees",
+      "Psalms", "Job", "Proverbs", "Ecclesiastes", "Song of Solomon",
+      "Wisdom", "Sirach",
+      "Hosea", "Amos", "Micah", "Joel", "Obadiah", "Jonah",
+      "Nahum", "Habakkuk", "Zephaniah", "Haggai", "Zechariah", "Malachi",
+      "Isaiah", "Jeremiah", "Baruch", "Lamentations", "Epistle of Jeremiah",
+      "Ezekiel", "Daniel", "Prayer of Azariah", "Susanna", "Bel and the Dragon",
+      "Prayer of Manasses",
+      "Matthew", "Mark", "Luke", "John", "Acts",
+      "Romans", "I Corinthians", "II Corinthians", "Galatians", "Ephesians",
+      "Philippians", "Colossians", "I Thessalonians", "II Thessalonians",
+      "I Timothy", "II Timothy", "Titus", "Philemon", "Hebrews",
+      "James", "I Peter", "II Peter", "I John", "II John", "III John",
+      "Jude", "Revelation of John"
+    ]
+  },
+  "catholic": {
+    "label": "Catholic (Deuterocanon)",
+    "books": [
+      "Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy",
+      "Joshua", "Judges", "Ruth",
+      "I Samuel", "II Samuel", "I Kings", "II Kings",
+      "I Chronicles", "II Chronicles", "Ezra", "Nehemiah",
+      "Tobit", "Judith", "Esther", "Additions to Esther",
+      "I Maccabees", "II Maccabees",
+      "Job", "Psalms", "Proverbs", "Ecclesiastes", "Song of Solomon",
+      "Wisdom", "Sirach",
+      "Isaiah", "Jeremiah", "Lamentations", "Baruch", "Ezekiel", "Daniel",
+      "Prayer of Azariah", "Susanna", "Bel and the Dragon",
+      "Hosea", "Joel", "Amos", "Obadiah", "Jonah", "Micah",
+      "Nahum", "Habakkuk", "Zephaniah", "Haggai", "Zechariah", "Malachi",
+      "Matthew", "Mark", "Luke", "John", "Acts",
+      "Romans", "I Corinthians", "II Corinthians", "Galatians", "Ephesians",
+      "Philippians", "Colossians", "I Thessalonians", "II Thessalonians",
+      "I Timothy", "II Timothy", "Titus", "Philemon", "Hebrews",
+      "James", "I Peter", "II Peter", "I John", "II John", "III John",
+      "Jude", "Revelation of John"
+    ]
+  },
+  "protestant": {
+    "label": "Protestant (66 books)",
+    "books": [
+      "Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy",
+      "Joshua", "Judges", "Ruth",
+      "I Samuel", "II Samuel", "I Kings", "II Kings",
+      "I Chronicles", "II Chronicles", "Ezra", "Nehemiah", "Esther",
+      "Job", "Psalms", "Proverbs", "Ecclesiastes", "Song of Solomon",
+      "Isaiah", "Jeremiah", "Lamentations", "Ezekiel", "Daniel",
+      "Hosea", "Joel", "Amos", "Obadiah", "Jonah", "Micah",
+      "Nahum", "Habakkuk", "Zephaniah", "Haggai", "Zechariah", "Malachi",
+      "Matthew", "Mark", "Luke", "John", "Acts",
+      "Romans", "I Corinthians", "II Corinthians", "Galatians", "Ephesians",
+      "Philippians", "Colossians", "I Thessalonians", "II Thessalonians",
+      "I Timothy", "II Timothy", "Titus", "Philemon", "Hebrews",
+      "James", "I Peter", "II Peter", "I John", "II John", "III John",
+      "Jude", "Revelation of John"
+    ]
+  },
+  "full": {
+    "label": "All books present in the selected Scrollmapper translation",
+    "books": []
+  }
+}

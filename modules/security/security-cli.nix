@@ -29,7 +29,24 @@ let
         echo "unknown"
       fi
     }
-    q_unit() { systemctl is-active "$1" 2>/dev/null || echo "inactive"; }
+    # `systemctl is-active` exits NON-ZERO for any unit that is not active while
+    # still printing the state on stdout, so `... || echo "inactive"` appended a
+    # second line to every unit that was not running: apparmor, auditd and
+    # usbguard all landed in status.json as "inactive\ninactive". That file is
+    # consumed directly by modules/dcf-tray.nix and modules/greeting's
+    # system_info.rs, not just by this CLI, so the damage was not local.
+    #
+    # The fallback is only needed for the one case that genuinely prints
+    # nothing: a pattern matching no unit at all (a concrete unit name that does
+    # not exist still prints "inactive"). Every call site here passes a concrete
+    # unit, which systemctl answers with exactly one line, so taking the first
+    # line is exact rather than lossy; a pattern would report its first match.
+    q_unit() {
+      local out
+      out=$(systemctl is-active "$1" 2>/dev/null)
+      out=''${out%%$'\n'*}
+      printf '%s\n' "''${out:-inactive}"
+    }
     q_egress_mode() {
       if systemctl is-enabled strict-egress-resolve.service >/dev/null 2>&1; then
         # Read the live rule set, not /run: /run/strict-egress holds resolved

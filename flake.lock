@@ -1294,6 +1294,22 @@
         "type": "github"
       }
     },
+    "reliquary": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "path": "./modules/reliquary",
+        "type": "path"
+      },
+      "original": {
+        "path": "./modules/reliquary",
+        "type": "path"
+      },
+      "parent": []
+    },
     "root": {
       "inputs": {
         "android-mirror": "android-mirror",
@@ -1319,6 +1335,8 @@
         "oligarchy-p2p": "oligarchy-p2p",
         "oligarchy-plugins": "oligarchy-plugins",
         "oligarchy-vault": "oligarchy-vault",
+        "reliquary": "reliquary",
+        "scrollmapper": "scrollmapper",
         "sops-nix": "sops-nix",
         "vm-manager": "vm-manager",
         "warroom": "warroom",
@@ -1423,6 +1441,22 @@
         "repo": "rust-overlay",
         "type": "github"
       }
+    },
+    "scrollmapper": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "path": "./modules/scrollmapper",
+        "type": "path"
+      },
+      "original": {
+        "path": "./modules/scrollmapper",
+        "type": "path"
+      },
+      "parent": []
     },
     "sops-nix": {
       "inputs": {
