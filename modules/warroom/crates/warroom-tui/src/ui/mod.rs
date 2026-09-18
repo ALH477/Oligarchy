@@ -36,6 +36,7 @@ impl Skin {
     pub fn c(&self, rgb: Rgb) -> Color {
         match self.mode {
             ColorMode::TrueColor => Color::Rgb(rgb.0, rgb.1, rgb.2),
+            ColorMode::Ansi256 => Color::Indexed(rgb.nearest_256()),
             ColorMode::Ansi16 => Color::Indexed(rgb.nearest_ansi()),
         }
     }

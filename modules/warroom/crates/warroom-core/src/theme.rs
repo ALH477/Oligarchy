@@ -34,7 +34,45 @@ impl Rgb {
         Rgb(mix(self.0, other.0), mix(self.1, other.1), mix(self.2, other.2))
     }
 
-    /// Nearest of the 16 ANSI colors, for terminals without truecolor.
+    /// Nearest entry in the xterm 256-color space: the 6×6×6 cube plus the
+    /// 24-step grey ramp, whichever is closer. Returns an index usable as
+    /// `ratatui::style::Color::Indexed`.
+    ///
+    /// The grey ramp matters more than it looks — this palette's backgrounds
+    /// and borders are near-neutral very dark tones, and the cube's coarse
+    /// 0/95/135/175/215/255 steps quantize all of them to the same black.
+    pub fn nearest_256(self) -> u8 {
+        const STEPS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+        let axis = |v: u8| {
+            let mut best = 0usize;
+            let mut best_d = u32::MAX;
+            for (i, &s) in STEPS.iter().enumerate() {
+                let d = sq(v, s);
+                if d < best_d {
+                    best_d = d;
+                    best = i;
+                }
+            }
+            best
+        };
+        let (r, g, b) = (axis(self.0), axis(self.1), axis(self.2));
+        let cube = 16 + 36 * r + 6 * g + b;
+        let cube_d = sq(self.0, STEPS[r]) + sq(self.1, STEPS[g]) + sq(self.2, STEPS[b]);
+
+        // Grey ramp: indices 232..=255 are 8, 18, 28, ... 238.
+        let avg = (self.0 as u32 + self.1 as u32 + self.2 as u32) / 3;
+        let step = ((avg as i32 - 8) as f32 / 10.0).round().clamp(0.0, 23.0) as u8;
+        let grey_v = 8 + step * 10;
+        let grey_d = sq(self.0, grey_v) + sq(self.1, grey_v) + sq(self.2, grey_v);
+
+        if grey_d < cube_d {
+            232 + step
+        } else {
+            cube as u8
+        }
+    }
+
+    /// Nearest of the 16 ANSI colors, for a terminal that has nothing else.
     /// Returns an index usable as `ratatui::style::Color::Indexed`.
     pub fn nearest_ansi(self) -> u8 {
         // Standard xterm values for indices 0-15.
@@ -77,14 +115,28 @@ fn sq(a: u8, b: u8) -> u32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorMode {
     TrueColor,
+    /// The 256-color cube. Reproduces this palette closely enough that the
+    /// difference is not visible.
+    Ansi256,
+    /// The bare 16. Distinct dark colors genuinely cannot survive here — the
+    /// palette's `bg` (#080810) and `border` (#252530) both quantize to black —
+    /// so drawing code must not rely on chrome being distinguishable from the
+    /// background in this mode.
     Ansi16,
 }
 
 /// This distro really does put people in a bare TTY (tuigreet), so the fallback
 /// is not hypothetical.
+///
+/// Three levels rather than two: collapsing every non-truecolor terminal to 16
+/// colors was losing the whole palette on ordinary 256-color terminals, which is
+/// most of them — `COLORTERM` is frequently unset even where 256 colors work.
 pub fn color_mode() -> ColorMode {
-    match std::env::var("COLORTERM").as_deref() {
-        Ok("truecolor") | Ok("24bit") => ColorMode::TrueColor,
+    if matches!(std::env::var("COLORTERM").as_deref(), Ok("truecolor") | Ok("24bit")) {
+        return ColorMode::TrueColor;
+    }
+    match std::env::var("TERM") {
+        Ok(t) if t.contains("256color") || t.contains("direct") => ColorMode::Ansi256,
         _ => ColorMode::Ansi16,
     }
 }
@@ -306,6 +358,34 @@ mod tests {
         let b = Rgb::hex(0x8B5CF6);
         assert_eq!(a.lerp(b, 0.0), a);
         assert_eq!(a.lerp(b, 1.0), b);
+    }
+
+    /// The bug this mode exists to fix: under the bare 16 colors, `bg` and
+    /// `border` both quantize to index 0, so every border, rule and gauge track
+    /// was drawn black on black. 256-color terminals must keep them apart.
+    #[test]
+    fn chrome_stays_visible_against_the_background_in_256_color() {
+        let bg = DEMOD.bg.nearest_256();
+        let border = DEMOD.border.nearest_256();
+        let surface = DEMOD.surface.nearest_256();
+        assert_ne!(bg, border, "border collapsed onto the background");
+        assert_ne!(bg, surface, "surface collapsed onto the background");
+    }
+
+    /// The splash gradient sweeps turquoise to violet; if both ends land on one
+    /// index there is no gradient, just a flat bar.
+    #[test]
+    fn the_gradient_endpoints_stay_distinct_in_256_color() {
+        assert_ne!(DEMOD.gradient_start.nearest_256(), DEMOD.gradient_end.nearest_256());
+        assert_ne!(DEMOD.accent.nearest_256(), DEMOD.purple.nearest_256());
+    }
+
+    #[test]
+    fn nearest_256_round_trips_the_cube_and_the_grey_ramp() {
+        assert_eq!(Rgb::hex(0x000000).nearest_256(), 16);
+        assert_eq!(Rgb::hex(0xFFFFFF).nearest_256(), 231);
+        // A mid grey belongs to the ramp, not the cube.
+        assert!((232..=255).contains(&Rgb::hex(0x767676).nearest_256()));
     }
 
     #[test]

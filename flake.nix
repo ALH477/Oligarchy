@@ -135,6 +135,19 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # warroom — the Oligarchy War Room: a Rust/Ratatui unified command center
+    # over DSP, mesh, perimeter, AI and forge, driving the same `oligarchy-ctl`
+    # action registry the bash control center uses rather than forking it.
+    # Opt-in (`custom.warroom.enable`), defaults off.
+    #
+    # A *read-write* user tool, same category as oligarchy-forge and dsp-ctl, so
+    # like them it must stay out of the read-only MCP surface (.#mcp-self-audit
+    # fails the build if it lands in .mcp.json).
+    warroom = {
+      url = "path:./modules/warroom";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # DCF-Talk — decentralized voice + text over the 17-byte DeModFrame.
     # Off by default (services.demod-talk.enable); see modules/demod-talk/README.md.
     # Plaintext by design, so the module REQUIRES a WireGuard interface.
@@ -187,6 +200,7 @@
     , oligarchy-plugins
     , oligarchy-p2p
     , oligarchy-vault
+    , warroom
     , demod-voice
     , mcp-servers
     , hydramesh
@@ -321,6 +335,11 @@
 
         # oligarchy-forge — sandboxed coding-agent runner (custom.oligarchyForge.*)
         oligarchy-forge.nixosModules.default
+
+        # warroom — the Oligarchy War Room TUI (custom.warroom.*). Defaults off;
+        # with enable = false it adds no package, no unit and no session
+        # variable, so the ISO needs no mkForce for it.
+        warroom.nixosModules.default
 
         # DeMoD Voice - Local TTS and Voice Cloning
         ./modules/demod-voice/nixos-module.nix

@@ -63,7 +63,6 @@ impl Tab {
 /// handlers so that tabs never need terminal or scheduler access themselves.
 #[derive(Debug, Clone)]
 pub enum Action {
-    Refresh(&'static str),
     RefreshAll,
     /// Suspend the TUI and run this argv on the same tty.
     Handoff(Vec<String>),
@@ -88,7 +87,6 @@ pub struct App {
     pub host: String,
     pub started: Instant,
     pub splash_done: bool,
-    pub splash_enabled: bool,
     pub first_pass: bool,
     pub help: bool,
     pub confirm: Option<Confirm>,
@@ -102,7 +100,6 @@ pub struct App {
 
     pub theme_ids: Vec<String>,
     pub theme_idx: usize,
-    pub theme_sync: bool,
 }
 
 impl App {
@@ -120,7 +117,6 @@ impl App {
             host: hostname(),
             started: Instant::now(),
             splash_done: !splash,
-            splash_enabled: splash,
             first_pass: false,
             help: false,
             confirm: None,
@@ -130,9 +126,10 @@ impl App {
             perimeter: Default::default(),
             ordnance: Default::default(),
             traffic: Default::default(),
-            theme_ids: theme::available_themes(),
+            // `--no-theme-sync` means the on-disk themes are ignored entirely,
+            // so there is nothing for `t` to cycle through either.
+            theme_ids: if theme_sync { theme::available_themes() } else { Vec::new() },
             theme_idx: 0,
-            theme_sync,
         }
     }
 
@@ -224,6 +221,14 @@ impl App {
             return Some(Action::Quit);
         }
 
+        // A pane that is collecting typed text owns the whole keyboard. Without
+        // this, the global bindings below eat the letters as they are typed —
+        // "restart" arrives as "estat" — and Esc quits the app instead of
+        // closing the filter. Ctrl-C above stays reachable on purpose.
+        if self.tab == Tab::Ordnance && ui::actions::capturing_text(&self.ordnance) {
+            return ui::actions::on_key(&mut self.ordnance, k);
+        }
+
         match k.code {
             KeyCode::Char('q') | KeyCode::Esc => return Some(Action::Quit),
             KeyCode::Char('?') => {
@@ -306,7 +311,6 @@ fn dispatch(app: &mut App, term: &mut Term, action: Action) -> Result<()> {
     match action {
         Action::Quit => app.should_quit = true,
         Action::RefreshAll => app.sched.refresh_all(),
-        Action::Refresh(id) => app.sched.refresh(id),
         Action::Confirm { title, body, action } => {
             app.confirm = Some(Confirm { title, body, action: *action });
         }
