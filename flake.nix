@@ -1123,6 +1123,46 @@
               mkdir -p $out
               echo "all ${toString (builtins.length agents)} catalogued agents render valid Nix" > $out/report.txt
             '';
+
+        # ════════════════════════════════════════════════════════════════════
+        # Gamepad BLE bond-finisher unit tests.
+        #
+        # `hog_finish_bond.py`'s `classify` allowlist is what decides which
+        # BlueZ device the root oneshot will call a Just-Works `Pair()` on, so
+        # a widened match there silently pairs keyboards and audio sinks. These
+        # stdlib unittest cases are the only gate on that allowlist, and they
+        # need neither D-Bus nor KVM.
+        #
+        # Run on demand:  nix build .#gamepad-bluetooth-tests
+        # ════════════════════════════════════════════════════════════════════
+        gamepad-bluetooth-tests =
+          pkgs.runCommand "gamepad-bluetooth-tests"
+            {
+              nativeBuildInputs = [ pkgs.python3 ];
+              meta = with nixpkgs.lib; {
+                description = "Run the gamepad BLE bond-finisher unit tests";
+                license = licenses.mit;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              # Reference the module directory, not the flake root, so this gate
+              # depends on those files alone. test_hog_finish_bond.py does
+              # `from hog_finish_bond import ...`, so both must share a cwd.
+              mkdir -p work
+              cp ${./modules/gamepad-bluetooth}/*.py work/
+              cd work
+              export PYTHONDONTWRITEBYTECODE=1
+              # A gate that inspected nothing is a FAIL (same rule as
+              # mcp_self_audit): a rename that breaks discovery must not pass.
+              python3 -m unittest -v 2>&1 | tee unittest.log
+              test "''${PIPESTATUS[0]}" -eq 0
+              ran=$(sed -n 's/^Ran \([0-9]*\) tests\?.*/\1/p' unittest.log)
+              test -n "$ran" && test "$ran" -gt 0
+              mkdir -p $out
+              cp unittest.log $out/
+              echo "ran $ran unit tests" > $out/report.txt
+            '';
       }
       # ══════════════════════════════════════════════════════════════════════
       # The tests/default.nix VM suite, surfaced as `packages.test-<name>`.

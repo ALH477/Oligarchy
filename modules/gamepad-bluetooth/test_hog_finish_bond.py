@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Unit tests for hog_finish_bond.classify. No D-Bus, no bluetoothctl."""
+"""Unit tests for hog_finish_bond. No D-Bus, no bluetoothctl."""
 
+import contextlib
+import io
+import subprocess
 import unittest
+from unittest import mock
 
+import hog_finish_bond
 from hog_finish_bond import Action, classify
 
 
@@ -207,6 +212,120 @@ B: KEY=7fff000000000000 0 8000000000 0 0
 """
         self.assertFalse(hog_input_bound("78:86:2E:BA:73:6E", other_js))
         self.assertTrue(hog_input_bound("78:86:2E:BA:73:6E", other_js + "\n\n" + xbox))
+
+
+MAC = "78:86:2E:BA:73:6E"
+
+
+@contextlib.contextmanager
+def _quiet():
+    """Swallow the module's operator chatter so test output stays readable."""
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        yield
+
+
+class _FakeRunner:
+    """Stand-in for _run_bluetoothctl: records argv, replies per verb."""
+
+    def __init__(self, replies):
+        self.replies = replies
+        self.calls = []
+
+    def __call__(self, args, *, timeout=20):
+        args = list(args)
+        self.calls.append(args)
+        rc, out = self.replies.get(args[0], (0, ""))
+        return subprocess.CompletedProcess(
+            args=["bluetoothctl", *args], returncode=rc, stdout=out, stderr=""
+        )
+
+    def verbs(self):
+        return [a[0] for a in self.calls]
+
+
+class TimeoutTests(unittest.TestCase):
+    def test_run_bluetoothctl_converts_timeout_into_rc124(self):
+        def boom(*a, **kw):
+            raise subprocess.TimeoutExpired(cmd=["bluetoothctl", "pair", MAC], timeout=30)
+
+        with mock.patch.object(hog_finish_bond.subprocess, "run", side_effect=boom):
+            proc = hog_finish_bond._run_bluetoothctl(["pair", MAC], timeout=30)
+
+        self.assertEqual(proc.returncode, 124)
+        self.assertEqual(proc.stdout, "")
+        self.assertTrue(proc.stderr)
+        self.assertIn("30", proc.stderr)
+
+    def test_run_bluetoothctl_decodes_bytes_stdout_from_timeout(self):
+        def boom(*a, **kw):
+            raise subprocess.TimeoutExpired(
+                cmd=["bluetoothctl", "pair", MAC], timeout=30, output=b"partial\n"
+            )
+
+        with mock.patch.object(hog_finish_bond.subprocess, "run", side_effect=boom):
+            proc = hog_finish_bond._run_bluetoothctl(["pair", MAC], timeout=30)
+
+        self.assertEqual(proc.returncode, 124)
+        self.assertEqual(proc.stdout, "partial\n")
+
+
+class ApplyCommandsTests(unittest.TestCase):
+    def test_timed_out_pair_still_trusts_when_bluez_finished_the_bond(self):
+        runner = _FakeRunner({"pair": (124, ""), "info": (0, XBOX_PAIRED)})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+            hog_finish_bond.apply_commands([("pair", MAC)], dry_run=False)
+
+        self.assertIn("trust", runner.verbs())
+        self.assertEqual(runner.calls[-1], ["trust", MAC])
+
+    def test_timed_out_pair_does_not_trust_when_still_unpaired(self):
+        runner = _FakeRunner({"pair": (124, ""), "info": (0, XBOX_UNPAIRED)})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+            hog_finish_bond.apply_commands([("pair", MAC)], dry_run=False)
+
+        self.assertNotIn("trust", runner.verbs())
+        self.assertIn("info", runner.verbs())
+
+    def test_failed_trust_does_not_re_read_info(self):
+        runner = _FakeRunner({"trust": (1, ""), "info": (0, XBOX_PAIRED)})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+            hog_finish_bond.apply_commands([("trust", MAC)], dry_run=False)
+
+        self.assertEqual(runner.verbs(), ["trust"])
+
+    def test_dry_run_runs_no_bluetoothctl_at_all(self):
+        runner = _FakeRunner({})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+            hog_finish_bond.apply_commands([("pair", MAC)], dry_run=True)
+
+        self.assertEqual(runner.calls, [])
+
+
+class MaybeReconnectTests(unittest.TestCase):
+    def test_empty_info_does_not_fire_blind_disconnect_connect(self):
+        runner = _FakeRunner({"info": (124, "")})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
+            hog_finish_bond.maybe_reconnect(MAC, dry_run=False)
+
+        self.assertEqual(runner.verbs(), ["info"])
+
+    def test_paired_connected_without_js_reconnects(self):
+        runner = _FakeRunner({"info": (0, XBOX_PAIRED)})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), \
+                mock.patch.object(hog_finish_bond, "hog_input_bound", lambda *_: False), _quiet():
+            hog_finish_bond.maybe_reconnect(MAC, dry_run=False)
+
+        self.assertEqual(runner.verbs(), ["info", "disconnect", "connect"])
+
+    def test_dry_run_skips_the_info_call(self):
+        runner = _FakeRunner({})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond, "hog_input_bound", lambda *_: False), _quiet():
+            hog_finish_bond.maybe_reconnect(MAC, dry_run=True)
+
+        self.assertEqual(runner.calls, [])
 
 
 if __name__ == "__main__":

@@ -6,7 +6,11 @@ Security properties (load-bearing — do not "simplify"):
 - Never Trust() a device that is not already Paired.
 - Never Pair() keyboards (0x03c1), mice, audio. Names are ignored.
 - Never un-block a Blocked device.
-- This module does not register a BlueZ agent and does not set Discoverable.
+- This module adds no BlueZ agent of its own and does not set Discoverable.
+  Note that each bluetoothctl invocation registers bluetoothctl's own default
+  agent for the lifetime of that invocation, so a confirmation request raised
+  during `pair` lands on a non-interactive agent -- one way a `pair` can hang
+  until the timeout.
 """
 
 from __future__ import annotations
@@ -122,14 +126,36 @@ def hog_input_bound(mac: str, devices_text: str | None = None) -> bool:
     return False
 
 
+def _as_text(blob: object) -> str:
+    """TimeoutExpired.stdout/.stderr may be bytes or None even under text=True."""
+    if blob is None:
+        return ""
+    if isinstance(blob, (bytes, bytearray)):
+        return bytes(blob).decode("utf-8", "replace")
+    return str(blob)
+
+
 def _run_bluetoothctl(args: Sequence[str], *, timeout: int = 20) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bluetoothctl", *args],
-        check=False,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-    )
+    """Never raises on timeout: a killed CLI must not kill the oneshot.
+
+    subprocess.run() has already killed the child by the time TimeoutExpired is
+    raised, so the synthetic rc=124 result is the whole story the caller needs.
+    """
+    try:
+        return subprocess.run(
+            ["bluetoothctl", *args],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        return subprocess.CompletedProcess(
+            args=["bluetoothctl", *args],
+            returncode=124,
+            stdout=_as_text(e.stdout),
+            stderr=f"timed out after {timeout}s",
+        )
 
 
 def collect_infos() -> Dict[str, str]:
@@ -156,7 +182,12 @@ def apply_commands(cmds: List[Tuple[str, str]], *, dry_run: bool) -> None:
                 f"hog-finish-bond: {op} {mac} failed rc={proc.returncode}\n{proc.stderr}",
                 file=sys.stderr,
             )
-            continue
+            if op != "pair":
+                continue
+            # A pair can fail or time out at the CLI while BlueZ finishes the
+            # bond anyway (observed: bluetoothctl killed at 30s, the pad read
+            # back Paired=yes minutes later). So always re-read info and let
+            # should_trust_after_pair() -- not the exit code -- decide.
         if op == "pair":
             info = _run_bluetoothctl(["info", mac], timeout=10).stdout
             if not should_trust_after_pair(info):
@@ -171,7 +202,17 @@ def apply_commands(cmds: List[Tuple[str, str]], *, dry_run: bool) -> None:
 
 
 def maybe_reconnect(mac: str, *, dry_run: bool) -> None:
-    info = _run_bluetoothctl(["info", mac]).stdout if not dry_run else ""
+    info = ""
+    if not dry_run:
+        info = _run_bluetoothctl(["info", mac]).stdout
+        if not info.strip():
+            # Empty means the info call failed or timed out. Treating that as
+            # paired+connected would fire disconnect/connect blind.
+            print(
+                f"hog-finish-bond: no info for {mac}; not reconnecting",
+                file=sys.stderr,
+            )
+            return
     paired = _flag(info, "Paired") if info else True
     connected = _flag(info, "Connected") if info else True
     steps = plan_reconnect(
