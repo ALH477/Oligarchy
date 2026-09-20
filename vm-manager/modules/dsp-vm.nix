@@ -290,11 +290,25 @@
   config =
     let
       cfg = config.custom.vm.dsp;
-      headlessQemu = pkgs.qemu.override {
-        gtkSupport = false;
-        sdlSupport = false;
-        spiceSupport = false;
-      };
+
+      # Stock QEMU, deliberately: do NOT `override`/`overrideAttrs` this.
+      #
+      # This used to be `pkgs.qemu.override { gtkSupport = false; sdlSupport =
+      # false; spiceSupport = false; }`. Any non-stock flag set yields a
+      # derivation cache.nixos.org has never built, so every `nixos-rebuild
+      # switch` following a flake.lock bump compiled QEMU from source — about
+      # an hour, on a machine that had asked for nothing but a config change.
+      # `pkgs.qemu_kvm` (= `qemu.override { hostCpuOnly = true; }`) is what
+      # nixpkgs itself builds and publishes, so it substitutes.
+      #
+      # Headless is a RUNTIME property here, not a build one: `displayOpts`
+      # below emits `-display none` whenever neither `spice` nor `vnc` is set,
+      # so GTK never initialises regardless of whether it was linked in. The
+      # override predated that line and stopped earning its keep the moment it
+      # landed. Worse, it was self-defeating — `cfg.spice` emits
+      # `-display gtk,gl=on`, which a gtk-less build cannot honour, so the
+      # option could not work at all. Dropping the override restores it.
+      qemu = pkgs.qemu_kvm;
 
       # The guest's serial console, as an INTERACTIVE socket plus a log.
       #
@@ -360,11 +374,12 @@
           softdep snd_hda_intel pre: vfio-pci
         '';
 
-      # Headless QEMU - no GTK/SPICE to avoid display init failures on headless host
+      # Display init failures on a headless host are avoided by `-display none`
+      # at runtime (see `displayOpts`), not by a stripped-down QEMU build.
       virtualisation.libvirtd = {
         enable = true;
         qemu = {
-          package = headlessQemu;
+          package = qemu;
           # Kept true: this VM is launched by the direct systemd QEMU service
           # below (not a libvirt-managed domain), which needs root for VFIO PCI
           # passthrough + sysfs bind. runAsRoot here only governs libvirt domains
@@ -427,7 +442,7 @@
           stamp=/var/lib/qemu/${cfg.name}-overlay.base
           if [ ! -f ${overlayDisk} ] || [ "$(cat "$stamp" 2>/dev/null)" != "$base" ]; then
             rm -f ${overlayDisk}
-            ${headlessQemu}/bin/qemu-img create -q -f qcow2 -F qcow2 -b "$base" ${overlayDisk}
+            ${qemu}/bin/qemu-img create -q -f qcow2 -F qcow2 -b "$base" ${overlayDisk}
             printf '%s' "$base" > "$stamp"
           fi
         '' + lib.optionalString (cfg.hugepages > 0) ''
@@ -551,7 +566,7 @@
 
             in
             pkgs.writeShellScript "start-${cfg.name}" (lib.concatStringsSep " \\\n  " (lib.filter (s: s != "") [
-              "${headlessQemu}/bin/qemu-system-x86_64"
+              "${qemu}/bin/qemu-system-x86_64"
               "-enable-kvm"
               "-name ${cfg.name},process=${cfg.name}"
               "-m ${toString cfg.memoryMB}"
