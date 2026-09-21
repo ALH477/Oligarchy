@@ -1,0 +1,28 @@
+{
+  "saved_at": "2026-09-20T10:00:00-07:00",
+  "hyprland_instance": "fixture_floating_window",
+  "clients": [
+    {
+      "class": "org.pulseaudio.pavucontrol",
+      "initialClass": "org.pulseaudio.pavucontrol",
+      "workspace": 5,
+      "floating": true,
+      "at": [
+        320,
+        180
+      ],
+      "size": [
+        900,
+        640
+      ],
+      "monitor": 0,
+      "pid": 5150,
+      "argv": [
+        "pavucontrol",
+        "--tab=3"
+      ],
+      "cwd": "/home/asher",
+      "exe": "/nix/store/0000000000000000000000000000000b-pavucontrol-6.0/bin/pavucontrol"
+    }
+  ]
+}

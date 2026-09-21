@@ -1,0 +1,28 @@
+{
+  "saved_at": "2026-09-20T10:00:00-07:00",
+  "hyprland_instance": "fixture_dead_store_path",
+  "clients": [
+    {
+      "class": "foo",
+      "initialClass": "foo",
+      "workspace": 4,
+      "floating": false,
+      "at": [
+        11,
+        59
+      ],
+      "size": [
+        1258,
+        729
+      ],
+      "monitor": 0,
+      "pid": 9001,
+      "argv": [
+        "/nix/store/xxxx-foo-1.0/bin/foo",
+        "--session"
+      ],
+      "cwd": "/home/asher",
+      "exe": "/nix/store/xxxx-foo-1.0/bin/.foo-wrapped"
+    }
+  ]
+}

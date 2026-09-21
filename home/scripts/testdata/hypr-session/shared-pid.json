@@ -1,0 +1,52 @@
+{
+  "saved_at": "2026-09-20T10:00:00-07:00",
+  "hyprland_instance": "fixture_shared_pid",
+  "clients": [
+    {
+      "class": "firefox",
+      "initialClass": "firefox",
+      "workspace": 3,
+      "floating": false,
+      "at": [
+        11,
+        59
+      ],
+      "size": [
+        1258,
+        729
+      ],
+      "monitor": 0,
+      "pid": 7777,
+      "argv": [
+        "firefox",
+        "--name",
+        "Asher's Browser"
+      ],
+      "cwd": "/home/asher/My Projects",
+      "exe": "/nix/store/0000000000000000000000000000000c-firefox-145.0/bin/.firefox-wrapped"
+    },
+    {
+      "class": "firefox",
+      "initialClass": "firefox",
+      "workspace": 3,
+      "floating": false,
+      "at": [
+        640,
+        59
+      ],
+      "size": [
+        629,
+        729
+      ],
+      "monitor": 0,
+      "pid": 7777,
+      "argv": [
+        "firefox",
+        "--name",
+        "Asher's Browser"
+      ],
+      "cwd": "/home/asher/My Projects",
+      "exe": "/nix/store/0000000000000000000000000000000c-firefox-145.0/bin/.firefox-wrapped"
+    }
+  ]
+}
