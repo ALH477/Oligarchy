@@ -608,9 +608,9 @@
         enable = true; # Enable X11 for IceWM backup system
 
         # Keyboard now comes from `custom.locale.keyboard` (modules/locale.nix),
-        # which sets `services.xserver.xkb` and derives the console keymap from
-        # the same xkb description via `console.useXkbConfig` — the old
-        # hand-maintained "matches Wayland setup" mirror is gone.
+        # which sets `services.xserver.xkb` and compiles `console.keyMap` from
+        # the same values with ckbcomp — the old hand-maintained "matches
+        # Wayland setup" mirror is gone, and an assertion refuses xkb set here.
 
         # Exclude unnecessary X11 packages
         excludePackages = [ pkgs.xterm ];

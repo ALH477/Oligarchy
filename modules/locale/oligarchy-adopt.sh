@@ -70,6 +70,12 @@ Usage:
                 FILE.bak-adopt before any change.
   -h, --help    this text.
 
+Exit status:
+  0  fragment emitted (and, without --stdout, merged into FILE)
+  1  nothing could be read under --root, or FILE could not be merged
+  2  FILE already sets custom.locale.* in the dotted form; it needs a hand
+     edit first. Nothing was written.
+
 After running, review the file and then:
   sudo nixos-rebuild switch --flake .#nixos --impure
 --impure is REQUIRED; without it the file is silently ignored.
@@ -168,6 +174,100 @@ nix_get() {
   { grep -E "^[[:space:]]*${attr}[[:space:]]*=[[:space:]]*\"" "$file" || true; } |
     tail -n 1 |
     sed -E 's/^[^"]*"([^"]*)".*/\1/'
+}
+
+# nix_block_get FILE BLOCK KEY — value of `KEY = "…";` *inside* a nested
+# `BLOCK = { … };` attribute set. BLOCK and KEY are plain attribute paths
+# ("services.xserver.xkb", "layout"); the dots are escaped here, not by the
+# caller, because passing a pre-escaped regex through awk -v turns `\.` into a
+# bare dot and silently makes every separator a wildcard.
+#
+# This exists because the dotted form nix_get reads is NOT what Calamares
+# writes. calamares-nixos-extensions' `cfgkeymap` template emits, verbatim:
+#
+#     # Configure keymap in X11
+#     services.xserver.xkb = {
+#       layout = "…";
+#       variant = "…";
+#     };
+#
+# so a grep for `services.xserver.xkb.layout = ` finds nothing on a real
+# Calamares install and the user's layout is invisible — the exact silent
+# fallback-to-defaults this tool exists to prevent. Both shapes are read:
+# the block first (what the installer writes), the dotted form second (what a
+# hand-edited or nixos-generate-config-flavoured file may carry).
+#
+# `time.timeZone`, `i18n.defaultLocale` and `console.keyMap` really are dotted
+# in that template, so nix_get stays correct for those. `i18n.extraLocaleSettings`
+# is a nested block too, but it is not read: a NixOS system that has a
+# configuration.nix also has /etc/locale.conf generated from it, and /etc/* wins
+# here anyway, so parsing it would add a second source that can never disagree.
+nix_block_get() {
+  local file="$1" block="$2" key="$3"
+  [ -r "$file" ] || return 0
+  awk -v block="$block" -v key="$key" '
+    BEGIN {
+      gsub(/\./, "\\.", block)
+      gsub(/\./, "\\.", key)
+      inblock = 0
+      val = ""
+    }
+    !inblock {
+      if ($0 ~ ("^[ \t]*" block "[ \t]*=[ \t]*\\{[ \t]*$")) {
+        match($0, /^[ \t]*/)
+        ind = substr($0, 1, RLENGTH)
+        inblock = 1
+      }
+      next
+    }
+    {
+      # Close on the first line that is exactly the opening line indentation
+      # followed by `};` — the shape the template emits.
+      if ($0 ~ ("^" ind "\\};[ \t]*$")) {
+        inblock = 0
+        next
+      }
+      if ($0 ~ ("^[ \t]*" key "[ \t]*=[ \t]*\"")) {
+        line = $0
+        sub(/^[^"]*"/, "", line)
+        sub(/".*$/, "", line)
+        val = line
+      }
+    }
+    END { if (val != "") print val }
+  ' "$file"
+}
+
+# normalize_locale LOCALE — canonicalise a glibc locale string: fold every
+# spelling of UTF-8 (`utf8`, `UTF8`, `utf-8`) onto `.UTF-8` and drop an
+# @modifier. Charsets that are not UTF-8 are left exactly as found.
+#
+# The module's well-formedness assertion requires the `.UTF-8` spelling
+# literally, so copying LC_TIME=de_DE.utf8 through verbatim produced a
+# fragment that FAILED to evaluate; and comparing an un-normalised LC_* value
+# against LANG made LC_TIME=en_US.utf8 vs LANG=en_US.UTF-8 look like a
+# disagreement, emitting a spurious region block for a machine that has none.
+normalize_locale() {
+  local loc="$1" charset="" folded
+  case "$loc" in
+  *@*) loc="${loc%@*}" ;;
+  esac
+  case "$loc" in
+  *.*)
+    charset="${loc##*.}"
+    loc="${loc%%.*}"
+    ;;
+  esac
+  if [ -n "$charset" ]; then
+    folded="${charset,,}"
+    folded="${folded//[-_]/}"
+    if [ "$folded" = "utf8" ]; then
+      charset="UTF-8"
+    fi
+    printf '%s.%s' "$loc" "$charset"
+  else
+    printf '%s' "$loc"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -287,6 +387,7 @@ map_keymap() {
 # ---------------------------------------------------------------------------
 lang_raw=""
 region=""
+region_raw=""
 region_from=""
 timezone=""
 tz_undetermined=0
@@ -315,9 +416,25 @@ if [ -r "$nixos_conf" ]; then
   conf_locale="$(nix_get "$nixos_conf" 'i18n\.defaultLocale')"
   conf_tz="$(nix_get "$nixos_conf" 'time\.timeZone')"
   conf_keymap="$(nix_get "$nixos_conf" 'console\.keyMap')"
-  conf_xkb_layout="$(nix_get "$nixos_conf" 'services\.xserver\.xkb\.layout')"
-  conf_xkb_variant="$(nix_get "$nixos_conf" 'services\.xserver\.xkb\.variant')"
-  conf_xkb_options="$(nix_get "$nixos_conf" 'services\.xserver\.xkb\.options')"
+
+  # The nested block is what Calamares actually writes, so it is tried first;
+  # layout and variant are taken from the *same* source so a block layout can
+  # never be paired with a dotted variant from somewhere else in the file.
+  conf_xkb_layout="$(nix_block_get "$nixos_conf" 'services.xserver.xkb' 'layout')"
+  if [ -n "$conf_xkb_layout" ]; then
+    conf_xkb_variant="$(nix_block_get "$nixos_conf" 'services.xserver.xkb' 'variant')"
+  else
+    conf_xkb_layout="$(nix_get "$nixos_conf" 'services\.xserver\.xkb\.layout')"
+    conf_xkb_variant="$(nix_get "$nixos_conf" 'services\.xserver\.xkb\.variant')"
+  fi
+
+  # `options` is not in the Calamares template at all, so every source is a
+  # hand edit and there is no same-source argument to make: take the first
+  # one that answers.
+  conf_xkb_options="$(nix_block_get "$nixos_conf" 'services.xserver.xkb' 'options')"
+  if [ -z "$conf_xkb_options" ]; then
+    conf_xkb_options="$(nix_get "$nixos_conf" 'services\.xserver\.xkb\.options')"
+  fi
   if [ -z "$conf_xkb_options" ]; then
     # Pre-24.05 spelling, still what an older Calamares template emits.
     conf_xkb_options="$(nix_get "$nixos_conf" 'services\.xserver\.xkbOptions')"
@@ -341,11 +458,22 @@ glibc_to_bcp47 "$lang_raw"
 # configuration, and it is expressed as LANG=en_US.UTF-8 with LC_TIME and
 # friends pointing somewhere else. Collapsing the two into `language` would
 # mistranslate the UI to get the date format right.
+#
+# Both sides of the comparison are normalised first, and the value that is
+# emitted is the normalised one. LC_TIME=en_US.utf8 against LANG=en_US.UTF-8
+# is the same locale spelled two ways, not a disagreement; and the module's
+# well-formedness assertion requires the `.UTF-8` spelling literally, so
+# copying `de_DE.utf8` through verbatim produced a fragment that refused to
+# evaluate.
+lang_norm="$(normalize_locale "$lang_raw")"
 if [ -r "$locale_conf" ] && [ -n "$lang_raw" ]; then
   for key in $LC_FORMAT_KEYS; do
-    val="$(conf_get "$locale_conf" "$key")"
-    if [ -n "$val" ] && [ "$val" != "$lang_raw" ]; then
+    raw="$(conf_get "$locale_conf" "$key")"
+    [ -n "$raw" ] || continue
+    val="$(normalize_locale "$raw")"
+    if [ "$val" != "$lang_norm" ]; then
       region="$val"
+      region_raw="$raw"
       region_from="$key"
       break
     fi
@@ -433,10 +561,15 @@ emit_fragment() {
   fi
   printf '    language = "%s";\n' "$language"
 
-  if [ -n "$region" ] && [ "$region" != "$lang_raw" ]; then
+  if [ -n "$region" ]; then
     printf '    # %s=%s disagrees with LANG=%s: keep the UI\n' \
-      "$region_from" "$region" "$lang_raw"
+      "$region_from" "$region" "$lang_norm"
     printf '    # language above, take date/number/paper formats from this one instead.\n'
+    if [ "$region_raw" != "$region" ]; then
+      printf '    # (%s reads "%s" on that machine; normalised to the spelling\n' \
+        "$region_from" "$region_raw"
+      printf '    # NixOS'"'"' well-formedness check accepts.)\n'
+    fi
     printf '    region = "%s";\n' "$region"
   fi
 
@@ -506,6 +639,48 @@ header='# ~/.config/oligarchy/local.nix — seeded by oligarchy-adopt.
 
 out_dir="$(dirname -- "$out")"
 mkdir -p -- "$out_dir"
+
+# ---------------------------------------------------------------------------
+# Refuse a file that already sets custom.locale.* in DOTTED form.
+#
+# The merge below recognises only the block form, `custom.locale = {`. A file
+# carrying `custom.locale.language = "de-DE";` therefore looks to it like a
+# file with no custom.locale at all, so it appends a second definition and the
+# result no longer parses:
+#
+#   error: attribute 'language' already defined at …/local.nix:4:3
+#
+# That breaks every later `nixos-rebuild switch --flake .#nixos --impure` —
+# i.e. this tool would take the user's machine down while claiming success.
+# Rewriting dotted keys into the block automatically is not attempted: that is
+# an edit to lines this tool did not write, and the user is one paste away
+# from doing it correctly. Refuse, name the lines, change nothing.
+#
+# The refusal fires on ANY dotted line, including a file that ALSO carries a
+# block. That case is not merely un-mergeable, it is already broken in the
+# same way the moment the two shapes name one key: replacing the block with a
+# fragment that sets `timeZone` next to a surviving
+# `custom.locale.timeZone = …;` line is the identical
+# "attribute already defined" failure.
+#
+# Exit status 2 is distinct from die()'s 1 on purpose: "your file needs a
+# hand edit" is a different outcome from "I could not read that root", and a
+# script wrapping this one should be able to tell them apart.
+if [ -e "$out" ]; then
+  dotted="$({ grep -n -E '^[[:space:]]*custom\.locale\.' "$out" || true; })"
+  if [ -n "$dotted" ]; then
+    while IFS= read -r line; do
+      printf '%s: %s:%s\n' "$prog" "$out" "$line" >&2
+    done <<EOF
+$dotted
+EOF
+    # shellcheck disable=SC2016  # the backticks quote Nix syntax for the
+    # reader; nothing here is a command substitution.
+    printf '%s: %s\n' "$prog" \
+      'local.nix already sets custom.locale.* in dotted form; move those into a `custom.locale = { … };` block or delete them, then rerun' >&2
+    exit 2
+  fi
+fi
 
 tmp="$(mktemp -- "${out}.adopt.XXXXXX")"
 # shellcheck disable=SC2064  # $tmp is fixed here; expand it now, not at exit.

@@ -1467,242 +1467,6 @@
             '';
 
         # ════════════════════════════════════════════════════════════════════
-        # Locale contract gate — docs/localization-roadmap.md §8.
-        #
-        # Evaluates every nixosConfiguration under five languages and asserts
-        # the things that are silent when they break. Pure eval: no KVM, no
-        # closure — but it does evaluate 25 complete system configs (Home
-        # Manager included), so it is minutes, not seconds. On demand only.
-        #
-        # The line this gate exists for is the MIRROR: services.xserver.xkb
-        # (X11/XWayland), Hyprland's input.kb_layout (Wayland) and
-        # console.useXkbConfig (the TTY and the LUKS prompt) are three
-        # different consumers of one keyboard description, and they used to be
-        # three independent literals. Nothing at runtime complains when they
-        # disagree — you find out at the LUKS prompt, in the dark, typing a
-        # passphrase on a layout nobody chose. So: they are all derived from
-        # custom.locale.keyboard.*, and this asserts the derivation still
-        # holds on every host.
-        #
-        # Anti-vacuity, per mcp_self_audit's two rules: a combination that was
-        # not inspected is a SKIP that is REPORTED and counts against the
-        # required 25, and the mirror check itself must have run at least once
-        # (a Home-Manager-less host would otherwise let the most valuable
-        # assertion in the file pass having compared nothing).
-        #
-        # Run on demand:  nix build .#locale-contract
-        # ════════════════════════════════════════════════════════════════════
-        locale-contract =
-          let
-            lib' = nixpkgs.lib;
-
-            hosts = [ "nixos" "nixos-fw13" "nixos-intel" "nixos-optimus" "builder" ];
-
-            # en-US is the maintainer's machine and must stay a no-op; de-DE
-            # is a Latin layout change; ja-JP is CJK fonts + an input method;
-            # ar-SA is RTL + a third script; xx-pseudo is the test locale the
-            # module is required to warn about rather than reject.
-            langs = [
-              { l = "en-US"; tz = "America/Los_Angeles"; kb = "us"; }
-              { l = "de-DE"; tz = "Europe/Berlin"; kb = "de"; }
-              { l = "ja-JP"; tz = "Asia/Tokyo"; kb = "jp"; }
-              { l = "ar-SA"; tz = "Asia/Riyadh"; kb = "ara"; }
-              { l = "xx-pseudo"; tz = "UTC"; kb = "us"; }
-            ];
-
-            inspect = host: lang:
-              let
-                cfg = (self.nixosConfigurations.${host}.extendModules {
-                  modules = [{
-                    custom.locale.language = lang.l;
-                    custom.locale.timeZone = lang.tz;
-                    custom.locale.keyboard.layout = lang.kb;
-                  }];
-                }).config;
-
-                # `a.b.c or null` returns null if ANY hop is missing, which is
-                # what makes this safe on a host that carries no Hyprland (or
-                # no Home Manager at all).
-                hmUser = cfg.custom.user.name;
-                hm = cfg.home-manager.users.${hmUser} or null;
-                hyprKb = hm.wayland.windowManager.hyprland.settings.input.kb_layout or null;
-
-                defaultLocale = cfg.i18n.defaultLocale;
-                # supportedLocales entries carry a /CHARSET suffix that
-                # defaultLocale does not; compare the locale half only.
-                supported = cfg.i18n.supportedLocales or [ ];
-
-                fontNames = map (p: lib'.toLower (p.name or "")) cfg.fonts.packages;
-              in
-              {
-                inherit host;
-                language = lang.l;
-                requestedTimeZone = lang.tz;
-                requestedLayout = lang.kb;
-                skipped = false;
-                # Forced explicitly: nothing else in a pure eval forces
-                # assertions, and a gate that never evaluated one inspected
-                # nothing. Warnings are recorded, not failed — §4.4 says
-                # xx-pseudo and a fontless input method are warnings.
-                failedAssertions = map (a: a.message) (lib'.filter (a: !a.assertion) cfg.assertions);
-                warnings = cfg.warnings;
-                inherit defaultLocale;
-                defaultLocaleSupported =
-                  lib'.any (e: builtins.head (lib'.splitString "/" e) == defaultLocale) supported;
-                timeZone = cfg.time.timeZone;
-                xkbLayout = cfg.services.xserver.xkb.layout;
-                consoleUseXkbConfig = cfg.console.useXkbConfig;
-                hmPresent = hm != null;
-                hyprKbLayout = hyprKb;
-                cjkFont = lib'.any (n: lib'.hasInfix "cjk" n) fontNames;
-                notoFont = lib'.any (n: lib'.hasInfix "noto" n) fontNames;
-              };
-
-            # tryEval + deepSeq so one host/language that fails to evaluate
-            # becomes a reported SKIP (and therefore a FAIL, since the gate
-            # demands 25 inspected combinations) rather than an opaque trace
-            # that says nothing about which combination died.
-            probe = host: lang:
-              let
-                r = builtins.tryEval (let v = inspect host lang; in builtins.deepSeq v v);
-              in
-              if r.success then r.value
-              else {
-                inherit host;
-                language = lang.l;
-                requestedTimeZone = lang.tz;
-                requestedLayout = lang.kb;
-                skipped = true;
-                reason = "evaluation failed for this host/language combination";
-              };
-
-            payload = pkgs.writeText "locale-contract.json"
-              (builtins.toJSON {
-                rows = lib'.concatMap (h: map (l: probe h l) langs) hosts;
-              });
-          in
-          pkgs.runCommand "locale-contract"
-            {
-              nativeBuildInputs = [ pkgs.jq ];
-              TZDATA = pkgs.tzdata;
-              meta = with nixpkgs.lib; {
-                description = "Assert custom.locale.* drives xkb, Hyprland, console, fonts and tz on every host";
-                license = licenses.bsd3;
-                platforms = platforms.linux;
-              };
-            }
-            ''
-              mkdir -p $out
-              rows=${payload}
-              : > $out/report.txt
-
-              total=$(jq '.rows | length' "$rows")
-              if [ "$total" -ne 25 ]; then
-                echo "locale-contract: $total combination(s) in the payload, expected 25 (5 hosts x 5 languages) — inspected nothing, or only part of the matrix" >&2
-                exit 1
-              fi
-
-              fail=0
-              mirrors=0
-
-              while IFS= read -r row; do
-                get() { printf '%s\n' "$row" | jq -r "$1"; }
-
-                host=$(get '.host')
-                lang=$(get '.language')
-                want_tz=$(get '.requestedTimeZone')
-
-                if [ "$(get '.skipped')" != "false" ]; then
-                  echo "SKIP  $host/$lang — $(get '.reason // "unknown"')" | tee -a $out/report.txt >&2
-                  fail=1
-                  continue
-                fi
-
-                defloc=$(get '.defaultLocale')
-                supported=$(get '.defaultLocaleSupported')
-                tz=$(get '.timeZone')
-                xkb=$(get '.xkbLayout')
-                hypr=$(get '.hyprKbLayout // "<absent>"')
-                usexkb=$(get '.consoleUseXkbConfig')
-                cjk=$(get '.cjkFont')
-                noto=$(get '.notoFont')
-                nassert=$(get '.failedAssertions | length')
-                nwarn=$(get '.warnings | length')
-
-                echo "$host/$lang	tz=$tz	locale=$defloc	xkb=$xkb	hypr=$hypr	useXkbConfig=$usexkb	cjk=$cjk	noto=$noto	assertions=$nassert	warnings=$nwarn" >> $out/report.txt
-
-                bad=""
-
-                if [ "$nassert" -ne 0 ]; then
-                  bad="$bad; failing assertions: $(get '.failedAssertions | join(" | ")')"
-                fi
-
-                # Warnings are legitimate here (xx-pseudo is a test locale,
-                # §4.4), so they are recorded rather than failed — but they go
-                # in the report where a reviewer sees them.
-                if [ "$nwarn" -ne 0 ]; then
-                  get '.warnings[] | "        warning: \(.)"' >> $out/report.txt
-                fi
-
-                if [ "$supported" != "true" ]; then
-                  bad="$bad; i18n.defaultLocale=$defloc is not in the derived i18n.supportedLocales (glibc will not generate it and falls back to C silently)"
-                fi
-
-                if [ "$tz" != "$want_tz" ]; then
-                  bad="$bad; time.timeZone=$tz but custom.locale.timeZone asked for $want_tz"
-                fi
-
-                if [ ! -e "$TZDATA/share/zoneinfo/$tz" ]; then
-                  bad="$bad; time.timeZone=$tz names no zone in tzdata"
-                fi
-
-                # The TTY/LUKS half of the mirror: with
-                # keyboard.consoleKeyMap = null (the default in every
-                # combination here) the console keymap must be COMPILED from
-                # the same xkb description, not left to the us default.
-                if [ "$usexkb" != "true" ]; then
-                  bad="$bad; console.useXkbConfig is $usexkb — the TTY and the LUKS prompt are no longer derived from custom.locale.keyboard"
-                fi
-
-                # THE mirror assertion.
-                if [ "$hypr" = "<absent>" ]; then
-                  echo "        mirror not checked on $host/$lang (no Home Manager Hyprland config)" >> $out/report.txt
-                else
-                  mirrors=$((mirrors+1))
-                  if [ "$xkb" != "$hypr" ]; then
-                    bad="$bad; MIRROR: services.xserver.xkb.layout=$xkb but Hyprland input.kb_layout=$hypr — two literals again"
-                  fi
-                fi
-
-                case "$lang" in
-                  ja-JP)
-                    [ "$cjk" = "true" ] || bad="$bad; ja-JP pulls no CJK font into fonts.packages (tofu everywhere, no error)"
-                    ;;
-                  ar-SA)
-                    [ "$noto" = "true" ] || bad="$bad; ar-SA pulls no noto font into fonts.packages (no Arabic coverage)"
-                    ;;
-                esac
-
-                if [ -n "$bad" ]; then
-                  echo "FAIL  $host/$lang$bad" >&2
-                  fail=1
-                else
-                  echo "PASS  $host/$lang"
-                fi
-              done < <(jq -c '.rows[]' "$rows")
-
-              # The mirror is the reason this gate exists; if no combination
-              # could check it, it passed having compared nothing.
-              if [ "$mirrors" -eq 0 ]; then
-                echo "locale-contract: the xkb/Hyprland mirror was never checked — no host exposed wayland.windowManager.hyprland.settings.input.kb_layout" >&2
-                fail=1
-              fi
-
-              [ "$fail" -eq 0 ] || exit 1
-              echo "inspected $total combination(s); mirror checked on $mirrors of them" >> $out/report.txt
-            '';
-
-        # ════════════════════════════════════════════════════════════════════
         # oligarchy-adopt fixtures — docs/localization-roadmap.md §8.
         #
         # The adoption tool reads the /etc a stock install left behind and
@@ -1749,6 +1513,35 @@
                 if [ ! -e "$expected" ]; then
                   echo "FAIL  $name — no expected.nix beside the fixture" >&2
                   fail=1
+                  continue
+                fi
+
+                if [ -e "$case/expect-exit-2" ]; then
+                  # Refusal case: the tool must exit 2, write NOTHING (the
+                  # file is byte-identical to existing-local.nix) and leave no
+                  # backup behind. `if !` keeps the intended non-zero exit
+                  # from aborting the loop under the builder's set -e.
+                  cp "$case/existing-local.nix" "$name.local.nix"
+                  chmod u+w "$name.local.nix"
+                  rc=0
+                  oligarchy-adopt --root "$case" --out "$name.local.nix" > "$name.log" 2>&1 || rc=$?
+                  if [ "$rc" -ne 2 ]; then
+                    echo "FAIL  $name — expected exit 2 (refusal), got $rc:" >&2
+                    cat "$name.log" >&2
+                    fail=1
+                    continue
+                  fi
+                  if [ -e "$name.local.nix.bak-adopt" ]; then
+                    echo "FAIL  $name — a backup was written despite the refusal" >&2
+                    fail=1
+                    continue
+                  fi
+                  if diff -u "$expected" "$name.local.nix"; then
+                    echo "PASS  $name (refused, file untouched)"
+                  else
+                    echo "FAIL  $name — --out was modified despite the refusal" >&2
+                    fail=1
+                  fi
                   continue
                 fi
 
@@ -1814,6 +1607,316 @@
           (name: drv: nixpkgs.lib.nameValuePair "test-${name}" drv)
           vmTests
       );
+
+      # ════════════════════════════════════════════════════════════════════════
+      # Locale contract gate — docs/localization-roadmap.md §8.
+      #
+      # `legacyPackages`, NOT `packages`, and that placement is the whole
+      # reason this file has a legacyPackages output at all.
+      #
+      # The payload below is a `pkgs.writeText` with 25 complete NixOS + Home
+      # Manager evaluations interpolated into it, so it is forced as soon as
+      # anything computes this derivation's `drvPath` — building is not
+      # required. `nix flake check` forces `drvPath` of every `packages.*`
+      # entry (that is how it reports "package X does not evaluate"), so
+      # living in `packages` would have put 25 full system evals on the
+      # critical path of every `nix flake check` — i.e. every push to main via
+      # gates.yml, the `flake_check` MCP tool's 900 s budget, and the
+      # validation command in CLAUDE.md. "Run on demand" would have been false.
+      #
+      # `nix flake check` checks the SYSTEM names under `legacyPackages` and
+      # deliberately does not recurse into the values, so from here the 25
+      # evals happen only when someone actually asks for this gate.
+      # `nix build .#locale-contract` still resolves: the default attr-path
+      # search tries `packages.<system>.<name>` and then
+      # `legacyPackages.<system>.<name>`, so the invocation is unchanged.
+      #
+      # Contrast `session-survives-switch`, which stays in `packages`: it does
+      # ONE evaluation of one host and costs roughly what `nix flake check`
+      # was already paying.
+      #
+      # ── what it asserts ──────────────────────────────────────────────────
+      # Evaluates every nixosConfiguration under five languages and asserts
+      # the things that are silent when they break. Pure eval: no KVM, no
+      # closure — but it does evaluate 25 complete system configs (Home
+      # Manager included), so it is minutes, not seconds.
+      #
+      # The line this gate exists for is the MIRROR: services.xserver.xkb
+      # (X11/XWayland), Hyprland's input.kb_layout (Wayland) and the console
+      # keymap (the TTY and the LUKS prompt) are three different consumers of
+      # one keyboard description, and they used to be three independent
+      # literals. Nothing at runtime complains when they disagree — you find
+      # out at the LUKS prompt, in the dark, typing a passphrase on a layout
+      # nobody chose. So: they are all derived from custom.locale.keyboard.*,
+      # and this asserts the derivation still holds on every host.
+      #
+      # Anti-vacuity, per mcp_self_audit's two rules: a combination that was
+      # not inspected is a SKIP that is REPORTED and counts against the
+      # required 25, and the mirror check itself must have run at least once
+      # (a Home-Manager-less host would otherwise let the most valuable
+      # assertion in the file pass having compared nothing).
+      #
+      # Run on demand:  nix build .#locale-contract
+      # ════════════════════════════════════════════════════════════════════════
+      legacyPackages.${system} = {
+        locale-contract =
+          let
+            lib' = nixpkgs.lib;
+
+            hosts = [ "nixos" "nixos-fw13" "nixos-intel" "nixos-optimus" "builder" ];
+
+            # en-US is the maintainer's machine and must stay a no-op; de-DE
+            # is a Latin layout change; ja-JP is CJK fonts + an input method;
+            # ar-SA is RTL + a third script; xx-pseudo is the test locale the
+            # module is required to warn about rather than reject.
+            langs = [
+              { l = "en-US"; tz = "America/Los_Angeles"; kb = "us"; }
+              { l = "de-DE"; tz = "Europe/Berlin"; kb = "de"; }
+              { l = "ja-JP"; tz = "Asia/Tokyo"; kb = "jp"; }
+              { l = "ar-SA"; tz = "Asia/Riyadh"; kb = "ara"; }
+              { l = "xx-pseudo"; tz = "UTC"; kb = "us"; }
+            ];
+
+            # The keymap name modules/locale.nix gives the ckbcomp derivation
+            # it compiles from the SAME xkb description services.xserver.xkb
+            # and Hyprland read. Every combination here leaves
+            # custom.locale.keyboard.consoleKeyMap null, so every combination
+            # must land on this derivation and not on a literal string (a
+            # literal would mean the TTY/LUKS half stopped being derived).
+            wantConsoleKeyMap = "xkb-console-keymap";
+
+            inspect = host: lang:
+              let
+                cfg = (self.nixosConfigurations.${host}.extendModules {
+                  modules = [{
+                    # mkForce, not plain definitions. On any machine that has
+                    # run `oligarchy-adopt`, ~/.config/oligarchy/local.nix
+                    # sets these same three options at normal priority, and
+                    # `nix build .#locale-contract --impure` would then throw
+                    # "conflicting definitions" for all 25 rows at once. The
+                    # gate is asking "given THIS language, does everything
+                    # downstream agree?", which is exactly an override.
+                    custom.locale.language = lib'.mkForce lang.l;
+                    custom.locale.timeZone = lib'.mkForce lang.tz;
+                    custom.locale.keyboard.layout = lib'.mkForce lang.kb;
+                  }];
+                }).config;
+
+                # `a.b.c or null` returns null if ANY hop is missing, which is
+                # what makes this safe on a host that carries no Hyprland (or
+                # no Home Manager at all).
+                hmUser = cfg.custom.user.name;
+                hm = cfg.home-manager.users.${hmUser} or null;
+                hyprKb = hm.wayland.windowManager.hyprland.settings.input.kb_layout or null;
+
+                defaultLocale = cfg.i18n.defaultLocale;
+                # supportedLocales entries carry a /CHARSET suffix that
+                # defaultLocale does not; compare the locale half only.
+                supported = cfg.i18n.supportedLocales or [ ];
+
+                km = cfg.console.keyMap;
+
+                fontNames = map (p: lib'.toLower (p.name or "")) cfg.fonts.packages;
+              in
+              {
+                inherit host;
+                language = lang.l;
+                requestedTimeZone = lang.tz;
+                requestedLayout = lang.kb;
+                # Forced explicitly: nothing else in a pure eval forces
+                # assertions, and a gate that never evaluated one inspected
+                # nothing. Warnings are recorded, not failed — §4.4 says
+                # xx-pseudo and a fontless input method are warnings.
+                failedAssertions = map (a: a.message) (lib'.filter (a: !a.assertion) cfg.assertions);
+                warnings = cfg.warnings;
+                inherit defaultLocale;
+                # Near-tautological on 25.11, where i18n.supportedLocales is
+                # itself derived from i18n.defaultLocale — kept because it
+                # costs nothing and stops being tautological the moment any
+                # host or profile sets supportedLocales by hand, which is the
+                # case where glibc silently generates no locale and falls
+                # back to C.
+                defaultLocaleSupported =
+                  lib'.any (e: builtins.head (lib'.splitString "/" e) == defaultLocale) supported;
+                timeZone = cfg.time.timeZone;
+                xkbLayout = cfg.services.xserver.xkb.layout;
+                # Recorded as a NAME, never as the derivation itself: the row
+                # is serialised to JSON, and the point of comparison is which
+                # keymap was chosen, not its store path.
+                consoleKeyMap =
+                  if km == null then "<null>"
+                  else if lib'.isDerivation km then (km.name or "<unnamed derivation>")
+                  else toString km;
+                # Informational. modules/locale.nix keeps this FALSE and sets
+                # console.keyMap to the compiled derivation instead, so this
+                # is reported for the reviewer rather than asserted.
+                consoleUseXkbConfig = cfg.console.useXkbConfig;
+                hmPresent = hm != null;
+                hyprKbLayout = hyprKb;
+                cjkFont = lib'.any (n: lib'.hasInfix "cjk" n) fontNames;
+                notoFont = lib'.any (n: lib'.hasInfix "noto" n) fontNames;
+              };
+
+            # Every recorded field is tryEval'd on its OWN, rather than the
+            # row as a whole, so a combination that fails to evaluate reports
+            # WHICH attributes died instead of an opaque "evaluation failed".
+            # builtins.tryEval cannot hand back the message, so naming the
+            # attributes is the most a pure eval can say — but it is enough to
+            # reproduce by hand, and it distinguishes "this host has no
+            # Hyprland" from "the whole module system blew up".
+            #
+            # The override fields above are deliberately NOT inside this net:
+            # they are mkForce, so a local.nix conflict cannot reach here at
+            # all, and if one ever did the right outcome is a hard error
+            # naming the option, not 25 identical SKIPs.
+            probe = host: lang:
+              let
+                tried = lib'.mapAttrs
+                  (_: v: builtins.tryEval (builtins.deepSeq v v))
+                  (inspect host lang);
+                broken = lib'.attrNames (lib'.filterAttrs (_: r: !r.success) tried);
+              in
+              if broken == [ ] then
+                (lib'.mapAttrs (_: r: r.value) tried) // { skipped = false; }
+              else {
+                inherit host;
+                language = lang.l;
+                requestedTimeZone = lang.tz;
+                requestedLayout = lang.kb;
+                skipped = true;
+                reason = "could not evaluate: ${lib'.concatStringsSep ", " broken}";
+              };
+
+            payload = pkgs.writeText "locale-contract.json"
+              (builtins.toJSON {
+                rows = lib'.concatMap (h: map (l: probe h l) langs) hosts;
+              });
+          in
+          pkgs.runCommand "locale-contract"
+            {
+              nativeBuildInputs = [ pkgs.jq ];
+              TZDATA = pkgs.tzdata;
+              WANT_CONSOLE_KEYMAP = wantConsoleKeyMap;
+              meta = with nixpkgs.lib; {
+                description = "Assert custom.locale.* drives xkb, Hyprland, console, fonts and tz on every host";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              rows=${payload}
+              : > $out/report.txt
+
+              total=$(jq '.rows | length' "$rows")
+              if [ "$total" -ne 25 ]; then
+                echo "locale-contract: $total combination(s) in the payload, expected 25 (5 hosts x 5 languages) — inspected nothing, or only part of the matrix" >&2
+                exit 1
+              fi
+
+              fail=0
+              mirrors=0
+
+              while IFS= read -r row; do
+                get() { printf '%s\n' "$row" | jq -r "$1"; }
+
+                host=$(get '.host')
+                lang=$(get '.language')
+                want_tz=$(get '.requestedTimeZone')
+
+                if [ "$(get '.skipped')" != "false" ]; then
+                  echo "SKIP  $host/$lang — $(get '.reason // "unknown"')" | tee -a $out/report.txt >&2
+                  fail=1
+                  continue
+                fi
+
+                defloc=$(get '.defaultLocale')
+                supported=$(get '.defaultLocaleSupported')
+                tz=$(get '.timeZone')
+                xkb=$(get '.xkbLayout')
+                hypr=$(get '.hyprKbLayout // "<absent>"')
+                keymap=$(get '.consoleKeyMap')
+                usexkb=$(get '.consoleUseXkbConfig')
+                cjk=$(get '.cjkFont')
+                noto=$(get '.notoFont')
+                nassert=$(get '.failedAssertions | length')
+                nwarn=$(get '.warnings | length')
+
+                echo "$host/$lang	tz=$tz	locale=$defloc	xkb=$xkb	hypr=$hypr	keymap=$keymap	useXkbConfig=$usexkb	cjk=$cjk	noto=$noto	assertions=$nassert	warnings=$nwarn" >> $out/report.txt
+
+                bad=""
+
+                if [ "$nassert" -ne 0 ]; then
+                  bad="$bad; failing assertions: $(get '.failedAssertions | join(" | ")')"
+                fi
+
+                # Warnings are legitimate here (xx-pseudo is a test locale,
+                # §4.4), so they are recorded rather than failed — but they go
+                # in the report where a reviewer sees them.
+                if [ "$nwarn" -ne 0 ]; then
+                  get '.warnings[] | "        warning: \(.)"' >> $out/report.txt
+                fi
+
+                if [ "$supported" != "true" ]; then
+                  bad="$bad; i18n.defaultLocale=$defloc is not in the derived i18n.supportedLocales (glibc will not generate it and falls back to C silently)"
+                fi
+
+                if [ "$tz" != "$want_tz" ]; then
+                  bad="$bad; time.timeZone=$tz but custom.locale.timeZone asked for $want_tz"
+                fi
+
+                if [ ! -e "$TZDATA/share/zoneinfo/$tz" ]; then
+                  bad="$bad; time.timeZone=$tz names no zone in tzdata"
+                fi
+
+                # The TTY/LUKS half of the mirror. Every combination here
+                # leaves custom.locale.keyboard.consoleKeyMap null, so the
+                # console keymap must be the derivation modules/locale.nix
+                # COMPILES from the same xkb description — not a literal, and
+                # not the unset "us" default. A string here means the TTY and
+                # the LUKS prompt quietly stopped following the layout.
+                if [ "$keymap" != "$WANT_CONSOLE_KEYMAP" ]; then
+                  bad="$bad; console.keyMap=$keymap, expected the compiled $WANT_CONSOLE_KEYMAP — the TTY and the LUKS prompt are no longer derived from custom.locale.keyboard"
+                fi
+
+                # THE mirror assertion.
+                if [ "$hypr" = "<absent>" ]; then
+                  echo "        mirror not checked on $host/$lang (no Home Manager Hyprland config)" >> $out/report.txt
+                else
+                  mirrors=$((mirrors+1))
+                  if [ "$xkb" != "$hypr" ]; then
+                    bad="$bad; MIRROR: services.xserver.xkb.layout=$xkb but Hyprland input.kb_layout=$hypr — two literals again"
+                  fi
+                fi
+
+                case "$lang" in
+                  ja-JP)
+                    [ "$cjk" = "true" ] || bad="$bad; ja-JP pulls no CJK font into fonts.packages (tofu everywhere, no error)"
+                    ;;
+                  ar-SA)
+                    [ "$noto" = "true" ] || bad="$bad; ar-SA pulls no noto font into fonts.packages (no Arabic coverage)"
+                    ;;
+                esac
+
+                if [ -n "$bad" ]; then
+                  echo "FAIL  $host/$lang$bad" >&2
+                  fail=1
+                else
+                  echo "PASS  $host/$lang"
+                fi
+              done < <(jq -c '.rows[]' "$rows")
+
+              # The mirror is the reason this gate exists; if no combination
+              # could check it, it passed having compared nothing.
+              if [ "$mirrors" -eq 0 ]; then
+                echo "locale-contract: the xkb/Hyprland mirror was never checked — no host exposed wayland.windowManager.hyprland.settings.input.kb_layout" >&2
+                fail=1
+              fi
+
+              [ "$fail" -eq 0 ] || exit 1
+              echo "inspected $total combination(s); mirror checked on $mirrors of them" >> $out/report.txt
+            '';
+      };
 
       # ════════════════════════════════════════════════════════════════════════
       # Checks & Formatter

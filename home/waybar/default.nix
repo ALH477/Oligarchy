@@ -17,7 +17,7 @@ let
   # en-CA = 12-hour, everything else 24. en-US is left OUT of it here on
   # purpose: it is also the DEFAULT of custom.locale.language, so honouring it
   # would flip this machine's clock from 24h to 12h on a rebuild whose only
-  # intended diff is console.useXkbConfig. The 12-hour form is therefore
+  # intended diff is the console keymap. The 12-hour form is therefore
   # reserved for a language EXPLICITLY set to one of the other two, until a
   # `custom.locale.clock24h` option exists to say "12-hour locale, 24-hour
   # clock" properly (recorded as a roadmap gap).

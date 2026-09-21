@@ -11,19 +11,19 @@
     ];
 
   # Set your time zone.
-  time.timeZone = "Europe/Berlin";
+  time.timeZone = "Europe/Istanbul";
 
   # Select internationalisation properties.
-  i18n.defaultLocale = "de_DE.UTF-8";
+  i18n.defaultLocale = "tr_TR.UTF-8";
 
   # Configure keymap in X11
   services.xserver.xkb = {
-    layout = "de";
-    variant = "nodeadkeys";
+    layout = "tr";
+    variant = "";
   };
 
   # Configure console keymap
-  console.keyMap = "de-latin1-nodeadkeys";
+  console.keyMap = "trq";
 
   # This value determines the NixOS release from which the default
   # settings for stateful data, like file locations and database versions

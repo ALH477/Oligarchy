@@ -759,10 +759,15 @@ an options-only version.
 ### Stage 1 — the system layer — **landed 2026-09-21** (`feat/locale-day-one`)
 
 Moves the six hardcoded sites (§3.1) behind the contract and kills the xkb
-mirror by derivation. The one behaviour change on the maintainer's machine is
-`console.useXkbConfig = true`, which makes the TTY keymap `caps:escape`-aware
-for the first time; that is a fix, and it is the only diff the gate should
-show.
+mirror by derivation. Two behaviour changes on the maintainer's machine:
+`console.keyMap` becomes a ckbcomp derivation compiled from
+`custom.locale.keyboard.*` (the TTY keymap is `caps:escape`-aware for the
+first time), and `services.xserver.xkb.model` moves from nixpkgs' `pc104` to
+`pc105`, Hyprland's own default. **Not** via `console.useXkbConfig` as §4.2
+proposed: under that switch nixpkgs defines `console.keyMap` at normal
+priority, so a user's ordinary `console.keyMap = "de-latin1";` line became a
+hard eval error pointing into nixpkgs (PR #40 review). Owning the derivation
+ourselves under `mkDefault` keeps every sink overridable.
 
 `home/waybar/default.nix` gains `osConfig ? { }` and:
 
@@ -868,7 +873,7 @@ Anti-vacuity, per `mcp_self_audit`'s two rules: the gate asserts a **minimum
 combination count** (25) and fails if any combination was skipped rather than
 inspected. A skipped combination is reported, never omitted.
 
-**As landed** (`flake.nix`, `packages.x86_64-linux.locale-contract`), with the
+**As landed** (`flake.nix`, `legacyPackages.x86_64-linux.locale-contract` — not `packages`, so `nix flake check` never forces its 25 evaluations), with the
 three places the implementation differs from the sketch above and why:
 
 - **The mirror compares the Home Manager option value, not the rendered
@@ -876,9 +881,10 @@ three places the implementation differs from the sketch above and why:
   against `services.xserver.xkb.layout`. One hop upstream of the text, which is
   where the mirror can actually diverge; reading the generated file back would
   cost a build and buy a regex. The `console` half is asserted as
-  `console.useXkbConfig == true` (every combination leaves
-  `keyboard.consoleKeyMap` null, so a false here means the TTY and the LUKS
-  prompt stopped deriving from the same xkb description). Read with `or null`
+  `console.keyMap` being the derivation named `xkb-console-keymap` (every
+  combination leaves `keyboard.consoleKeyMap` null, so anything else means the
+  TTY and the LUKS prompt stopped deriving from `custom.locale.keyboard`);
+  `console.useXkbConfig` is recorded but informational. Read with `or null`
   at every hop and **counted**: if no combination could check the mirror, the
   gate fails rather than passing having compared nothing.
 - **The timezone is checked in the builder, not at eval.** `builtins.pathExists
