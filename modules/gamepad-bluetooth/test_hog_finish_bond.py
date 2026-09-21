@@ -314,6 +314,68 @@ class ApplyCommandsTests(unittest.TestCase):
 
         self.assertEqual(runner.calls, [])
 
+    def test_wait_until_paired_polls_until_paired_yes(self):
+        replies = [
+            (0, XBOX_UNPAIRED),
+            (0, XBOX_UNPAIRED),
+            (0, XBOX_PAIRED),
+        ]
+
+        def flip(args, *, timeout=10):
+            rc, out = replies.pop(0)
+            return subprocess.CompletedProcess(
+                args=["bluetoothctl", *args], returncode=rc, stdout=out, stderr=""
+            )
+
+        sleeps = []
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", flip), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda s: sleeps.append(s)):
+            info = hog_finish_bond.wait_until_paired(MAC, attempts=6, delay=2.0)
+
+        self.assertTrue(hog_finish_bond.should_trust_after_pair(info))
+        self.assertEqual(sleeps, [2.0, 2.0])
+        self.assertEqual(replies, [])
+
+    def test_wait_until_paired_gives_up_still_unpaired(self):
+        runner = _FakeRunner({"info": (0, XBOX_UNPAIRED)})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None):
+            info = hog_finish_bond.wait_until_paired(MAC, attempts=3, delay=2.0)
+
+        self.assertFalse(hog_finish_bond.should_trust_after_pair(info))
+        self.assertEqual(runner.verbs(), ["info", "info", "info"])
+
+    def test_timed_out_pair_trusts_after_delayed_paired_yes(self):
+        infos = [XBOX_UNPAIRED, XBOX_PAIRED]
+
+        class Runner(_FakeRunner):
+            def __call__(self, args, *, timeout=20):
+                args = list(args)
+                self.calls.append(args)
+                if args[0] == "pair":
+                    return subprocess.CompletedProcess(
+                        args=["bluetoothctl", *args], returncode=124, stdout="", stderr=""
+                    )
+                if args[0] == "info":
+                    out = infos.pop(0)
+                    return subprocess.CompletedProcess(
+                        args=["bluetoothctl", *args], returncode=0, stdout=out, stderr=""
+                    )
+                if args[0] == "trust":
+                    return subprocess.CompletedProcess(
+                        args=["bluetoothctl", *args], returncode=0, stdout="", stderr=""
+                    )
+                return subprocess.CompletedProcess(
+                    args=["bluetoothctl", *args], returncode=0, stdout="", stderr=""
+                )
+
+        runner = Runner({})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
+            hog_finish_bond.apply_commands([("pair", MAC)], dry_run=False)
+
+        self.assertIn("trust", runner.verbs())
+
 
 class MaybeReconnectTests(unittest.TestCase):
     def test_empty_info_does_not_fire_blind_disconnect_connect(self):

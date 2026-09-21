@@ -110,6 +110,22 @@ def should_trust_after_pair(info: str) -> bool:
     return _flag(info, "Paired") and not _flag(info, "Blocked")
 
 
+def wait_until_paired(mac: str, *, attempts: int = 6, delay: float = 2.0) -> str:
+    """Poll `info` until Paired=yes or attempts are gone.
+
+    bluetoothctl pair is often killed at 30s while bluetoothd finishes the
+    bond afterwards. One immediate info still sees Paired=no.
+    """
+    info = ""
+    for i in range(attempts):
+        info = _run_bluetoothctl(["info", mac], timeout=10).stdout
+        if should_trust_after_pair(info):
+            return info
+        if i < attempts - 1:
+            time.sleep(delay)
+    return info
+
+
 def hog_input_bound(mac: str, devices_text: str | None = None) -> bool:
     """True only if THIS MAC already has a js handler — not some other joystick."""
     if devices_text is None:
@@ -244,7 +260,7 @@ def apply_commands(cmds: List[Tuple[str, str]], *, dry_run: bool) -> None:
             # back Paired=yes minutes later). So always re-read info and let
             # should_trust_after_pair() -- not the exit code -- decide.
         if op == "pair":
-            info = _run_bluetoothctl(["info", mac], timeout=10).stdout
+            info = wait_until_paired(mac)
             if not should_trust_after_pair(info):
                 print(
                     f"hog-finish-bond: pair {mac} did not yield Paired=yes; not trusting",
