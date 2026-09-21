@@ -1,1 +1,1 @@
-hyprctl dispatch exec "[workspace 4 silent] sh -c 'cd /home/asher && exec /nix/store/xxxx-foo-1.0/bin/foo --session'"
+hyprctl dispatch exec \[workspace\ 4\ silent\]\ sh\ -c\ \'cd\ /home/asher\ \&\&\ exec\ /nix/store/xxxx-foo-1.0/bin/foo\ --session\'

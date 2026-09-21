@@ -90,9 +90,14 @@ let
   restore = session.restore or { };
   restoreOn = restore.enable or false;
   saveInterval = restore.saveInterval or "2min";
-  # lockOnLogin only means anything under autoLogin: with a greeter in front of
-  # the session the password has already been asked for.
-  lockOnLogin = (autoLogin.enable or false) && (autoLogin.lockOnLogin or true);
+  # Whether a boot lock is CONFIGURED. This is the eval-time half of the
+  # decision: it only controls whether hypr-boot-lock exists at all. Whether it
+  # actually fires is a RUNTIME question, answered by the unit's
+  # ConditionEnvironment (see hypr-boot-lock below) — `custom.session.autoLogin`
+  # makes greetd log straight in on *boot*, but the very same Hyprland config is
+  # what a tuigreet login later in the same boot starts, and there the password
+  # has already been asked for.
+  lockOnLoginConfigured = (autoLogin.enable or false) && (autoLogin.lockOnLogin or true);
 
 in
 {
@@ -120,13 +125,10 @@ in
 
       # Startup applications - optimized, no gnome-keyring
       exec-once = lib.flatten [
-        # FIRST, before anything that can paint: under autologin there is no
-        # greeter asking for a password, so an unlocked desktop must never be
-        # on screen even for a frame. LUKS is the real gate on this machine
-        # (whole-disk); hyprlock is what keeps the post-boot desktop from
-        # being handed to whoever pressed the power button. Same unit and same
-        # invocation hypridle's lock_cmd uses, so there is one locker path.
-        (lib.optional lockOnLogin "systemctl --user start --no-block hyprlock.service")
+        # NOTE: the autologin boot lock is NOT here. exec-once forks and does
+        # not wait, so a `systemctl --user start` issued from this list races
+        # the target bounce on line 1 of the generated config and could be
+        # killed by it. It is the hypr-boot-lock unit below instead.
 
         # System tray apps
         [ "nm-applet --indicator" "udiskie --automount --notify" ]
@@ -841,6 +843,77 @@ in
         execStart = "${pkgs.swayosd}/bin/swayosd-server";
       };
     }
+    # ── Autologin boot lock (custom.session.autoLogin.lockOnLogin) ──────────
+    # Under autologin there is no greeter asking for a password, so an unlocked
+    # desktop must never be on screen even for a frame. LUKS is the real gate on
+    # this machine (whole-disk); this is what keeps the post-boot desktop from
+    # being handed to whoever pressed the power button.
+    #
+    # Three things here are deliberate and each was a real defect:
+    #
+    #  - A UNIT, not an exec-once. Line 1 of the config Home Manager generates
+    #    is `dbus-update-activation-environment --systemd --all && systemctl
+    #    --user stop hyprland-session.target && systemctl --user start
+    #    hyprland-session.target`. exec-once entries fork and are NOT
+    #    sequenced against each other, so a `systemctl --user start
+    #    hyprlock.service` from this list could land BEFORE that `stop`, and
+    #    the stop then tore the locker down again through
+    #    PartOf=hyprland-session.target -- with no Install and Restart=no,
+    #    nothing brought it back, and the session restore ordered
+    #    After=hyprlock.service against a job that no longer existed. Bound to
+    #    the target instead, it is part of the same transaction as everything
+    #    else in the session and can be ordered Before= them.
+    #
+    #  - `--grace 0`, NOT the shared hyprlock.service. That unit carries
+    #    `--grace 3`: for three seconds any keypress or >5px pointer move
+    #    dismisses the lock with no password. That is correct for an IDLE lock
+    #    (you walked away, you came back, you moved the mouse) and completely
+    #    wrong for a boot lock, where the whole point is that the person at the
+    #    keyboard has not authenticated yet. Hence a second unit rather than a
+    #    reuse; hypridle's lock_cmd still points at hyprlock.service.
+    #
+    #  - ConditionEnvironment, not the eval-time flag alone. `custom.session.
+    #    autoLogin` only describes greetd's INITIAL session; the identical
+    #    Hyprland config is also what a tuigreet login later in the same boot
+    #    starts, and locking there would demand the password the user just
+    #    typed. The two are indistinguishable from inside the session (loginctl
+    #    reports Service=greetd for both), so session-resume.nix sets
+    #    OLIGARCHY_AUTOLOGIN=1 on greetd's initial_session command only.
+    #    Hyprland inherits it, and HM's line-1 `dbus-update-activation-
+    #    environment --systemd --all` imports it into the user manager before
+    #    the target starts -- which is exactly when this condition is
+    #    evaluated. ExecStartPost then unsets it from the manager, so a logout
+    #    and greeter re-login in the same boot does not lock again.
+    //
+    lib.optionalAttrs lockOnLoginConfigured {
+      hypr-boot-lock = {
+        Unit = {
+          Description = "Lock the screen on autologin boot (no grace period)";
+          After = [ "hyprland-session.target" ];
+          PartOf = [ "hyprland-session.target" ];
+          # Nothing that paints may start before the locker is up. Type=exec
+          # below is what makes this ordering mean anything: without it the
+          # unit is "started" as soon as fork() returns, before hyprlock has a
+          # surface.
+          Before = [ "waybar.service" "hyprpaper.service" "mako.service" ]
+          ++ lib.optional restoreOn "hypr-session-restore.service";
+          ConditionEnvironment = "OLIGARCHY_AUTOLOGIN=1";
+        };
+        Service = {
+          Type = "exec";
+          ExecStart = "${pkgs.hyprlock}/bin/hyprlock --grace 0";
+          # `-` because failing to unset must never fail the lock.
+          ExecStartPost = "-${pkgs.systemd}/bin/systemctl --user unset-environment OLIGARCHY_AUTOLOGIN";
+          Restart = "no";
+          TimeoutStopSec = "5s";
+          KillMode = "mixed";
+          # Same regression guard as hyprlock.service above -- see the long
+          # comment there. The locker renders where the COMPOSITOR renders.
+          UnsetEnvironment = "DRI_PRIME";
+        };
+        Install.WantedBy = [ "hyprland-session.target" ];
+      };
+    }
     # ── Session resume (custom.session.restore.enable) ───────────────────────
     # lib.optionalAttrs, not lib.mkIf: this whole binding is a plain attrset
     # built in a `let`, so mkIf would land inside an attribute value rather
@@ -861,8 +934,19 @@ in
       hypr-session-restore = {
         Unit = {
           Description = "Relaunch the previous Hyprland window set";
+          # No snapshot yet (first ever login, or the file was cleared) is not
+          # a failure. Without this the unit exits non-zero on that first boot
+          # and sits `failed` for the whole session, which is indistinguishable
+          # at a glance from a restore that genuinely broke.
+          ConditionPathExists = "%h/.config/oligarchy/session/last.json";
           After = [ "hyprland-session.target" ]
-          ++ lib.optional lockOnLogin "hyprlock.service";
+          ++ lib.optional lockOnLoginConfigured "hypr-boot-lock.service";
+          # Requires, not just After: if hyprlock fails to start in the
+          # autologin session, the bar and wallpaper may as well come up, but
+          # the previous window set must NOT be relaunched onto an unlocked
+          # desktop. A boot-lock whose ConditionEnvironment declined (a greeter
+          # login) counts as satisfied, so this only bites on a real failure.
+          Requires = lib.optional lockOnLoginConfigured "hypr-boot-lock.service";
           PartOf = [ "hyprland-session.target" ];
         };
         Service = {
@@ -873,16 +957,19 @@ in
             "JQ=${pkgs.jq}/bin/jq"
           ];
           ExecStart = "%h/.local/bin/hypr-session restore";
-          # The bonus save; the timer below is what actually protects the
-          # snapshot. `-` prefix because this usually CANNOT succeed: the unit
-          # is PartOf hyprland-session.target, which is stopped in response to
-          # the compositor already having exited, so `hyprctl clients -j` has
-          # no socket left to talk to. It earns its place for the case where
-          # the unit is stopped while the session is still up (a manual
-          # `systemctl --user restart`), and without the `-` every logout would
-          # leave a `failed` unit behind for a save that was never possible.
-          ExecStop = "-%h/.local/bin/hypr-session save";
-          TimeoutStopSec = "10s";
+          # Deliberately NO ExecStop. A save-on-stop looks like free insurance
+          # and is actively harmful: the unit is RemainAfterExit, so the one
+          # case where the stop CAN reach a live compositor -- `systemctl
+          # --user restart hypr-session-restore`, the obvious way to re-run a
+          # restore by hand -- saves the desktop that is currently on screen
+          # and then immediately relaunches all of it, doubling every window
+          # (RemainAfterExit means `restart` really does run the stop half).
+          # ($mod+F4 dodges this only because it calls `hypr-session restore`
+          # directly rather than going through the unit.) On a
+          # real logout the stop cannot succeed anyway (the target is stopped
+          # because the compositor already exited, so `hyprctl clients -j` has
+          # no socket). The timer below is the protection, and it is the only
+          # thing that survives a crash, a power cut or an OOM kill.
         };
         Install.WantedBy = [ "hyprland-session.target" ];
       };
@@ -905,9 +992,10 @@ in
       };
     };
 
-  # The timer is the workhorse, not hypr-session-restore's ExecStop: a crash, a
-  # power cut or an OOM kill never runs an ExecStop, and the whole point is to
-  # survive exactly those. Worst case the snapshot is one saveInterval old.
+  # The timer is the ONLY thing that snapshots the session (see the comment on
+  # hypr-session-restore for why there is no save-on-stop): a crash, a power cut
+  # or an OOM kill never runs an ExecStop, and the whole point is to survive
+  # exactly those. Worst case the snapshot is one saveInterval old.
   systemd.user.timers = lib.mkIf restoreOn {
     hypr-session-save = {
       Unit = {

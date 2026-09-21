@@ -1,0 +1,34 @@
+{
+  "saved_at": "2026-09-20T10:00:00-07:00",
+  "hyprland_instance": "fixture_hostile_argv",
+  "clients": [
+    {
+      "class": "hostile",
+      "initialClass": "hostile",
+      "workspace": 7,
+      "floating": false,
+      "at": [
+        11,
+        59
+      ],
+      "size": [
+        1258,
+        729
+      ],
+      "monitor": 0,
+      "pid": 3131,
+      "argv": [
+        "cat",
+        "$HOME",
+        "a\"b",
+        "`id`",
+        "back\\slash",
+        "one's",
+        "semi;colon",
+        "new\nline"
+      ],
+      "cwd": "/home/asher/My \"Odd\" Dir",
+      "exe": "/nix/store/0000000000000000000000000000000d-coreutils-9.8/bin/cat"
+    }
+  ]
+}
