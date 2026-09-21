@@ -286,7 +286,8 @@ class TimeoutTests(unittest.TestCase):
 class ApplyCommandsTests(unittest.TestCase):
     def test_timed_out_pair_still_trusts_when_bluez_finished_the_bond(self):
         runner = _FakeRunner({"pair": (124, ""), "info": (0, XBOX_PAIRED)})
-        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
             hog_finish_bond.apply_commands([("pair", MAC)], dry_run=False)
 
         self.assertIn("trust", runner.verbs())
@@ -294,7 +295,8 @@ class ApplyCommandsTests(unittest.TestCase):
 
     def test_timed_out_pair_does_not_trust_when_still_unpaired(self):
         runner = _FakeRunner({"pair": (124, ""), "info": (0, XBOX_UNPAIRED)})
-        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
             hog_finish_bond.apply_commands([("pair", MAC)], dry_run=False)
 
         self.assertNotIn("trust", runner.verbs())
@@ -446,7 +448,8 @@ class CollectInfosTests(unittest.TestCase):
         runner = _ScriptedRunner(
             {("devices", "Connected"): (124, "", "timed out after 10s")}
         )
-        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
             self.assertEqual(hog_finish_bond.main([]), 1)
 
     def test_failed_info_skips_that_mac_without_poisoning_the_map(self):
