@@ -24,6 +24,14 @@
 # - Does not set `services.greetd.restart`. See the comment at initial_session.
 # - Does not enable anything by itself; every option here defaults off/safe, so
 #   a fresh clone behaves exactly as it did before this file existed.
+#
+# When a change here takes effect: greetd is `restartIfChanged = false` (see
+# configuration.nix — restarting it kills the live Hyprland session it spawned),
+# so flipping `autoLogin.enable` on from inside a running session writes the new
+# greetd config but does NOT apply it. `initial_session` only ever runs on
+# greetd's first start, which now means the NEXT BOOT. That is not a bug to work
+# around: a switch that restarted greetd to pick this up would take the desktop
+# down with it.
 { config
 , lib
 , pkgs
@@ -48,12 +56,23 @@ in
         type = lib.types.bool;
         default = true;
         description = ''
-          Start hyprlock as the first thing in the auto-logged-in session, so
-          the desktop is never displayed unlocked.
+          Lock the AUTO-LOGGED-IN session as it comes up: `hyprlock --grace 0`
+          runs from a user unit gated on `ConditionEnvironment=OLIGARCHY_AUTOLOGIN=1`,
+          ordered ahead of waybar, hyprpaper and the window restore, so the
+          password prompt is what the boot lands on rather than a live desktop.
+
+          The guarantee is scoped, and scoped deliberately. It is: *in the
+          autologin session, hyprlock starts before the desktop components do.*
+          It is NOT "the desktop is never displayed unlocked" — nothing here can
+          promise that hyprlock wins a race against every frame the compositor
+          may paint, and a session reached through the greeter (the user already
+          typed a password) is deliberately NOT re-locked. The gate is the env
+          var, which `initial_session` sets and the lock unit unsets once it has
+          fired, so a later greeter login in the same boot inherits nothing.
 
           Consumed by Home Manager (`home/hyprland/`) via
           `osConfig.custom.session.autoLogin.lockOnLogin`, not by this module —
-          the compositor's `exec-once` is user-level config.
+          the compositor's user units and `exec-once` are user-level config.
 
           Defaults true on purpose: autologin's whole cost is that a booted
           machine no longer asks for anything, and this is what pays it back.
@@ -137,8 +156,27 @@ in
     # The accepted cost is that a greetd process crash is not self-healing —
     # recover with `systemctl restart greetd` from a VT/SSH, or reboot. greetd
     # does not crash in practice, and an autologin loop is strictly worse.
+    #
+    # Why `env OLIGARCHY_AUTOLOGIN=1` and not a bare `Hyprland`: the lock-on-
+    # login half has to fire for THIS session and no other, and nothing already
+    # on the session can tell the two apart. Both `initial_session` and a
+    # tuigreet login arrive as greetd — same `Service=greetd`, same seat, same
+    # tty, same user — so `loginctl show-session` has no field that
+    # discriminates them, and "is this the first session of the boot" is a race
+    # against anyone who logs out and back in. An env var set by the session
+    # command itself is the only discriminator that exists at the moment the
+    # distinction is still known. Home Manager's
+    # `dbus-update-activation-environment --systemd --all` imports Hyprland's
+    # environment into the user manager, so a user unit can gate on it with
+    # `ConditionEnvironment=OLIGARCHY_AUTOLOGIN=1`; that unit unsets the
+    # variable once it has locked, so a greeter login later in the same boot
+    # inherits nothing and is not re-locked.
+    #
+    # `env` is coreutils' and is on the login PATH for the same reason
+    # `Hyprland` is; keeping the compositor a bare name preserves the
+    # wrapper-resolution property described above.
     services.greetd.settings.initial_session = {
-      command = "Hyprland";
+      command = "env OLIGARCHY_AUTOLOGIN=1 Hyprland";
       user = config.custom.user.name;
     };
   };

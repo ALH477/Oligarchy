@@ -607,8 +607,43 @@ in {
       # stamp disappear the moment anything deactivated this unit. To replay it
       # while iterating on the video:
       #   rm /run/boot-intro-played && systemctl restart boot-intro-player
+      #
+      # TWO conditions, and both are load-bearing — they answer different
+      # questions and systemd ANDs them (distinct Condition* types are a
+      # logical AND, so the unit starts only if BOTH pass):
+      #
+      #   ConditionPathExists=!/run/boot-intro-played
+      #     "has this boot already attempted the intro?"  Covers the
+      #     target-restart re-run described above, which is the common case
+      #     once the stamp exists.
+      #
+      #   ConditionPathExistsGlob=!/run/systemd/sessions/*
+      #     "is anybody logged in right now?"  logind writes one file per
+      #     session under /run/systemd/sessions, so a live Hyprland session —
+      #     or greetd's own `greeter` session, which is equally a reason not
+      #     to vhangup tty1 — makes the glob match and the unit decline.
+      #
+      # The stamp ALONE is not enough: the dangerous window is exactly "no
+      # stamp, but a session is live", and there are two ordinary ways in.
+      #   (a) The switch that first DEPLOYS this unit. The old oneshot is
+      #       inactive and nothing ever wrote the stamp, so multi-user.target
+      #       pulls the new unit in and it plays over the running desktop.
+      #       Observed on the deploy of the fix itself — journal boot -3:
+      #       "Starting DeMoD Boot Intro" 18:55:00.509 → "Session 3 logged
+      #       out" 18:55:00.558.
+      #   (b) Enabling services.boot-intro from inside a live session and
+      #       switching: brand-new unit, stampless boot, same kill. Recurring,
+      #       not a one-off.
+      # The glob ALONE is not enough either: at boot this unit runs
+      # Before=display-manager.service, so no session exists yet, the glob
+      # matches nothing, and every later target restart would replay the
+      # video. The stamp makes it once-per-boot; the glob makes it safe on a
+      # boot where it has not yet run.
       # ══════════════════════════════════════════════════════════════════════
-      unitConfig.ConditionPathExists = "!/run/boot-intro-played";
+      unitConfig = {
+        ConditionPathExists = "!/run/boot-intro-played";
+        ConditionPathExistsGlob = "!/run/systemd/sessions/*";
+      };
 
       serviceConfig = {
         Type = "oneshot";

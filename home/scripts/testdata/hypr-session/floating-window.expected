@@ -1,1 +1,1 @@
-hyprctl dispatch exec "[workspace 5 silent; float; move 320 180; size 900 640] sh -c 'cd /home/asher && exec pavucontrol --tab=3'"
+hyprctl dispatch exec \[workspace\ 5\ silent\;\ float\;\ move\ 320\ 180\;\ size\ 900\ 640\]\ sh\ -c\ \'cd\ /home/asher\ \&\&\ exec\ pavucontrol\ --tab=3\'

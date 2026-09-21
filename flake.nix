@@ -1187,14 +1187,41 @@
         # so the rule is checked over EVERY unit with TTYPath = /dev/tty1
         # rather than over that one unit by name.
         #
-        # A tty1 unit must carry all three, because each covers a different
-        # start path: RemainAfterExit (the target restart finds nothing to do),
+        # A tty1 unit must carry THREE, because each covers a different start
+        # path: RemainAfterExit (the target restart finds nothing to do),
         # restartIfChanged = false (a changed unit file is not force-restarted),
         # and a PID 1 Condition* (evaluated before any exec context exists, so
-        # it can decline BEFORE the vhangup — which is why the old ExecCondition
-        # could not work). greetd is the one exemption: it is the unit that
-        # legitimately owns tty1, and its own protection is restartIfChanged =
-        # false, asserted separately here.
+        # it can decline BEFORE the vhangup — which is why the old
+        # ExecCondition could not work).
+        #
+        # A FOURTH is required of the units that actually hang up the VT, i.e.
+        # those with serviceConfig.TTYVHangup: specifically the live-session
+        # guard ConditionPathExistsGlob = "!/run/systemd/sessions/*". It is
+        # keyed on TTYVHangup rather than on "holds tty1" because TTYVHangup is
+        # the primitive that does the damage — it is EXEC CONTEXT, applied by
+        # the service manager as it sets up the process, which is after every
+        # Condition* has passed and after ExecCondition would have run, so
+        # nothing inside the unit's own command sequence can prevent it. A tty1
+        # unit that never hangs up the VT cannot reproduce this failure and is
+        # not asked for the guard.
+        #
+        # The fourth is separate from the third on purpose. "Some Condition*"
+        # is satisfied by a once-per-boot stamp, which encodes "this boot
+        # already attempted it" — NOT "a session is live". Two ordinary paths
+        # slip through that: the very switch that first deploys the unit (old
+        # oneshot inactive, stamp never written) and a user enabling the
+        # service from inside a live session (brand-new unit, stampless boot).
+        # Both kill the desktop. logind writes one file per session under
+        # /run/systemd/sessions, so the negated glob is the condition that
+        # actually asks "is anybody logged in"; at boot the unit runs before
+        # the display manager, nothing matches, and the intro still plays.
+        # Checking for the exact string is deliberate: a gate that accepts any
+        # Condition* here is the gate that shipped the bug. The glob string is
+        # the accepted implementation, not merely an example.
+        #
+        # greetd is the one exemption: it is the unit that legitimately owns
+        # tty1, and its own protection is restartIfChanged = false, asserted
+        # separately here.
         #
         # No KVM, no closure — but it does evaluate the whole system config.
         # Run on demand:  nix build .#session-survives-switch
@@ -1226,14 +1253,27 @@
               (_: svc: (svc.serviceConfig.TTYPath or null) == "/dev/tty1")
               services;
 
+            # The exact live-session guard, not "any Condition*". unitConfig
+            # values reach here as a string from Nix but a list is legal for
+            # repeated Condition* lines, so accept either shape.
+            liveSessionGlob = "!/run/systemd/sessions/*";
+            hasLiveSessionGuard = svc:
+              let v = (svc.unitConfig or { }).ConditionPathExistsGlob or null; in
+              if builtins.isList v then lib'.elem liveSessionGlob v
+              else v == liveSessionGlob;
+
             payload = builtins.toJSON {
               tty1Units = lib'.mapAttrs
                 (_: svc: {
                   remainAfterExit = asBool (svc.serviceConfig.RemainAfterExit or false);
+                  # The primitive the live-session guard exists for. Same
+                  # bool-or-systemd-string normalisation as RemainAfterExit.
+                  ttyVHangup = asBool (svc.serviceConfig.TTYVHangup or false);
                   restartIfChanged = svc.restartIfChanged;
                   hasCondition = lib'.any
                     (k: lib'.hasPrefix "Condition" k)
                     (builtins.attrNames (svc.unitConfig or { }));
+                  liveSessionGuard = hasLiveSessionGuard svc;
                 })
                 tty1;
               greetdRestartIfChanged = services.greetd.restartIfChanged or null;
@@ -1273,7 +1313,7 @@
               fi
 
               jq -r '.tty1Units | to_entries[]
-                     | "\(.key)\tRemainAfterExit=\(.value.remainAfterExit)\trestartIfChanged=\(.value.restartIfChanged)\tCondition*=\(.value.hasCondition)"' \
+                     | "\(.key)\tRemainAfterExit=\(.value.remainAfterExit)\trestartIfChanged=\(.value.restartIfChanged)\tCondition*=\(.value.hasCondition)\tTTYVHangup=\(.value.ttyVHangup)\tliveSessionGuard=\(.value.liveSessionGuard)"' \
                 "$units" | tee $out/report.txt
 
               fail=0
@@ -1284,6 +1324,7 @@
                   | [ (if .remainAfterExit then empty else "RemainAfterExit" end)
                     , (if .restartIfChanged then "restartIfChanged=false" else empty end)
                     , (if .hasCondition then empty else "a Condition* in unitConfig" end)
+                    , (if (.ttyVHangup | not) or .liveSessionGuard then empty else "unitConfig.ConditionPathExistsGlob = \"!/run/systemd/sessions/*\" (required because this unit sets TTYVHangup: that is exec context, applied by the service manager after every Condition* has passed and after ExecCondition would have run, so nothing inside the unit can stop it — and a once-per-boot stamp alone still vhangups a live session on the switch that first deploys the unit)" end)
                     ] | join(", ")' "$units")
                 if [ -n "$bad" ]; then
                   echo "FAIL  $name holds /dev/tty1 and is missing: $bad" >&2

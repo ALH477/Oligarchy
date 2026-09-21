@@ -1,0 +1,1 @@
+hyprctl dispatch exec \[workspace\ 7\ silent\]\ sh\ -c\ \'cd\ /home/asher/My\\\ \\\"Odd\\\"\\\ Dir\ \&\&\ exec\ cat\ \\\$HOME\ a\\\"b\ \\\`id\\\`\ back\\\\slash\ one\\\'\\\'\'s\ semi\\\;colon\ \$\'\\\'\'new\\nline\'\\\'\'\'
