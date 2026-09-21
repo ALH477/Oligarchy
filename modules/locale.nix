@@ -23,13 +23,24 @@
 # - **`region` is separate from `language`** because "English UI, metric units,
 #   ISO dates" is the single most common real configuration, and collapsing
 #   the two would mistranslate the UI to get the date format right.
-# - **The console keymap is DERIVED, not duplicated.** `console.useXkbConfig`
-#   makes ckbcomp compile the same xkb description the desktop uses into a
-#   vconsole keymap, so the TTY and the LUKS prompt cannot disagree with
-#   Hyprland. That is the mirror killed by derivation rather than by a gate.
-#   Cost: `pkgs.ckbcomp` (perl) enters the build closure and one small
-#   derivation is built per distinct layout. `keyboard.consoleKeyMap` is the
-#   escape hatch for a keymap xkb cannot express.
+# - **The console keymap is DERIVED, not duplicated.** `ckbcomp` compiles the
+#   same xkb description the desktop uses into a vconsole keymap, so the TTY
+#   and the LUKS prompt cannot disagree with Hyprland. That is the mirror
+#   killed by derivation rather than by a gate. Cost: `pkgs.ckbcomp` (perl)
+#   enters the build closure and one small derivation is built per distinct
+#   layout. `keyboard.consoleKeyMap` is the escape hatch for a keymap xkb
+#   cannot express.
+#
+#   NOT via `console.useXkbConfig`, deliberately. That switch is nixpkgs'
+#   mechanism for the same idea, but its implementation
+#   (nixos/modules/config/console.nix) defines `console.keyMap` at NORMAL
+#   priority under `mkIf cfg.useXkbConfig`. Turning it on therefore makes an
+#   ordinary `console.keyMap = "de-latin1";` in local.nix a hard eval
+#   *conflict*, with an error that points into nixpkgs and never mentions
+#   `custom.locale`. So `useXkbConfig` stays at its default (false) and this
+#   module builds the identical `xkb-console-keymap` derivation itself, at
+#   `mkDefault`. Same keymap, same source values, and a plain user
+#   `console.keyMap` line simply wins.
 # - **Every sink below is `mkDefault`**, so `~/.config/oligarchy/local.nix`
 #   overrides all of it with no new override channel. That file needs
 #   `--impure`: without it `builtins.pathExists` answers false rather than
@@ -66,6 +77,56 @@ let
   ];
 
   formatsLocale = if cfg.region == null then cfg.glibcLocale else cfg.region;
+
+  # Replicated from nixos/modules/config/console.nix (25.11) rather than
+  # reached via `console.useXkbConfig` — see the header for why the switch is
+  # unusable here. One deliberate difference: it reads `cfg.keyboard.*`
+  # directly instead of `config.services.xserver.xkb.*`, so the keymap does not
+  # take a hop through another module's fixpoint to get values this module set
+  # in the first place. The divergence assertion below is what keeps the two
+  # from drifting when someone sets `services.xserver.xkb` by hand.
+  xkbConsoleKeymap = pkgs.runCommand "xkb-console-keymap" { preferLocalBuild = true; } ''
+    '${pkgs.buildPackages.ckbcomp}/bin/ckbcomp' \
+      ${
+      optionalString (
+        config.environment.sessionVariables ? XKB_CONFIG_ROOT
+      ) "-I${config.environment.sessionVariables.XKB_CONFIG_ROOT}"
+    } \
+      -model '${cfg.keyboard.model}' -layout '${cfg.keyboard.layout}' \
+      -option '${cfg.keyboard.options}' -variant '${cfg.keyboard.variant}' > "$out"
+  '';
+
+  # Hyprland reads custom.locale.keyboard.* directly while the console keymap
+  # and X11 read it through services.xserver.xkb, so a direct
+  # `services.xserver.xkb.layout = "de"` gives a German X session and a US
+  # Hyprland session with nothing logged — the exact mirror this module exists
+  # to remove, recreated one option lower down.
+  xkbKeys = [ "layout" "variant" "options" "model" ];
+  divergentXkbKeys = filter (k: config.services.xserver.xkb.${k} != cfg.keyboard.${k}) xkbKeys;
+
+  # An input method with no addon installs the framework and no engine: fcitx5
+  # comes up, the candidate window never appears, and the script cannot be
+  # typed at all. Keyed on the primary subtag because the engine follows the
+  # language, not the region. `yue` is here because localeLib.isCJK counts it,
+  # so a `yue-HK` language auto-enables fcitx5 and would otherwise land in the
+  # zero-addon hole this exists to close.
+  #
+  # NB `pkgs.fcitx5-chinese-addons` is an alias that THROWS on 25.11 — the
+  # package lives under qt6Packages, which is also where nixpkgs' own fcitx5
+  # module takes fcitx5-with-addons from.
+  fcitx5AddonsFor =
+    tag:
+    let
+      lang = localeLib.primarySubtag tag;
+    in
+    if lang == "ja" then
+      [ pkgs.fcitx5-mozc ]
+    else if lang == "zh" || lang == "yue" then
+      [ pkgs.qt6Packages.fcitx5-chinese-addons ]
+    else if lang == "ko" then
+      [ pkgs.fcitx5-hangul ]
+    else
+      [ ];
 
   # fcitx5 for Chinese/Japanese/Korean, nothing otherwise. An input method is
   # not optional for those languages — without one there is no way to type the
@@ -190,9 +251,15 @@ in
         example = "de";
         description = ''
           Keyboard layout in xkb spelling. Reaches the Wayland session, the
-          IceWM/X11 recovery session and — via
-          {option}`console.useXkbConfig` — the TTY and the initrd LUKS prompt,
-          from this one value.
+          IceWM/X11 recovery session and — via the derived
+          {option}`console.keyMap` — the TTY and the initrd LUKS prompt, from
+          this one value.
+
+          Set THIS, never {option}`services.xserver.xkb.layout` directly: the
+          Hyprland session reads this option while the console keymap and X11
+          read it through `services.xserver.xkb`, so setting the sink diverges
+          them. An assertion refuses that configuration rather than letting it
+          boot half-German.
         '';
       };
 
@@ -229,12 +296,16 @@ in
           Override the virtual-console keymap instead of deriving it from the
           xkb description above.
 
-          `null` (the default) is the right answer almost always: it turns on
-          {option}`console.useXkbConfig`, which compiles the SAME xkb
-          description the desktop uses into a vconsole keymap with `ckbcomp`,
-          so the TTY and the LUKS prompt cannot drift away from Hyprland.
-          Setting this reintroduces that mirror by hand — do it only for a
-          keymap xkb cannot express.
+          `null` (the default) is the right answer almost always: the module
+          then compiles the SAME xkb description the desktop uses into a
+          vconsole keymap with `ckbcomp` and sets it as
+          {option}`console.keyMap` at `mkDefault`, so the TTY and the LUKS
+          prompt cannot drift away from Hyprland. Setting this reintroduces
+          that mirror by hand — do it only for a keymap xkb cannot express.
+
+          Either way {option}`console.useXkbConfig` is left alone (false), so
+          a plain `console.keyMap = "de-latin1";` elsewhere in your config just
+          overrides the default instead of colliding with nixpkgs.
         '';
       };
     };
@@ -248,6 +319,17 @@ in
         for a Chinese/Japanese/Korean {option}`custom.locale.language`, none
         otherwise. Set explicitly to force one on or — with
         {option}`i18n.inputMethod.enable` — off.
+
+        Resolving to `fcitx5` also installs the engine addon for the language
+        (`fcitx5-mozc` for `ja`, `fcitx5-chinese-addons` for `zh`/`yue`,
+        `fcitx5-hangul` for `ko`) — without one, fcitx5 starts and still
+        cannot type the script. There is deliberately no
+        `custom.locale.inputMethodAddons` option: set
+        {option}`i18n.inputMethod.fcitx5.addons` directly. That option is a
+        merging list, so your entries are ADDED to the derived one; use
+        `lib.mkForce` to replace it outright. (It cannot be `mkDefault` here —
+        nixpkgs' own fcitx5 module already defines it at normal priority, so a
+        `mkDefault` list would be silently discarded.)
       '';
     };
 
@@ -324,7 +406,12 @@ in
     # NB: no /CHARSET suffix here. nixos/modules/config/i18n.nix rejects the
     # idea explicitly — the suffix belongs in i18n.extraLocales, and per-key
     # charsets go in i18n.localeCharsets.
-    i18n.extraLocaleSettings = mkDefault (genAttrs formatKeys (_: formatsLocale));
+    #
+    # The mkDefault is INSIDE genAttrs, one per key, not around the attrset.
+    # Wrapping the whole set gives the priority to the set: a user overriding
+    # LC_TIME alone then wins the whole definition and silently drops the other
+    # eight keys back to i18n.defaultLocale. Per-key, the other eight survive.
+    i18n.extraLocaleSettings = genAttrs formatKeys (_: mkDefault formatsLocale);
 
     # i18n.supportedLocales is NOT set: on 25.11 its default is derived from
     # defaultLocale + extraLocaleSettings + extraLocales, so it already tracks
@@ -333,9 +420,10 @@ in
     i18n.extraLocales = mkDefault cfg.extraLocales;
 
     # Set UNCONDITIONALLY, not under `mkIf config.services.xserver.enable`:
-    # console.useXkbConfig's implementation reads config.services.xserver.xkb
-    # regardless of whether X is enabled, which is exactly what makes the
-    # derived console keymap work on a Wayland box.
+    # the IceWM/X11 recovery session enables X late and reads these, and the
+    # divergence assertion below compares against them on every host, X or not.
+    # (The derived console keymap does NOT come through here — it is compiled
+    # from cfg.keyboard.* directly, so it works on a Wayland box regardless.)
     services.xserver.xkb = {
       layout = mkDefault cfg.keyboard.layout;
       variant = mkDefault cfg.keyboard.variant;
@@ -343,8 +431,12 @@ in
       model = mkDefault cfg.keyboard.model;
     };
 
-    console.useXkbConfig = mkDefault (cfg.keyboard.consoleKeyMap == null);
-    console.keyMap = mkIf (cfg.keyboard.consoleKeyMap != null) (mkDefault cfg.keyboard.consoleKeyMap);
+    # console.useXkbConfig is deliberately NOT set — see the header. The
+    # derivation below is nixpkgs' own, built from cfg.keyboard.* instead, and
+    # mkDefault means an ordinary `console.keyMap = "de-latin1";` wins.
+    console.keyMap = mkDefault (
+      if cfg.keyboard.consoleKeyMap != null then cfg.keyboard.consoleKeyMap else xkbConsoleKeymap
+    );
 
     # 25.11 shape: `enable` + `type`. `i18n.inputMethod.enabled` is deprecated
     # and warns.
@@ -352,6 +444,14 @@ in
       enable = mkDefault true;
       type = mkDefault resolvedInputMethod;
       fcitx5.waylandFrontend = mkIf (resolvedInputMethod == "fcitx5") (mkDefault true);
+
+      # Normal priority, NOT mkDefault: nixpkgs' fcitx5 module defines this
+      # list at normal priority whenever fcitx5 is enabled, and filterOverrides
+      # keeps only the lowest-numbered priority — so an mkDefault list here
+      # evaluates to [ ] and the user gets a framework with no engine, which is
+      # the bug this is closing. Lists merge, so a user's own addons are added;
+      # lib.mkForce replaces.
+      fcitx5.addons = mkIf (resolvedInputMethod == "fcitx5") (fcitx5AddonsFor cfg.language);
     };
 
     # `fonts.packages` is a merging list, so no mkIf: the derived set is gated
@@ -386,6 +486,21 @@ in
           name. It takes a glibc spelling such as "de_AT.UTF-8" — NOT a BCP-47
           tag ("de-AT"), and NOT the "/CHARSET"-suffixed form that
           custom.locale.extraLocales takes. Same silent fallback to C as above.
+        '';
+      }
+      {
+        assertion = divergentXkbKeys == [ ];
+        message = ''
+          ${concatMapStringsSep "\n" (k: ''
+          services.xserver.xkb.${k} was set directly (value "${toString config.services.xserver.xkb.${k}}")
+          but custom.locale.keyboard.${k} is "${toString cfg.keyboard.${k}}"; the console keymap,
+          Hyprland and X11 all read custom.locale.keyboard.*, so set that instead.'') divergentXkbKeys}
+
+          custom.locale sets services.xserver.xkb from custom.locale.keyboard.*
+          at mkDefault, so overriding the sink wins for X11 — and does nothing
+          at all for the Hyprland session or the derived console keymap, both
+          of which read custom.locale.keyboard.* directly. That is the mirror
+          this module exists to remove, one option lower down.
         '';
       }
       {
