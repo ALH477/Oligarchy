@@ -1,17 +1,22 @@
 # Localization (i18n/l10n) — Design & Living Roadmap
 
-> **Status:** LIVING DOCUMENT. **Nothing is landed.** Stage 0 is not started;
-> every option name, catalog key and gate name below is a proposal, and the
-> only thing in this file that is *fact* is §3, which was measured against the
+> **Status:** LIVING DOCUMENT. **Stages 0, 1 and 2 landed 2026-09-21** on
+> branch `feat/locale-day-one` — that is the §10 day-one cut: the `custom.locale.*`
+> contract, the system layer behind it, and `oligarchy-adopt`. The §4.1 option
+> names are therefore **frozen, not proposed**. Stages 3-5 (every catalog, every
+> `t!()`, voice) are untouched and everything this document says about them is
+> still a proposal, as are the four gates that serve them
+> (`.#catalog-drift`, `.#i18n-pseudo`, `.#test-iso-locale-roundtrip`,
+> `.#locale-voice-contract`). §3 remains the measured part, measured against the
 > tree at commit `76674a9`. Update the stage table and the changelog at the
-> bottom as work proceeds. The design section above the line is the intended
-> contract; the roadmap below the line is the work tracker.
+> bottom as work proceeds. The design section above the line is the contract;
+> the roadmap below the line is the work tracker.
 >
-> **Source:** there is no sub-flake yet. The contract lands as
-> `modules/locale.nix` + `modules/locale/` (catalogs, generators, the adoption
-> tool) in the main tree, wired into `commonModules` alongside
-> `./modules/platform.nix` and `./modules/user.nix`, which it deliberately
-> imitates.
+> **Source:** no sub-flake. The contract lives in `modules/locale.nix` +
+> `modules/locale/` (the adoption tool and its fixtures; catalogs and
+> generators when stage 3 lands) in the main tree, wired into `commonModules`
+> alongside `./modules/platform.nix` and `./modules/user.nix`, which it
+> deliberately imitates.
 
 ---
 
@@ -707,16 +712,24 @@ fanned out to parallel agents (stage 4 is itself four independent sub-streams,
 one per Rust sub-flake), and **stage 0 is the frozen contract** everything else
 compiles against.
 
-| stage | delivers | owns (files) | gate |
-|---|---|---|---|
-| **0** | frozen contract | `modules/locale.nix` (options only, no config), `modules/locale/catalog/en.json`, `modules/locale/catalog/_schema.md`, `modules/locale/lib.nix`, `flake.nix` (commonModules + two gate outputs) | `.#locale-contract`, `.#catalog-drift` |
-| **1** | system layer works | `modules/locale.nix` (config block), `configuration.nix` (delete `:606-613` xkb + `:1184-1201` i18n/time), `home/hyprland/default.nix` (`:223-224`), `home/waybar/default.nix` (add `osConfig` arg, clock) | `.#locale-contract` extended |
-| **2** | installer round-trip | `modules/locale/adopt.nix`, `modules/locale/oligarchy-adopt.sh`, `flake.nix` ISO block + hw-detect hint | `.#locale-adopt-fixtures`, later `.#test-iso-locale-roundtrip` |
-| **3** | Nix + bash strings | `modules/locale/msg.nix`, `home/apps/control-center/*.sh`, `home/scripts/*`, `home/hyprland/default.nix` (welcomeScript), `configuration.nix` (greetd greeting, boot-intro text) | `.#i18n-pseudo` |
-| **4** | Rust strings (4 parallel sub-streams) | `modules/warroom/crates/warroom-tui/`, `modules/greeting/src/`, `modules/dsp-ctl/`, `modules/oligarchy-forge/` | `.#i18n-pseudo` extended |
-| **5** | content + voice | `modules/blipply-assistant/src/{config.rs,audio/stt.rs}`, `modules/demod-voice/config.yaml`, `modules/scrollmapper/` (docs only), `docs/README.<lang>.md` policy | `.#locale-voice-contract` |
+| stage | status | delivers | owns (files) | gate |
+|---|---|---|---|---|
+| **0** | **landed** 2026-09-21 (`feat/locale-day-one`) | frozen contract | `modules/locale.nix`, `modules/locale/lib.nix`, `flake.nix` (commonModules + gate outputs) | `.#locale-contract` |
+| **1** | **landed** 2026-09-21 (`feat/locale-day-one`) | system layer works | `modules/locale.nix` (config block), `configuration.nix` (the hardcoded xkb + i18n/time sites), `home/hyprland/default.nix`, `home/waybar/default.nix` (`osConfig` arg, clock) | `.#locale-contract` |
+| **2** | **landed** 2026-09-21 (`feat/locale-day-one`) | installer round-trip | `modules/locale/adopt.nix`, `modules/locale/oligarchy-adopt.sh`, `modules/locale/tests/fixtures/`, `flake.nix` ISO block + hw-detect hint | `.#locale-adopt-fixtures`, later `.#test-iso-locale-roundtrip` |
+| **3** | not started | Nix + bash strings | `modules/locale/catalog/{en.json,_schema.md}`, `modules/locale/msg.nix`, `home/apps/control-center/*.sh`, `home/scripts/*`, `home/hyprland/default.nix` (welcomeScript), `configuration.nix` (greetd greeting, boot-intro text) | `.#catalog-drift`, `.#i18n-pseudo` |
+| **4** | not started | Rust strings (4 parallel sub-streams) | `modules/warroom/crates/warroom-tui/`, `modules/greeting/src/`, `modules/dsp-ctl/`, `modules/oligarchy-forge/` | `.#i18n-pseudo` extended |
+| **5** | not started | content + voice | `modules/blipply-assistant/src/{config.rs,audio/stt.rs}`, `modules/demod-voice/config.yaml`, `modules/scrollmapper/` (docs only), `docs/README.<lang>.md` policy | `.#locale-voice-contract` |
 
-### Stage 0 — the frozen contract
+**The catalog half of stage 0 moved to stage 3.** `modules/locale/catalog/en.json`,
+`_schema.md` and `.#catalog-drift` were listed as stage-0 deliverables because
+the key set is what stages 3-5 compile against — but the day-one cut (§10)
+ships no strings at all, so a frozen catalog with no consumer would have been
+an unexercised file and a gate guarding nothing. `custom.locale.strings.*` is
+declared (so the option names stay frozen and stage 3 changes no signature)
+and **inert**: nothing reads it yet.
+
+### Stage 0 — the frozen contract — **landed 2026-09-21** (`feat/locale-day-one`)
 
 Lands the option module **declaring nothing in `config`**, the `en` catalog
 with every key that stages 3-5 will fill, the `_schema.md`, and the two pure
@@ -730,7 +743,20 @@ matters — option *declarations* must precede modules that *set* them"):**
 `./modules/locale.nix` goes into `commonModules` next to `./modules/platform.nix`
 and `./modules/user.nix`, **before** `./configuration.nix`.
 
-### Stage 1 — the system layer
+**As landed:** every option in §4.1 is declared —
+`language`, `glibcLocale`, `region`, `timeZone`,
+`keyboard.{layout,variant,options,model,consoleKeyMap}`, `inputMethod`,
+`extraLocales`, `fonts.{autoInstall,extraPackages}` and
+`strings.{enable,fallbackLanguage}` — with `modules/locale/lib.nix` carrying
+`bcp47ToGlibc` and the script/font tables. Two departures from the paragraph
+above, both deliberate:
+`strings.*` is declared but **inert** (its consumers are stage 3, and the
+catalog moved there with them), and stages 0 and 1 landed in the same branch,
+so the module shipped with its `config` block rather than options alone —
+there was no window in which a downstream stream could have compiled against
+an options-only version.
+
+### Stage 1 — the system layer — **landed 2026-09-21** (`feat/locale-day-one`)
 
 Moves the six hardcoded sites (§3.1) behind the contract and kills the xkb
 mirror by derivation. The one behaviour change on the maintainer's machine is
@@ -752,10 +778,20 @@ clock = {
 `en-CA` 12-hour, everything else 24), overridable. `format-alt`'s `%A, %B %d`
 needs no change (§3.8).
 
-### Stage 2 — installer round-trip
+### Stage 2 — installer round-trip — **landed 2026-09-21** (`feat/locale-day-one`)
 
 `oligarchy-adopt` plus the `oligarchy-hw-detect` hint. Independent of stages
 3-5 and the second half of the day-one cut (§10).
+
+**As landed:** `modules/locale/adopt.nix` is a `pkgs.writeShellApplication`
+reached from `flake.nix` by `pkgs.callPackage`, exposed three ways — `nix run
+.#oligarchy-adopt`, `environment.systemPackages` on the ISO beside
+`oligarchy-hw-detect`, and the `nativeBuildInputs` of
+`.#locale-adopt-fixtures`. `oligarchy-hw-detect` now prints the machine's
+`localectl status` (guarded on `command -v`) and the
+`oligarchy-adopt` → `nixos-rebuild switch --flake .#nixos --impure` sequence,
+with the `--impure` warning spelled out, **on the ISO** — before the user makes
+the choice they are about to lose.
 
 ### Stage 3 — Nix and bash strings
 
@@ -799,7 +835,7 @@ nix build .#test-iso-locale-roundtrip # runNixOSTest, needs KVM
 nix build .#locale-voice-contract    # pure eval
 ```
 
-### `.#locale-contract` — pure eval, no KVM, no closure
+### `.#locale-contract` — pure eval, no KVM, no closure — **landed 2026-09-21**
 
 Modelled on `.#session-survives-switch` (`flake.nix:1202-1260`), which is this
 repo's worked example of "evaluate the real system config, emit JSON, assert
@@ -831,6 +867,36 @@ and assert, per combination:
 Anti-vacuity, per `mcp_self_audit`'s two rules: the gate asserts a **minimum
 combination count** (25) and fails if any combination was skipped rather than
 inspected. A skipped combination is reported, never omitted.
+
+**As landed** (`flake.nix`, `packages.x86_64-linux.locale-contract`), with the
+three places the implementation differs from the sketch above and why:
+
+- **The mirror compares the Home Manager option value, not the rendered
+  `hyprland.conf` text** — `home-manager.users.<user>.wayland.windowManager.hyprland.settings.input.kb_layout`
+  against `services.xserver.xkb.layout`. One hop upstream of the text, which is
+  where the mirror can actually diverge; reading the generated file back would
+  cost a build and buy a regex. The `console` half is asserted as
+  `console.useXkbConfig == true` (every combination leaves
+  `keyboard.consoleKeyMap` null, so a false here means the TTY and the LUKS
+  prompt stopped deriving from the same xkb description). Read with `or null`
+  at every hop and **counted**: if no combination could check the mirror, the
+  gate fails rather than passing having compared nothing.
+- **The timezone is checked in the builder, not at eval.** `builtins.pathExists
+  "${pkgs.tzdata}/share/zoneinfo/<tz>"` is a trap in a pure eval: `tzdata` need
+  not be realized, and `pathExists` on an unbuilt store path answers `false` —
+  a gate that fails for a reason that has nothing to do with the timezone. So
+  `tzdata` is a build input and the test is `[ -e … ]` in the script, plus an
+  equality check that `time.timeZone` is what `custom.locale.timeZone` asked
+  for.
+- **A combination that cannot be evaluated becomes a reported SKIP**, via
+  `builtins.tryEval` over a `deepSeq` of the row, and a SKIP counts against the
+  required 25 and so fails the gate. Without it a single bad host/language pair
+  aborts the whole eval with a trace that never names which pair died.
+
+Warnings are collected and printed per combination but never fail the gate —
+§4.4 requires a warning (not an assertion) for `xx-pseudo` and for an input
+method without fonts, and a gate that failed on those would make the contract
+untestable at exactly the point it was designed to be visible.
 
 ### `.#catalog-drift` — the maintenance answer
 
@@ -869,7 +935,7 @@ key-leak check: any `msg_[a-z_]+` or bare dotted key (`ctl.item.theme-next`) in
 output text → FAIL. Plus anti-vacuity: the gate must find at least N bracketed
 strings, or it inspected nothing and FAILS.
 
-### `.#locale-adopt-fixtures` — no KVM
+### `.#locale-adopt-fixtures` — no KVM — **landed 2026-09-21**
 
 `runCommand` over `modules/locale/tests/fixtures/<case>/` — each a fake
 `/etc` with `locale.conf`, `vconsole.conf`, a `localtime` symlink and a stock
@@ -878,6 +944,14 @@ and diffs against the expected Nix. Cases: German, Japanese, Arabic, a
 `LANG`-only file with no `LC_*`, a missing `vconsole.conf`, an existing
 `local.nix` with unrelated content (merge, do not clobber), and one where
 `localtime` is a copy rather than a symlink.
+
+**As landed:** a `pkgs.runCommand` over `modules/locale/tests/fixtures/*/`. A
+case carrying `existing-local.nix` is the merge case and is driven differently
+— the file is copied somewhere writable, `oligarchy-adopt --root <case> --out
+<copy>` is run, and the **resulting file** is diffed against `expected.nix`;
+every other case diffs `--stdout`. `HOME` is set to the build directory so no
+code path can reach a real `~/.config`. Zero fixture directories is a FAIL, and
+so is a directory with no `expected.nix` beside it.
 
 ### `.#test-iso-locale-roundtrip` — `runNixOSTest`, KVM, later
 
@@ -1013,10 +1087,12 @@ sub-options, `mkDefault` everywhere, an escape hatch next to every derived
 value) rather than *correct*, and stage 0 freezing it early is a bet that
 extension is cheaper than churn across four parallel streams.
 
-## 10. Day one — the minimal cut
+## 10. Day one — the minimal cut — **shipped 2026-09-21** (`feat/locale-day-one`)
 
 The smallest change that makes a German or Japanese user's fresh install stop
-fighting them. **Stages 0, 1 and 2 only. No string work at all.**
+fighting them. **Stages 0, 1 and 2 only. No string work at all.** All six
+items below are in the tree; the paragraph that follows them is now a
+description of the shipped path, not a plan.
 
 1. `modules/locale.nix` with `language`, `region`, `timeZone`, `keyboard.*`,
    `inputMethod`, `extraLocales`, `fonts.*` — every default equal to today's
@@ -1047,4 +1123,5 @@ files that stages 0-2 do not.
 
 | date | change |
 |---|---|
+| 2026-09-21 | **Stages 0, 1 and 2 landed** on `feat/locale-day-one` — the §10 day-one cut. `modules/locale.nix` + `modules/locale/lib.nix` declare and wire the full §4.1 option set (`strings.*` declared but inert); `configuration.nix`, `home/hyprland/` and `home/waybar/` moved onto it; `modules/locale/adopt.nix` + `oligarchy-adopt.sh` + fixtures; `flake.nix` gains `./modules/locale.nix` in `commonModules` (before `configuration.nix`), `packages.oligarchy-adopt`, the tool on the ISO, a `localectl` + `--impure` hint in `oligarchy-hw-detect`, and the gates `.#locale-contract` (5 hosts × 5 languages, 25 combinations, the xkb/Hyprland/console mirror) and `.#locale-adopt-fixtures`. §4.1 names are frozen from here. The catalog half of stage 0 (`catalog/en.json`, `_schema.md`, `.#catalog-drift`) moved to stage 3, where its consumers are. |
 | 2026-09-21 | Document created. Nothing landed. §3 measured against `76674a9` / nixpkgs `e820eb4` (25.11); §§1-2, 4-10 are proposal. Three survey corrections recorded in §3.2 (`supportedLocales` is derived on 25.11, `extraLocales` is the lever), §3.1 (`services.xserver.xkb` **does** exist, at `configuration.nix:606-613`, as an unmarked mirror) and §3.5 (the ISO installs stock NixOS with no flake — the locale loss happens at flake adoption, not at install). |

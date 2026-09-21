@@ -25,7 +25,7 @@ Roughly **70k lines across 285 files** — 35k Nix, 25k Rust, 5k Shell. `docs/ar
 | `dgpu-steam-forcing.md` | dGPU-vs-iGPU client rendering; why Hyprland's backend never moves |
 | `secure-boot-enrollment.md`, `bios-uma-unlock.md` | firmware procedures — read before running either |
 | `dcf-mesh-agent.md` | the read-write UDP mesh endpoint kept out of the MCP surface |
-| `localization-roadmap.md` | i18n/l10n design: `custom.locale.*` contract, catalogs, installer round-trip (`oligarchy-adopt`), gates. Nothing landed yet; §3 is the measured part |
+| `localization-roadmap.md` | i18n/l10n design: `custom.locale.*` contract, catalogs, installer round-trip (`oligarchy-adopt`), gates. Stages 0-2 landed (`custom.locale`, `oligarchy-adopt`); §3 is the measured part |
 
 Subsystem READMEs carry the same role one level down: `modules/oligarchy-p2p/`, `modules/oligarchy-plugins/`, `modules/mcp-servers/`, `modules/demod-talk/`, `modules/minecraft/`, `modules/hypr-controller/`.
 
@@ -66,6 +66,7 @@ nix build .#iso              # -> result/iso/nixos-*.iso
 # Other package outputs (not gates)
 nix build .#dsp-vm-qcow      # the DSP coprocessor guest image
 nix run   .#oligarchy-hw-detect   # firmware/hardware check on an installed system
+nix run   .#oligarchy-adopt       # read this machine's /etc locale into ~/.config/oligarchy/local.nix
 
 # Validate the flake. `checks.x86_64-linux.system` is the system toplevel, so
 # this evaluates all outputs and builds the system.
@@ -84,6 +85,8 @@ nix build .#mcp-self-audit          # verify no MCP crate opens sockets / escape
 nix build .#gamepad-bluetooth-tests # the BLE gamepad bond allowlist still refuses keyboards/audio; unittest, no KVM
 nix build .#session-survives-switch # no unit but greetd may vhangup tty1 after boot; eval-only
 nix build .#hypr-session-tests      # hypr-session restore --dry-run matches fixtures; bash+jq, no KVM
+nix build .#locale-contract         # 5 hosts x 5 languages; xkb == Hyprland kb_layout == console; eval-only, minutes
+nix build .#locale-adopt-fixtures   # oligarchy-adopt turns fixture /etc trees into the expected custom.locale.*; no KVM
 nix build .#plugins-wx-enforcement  # boot a real kernel; assert the plugin tier/jit W^X split holds
 nix build .#plugins-policy-refusal  # assert plugin policy refuses at install time, not at load time
 nix build .#plugins-signed-install  # assert an unprivileged user can install a signed plugin and only a signed one
@@ -147,7 +150,7 @@ The **ISO** (`packages.x86_64-linux.iso`) is built separately via `nixos-generat
 
 The central system module and the main place toggles are flipped. Most features are gated behind custom options and **default to off** in this file — enabling a feature usually means setting its `custom.*`/`services.*` option to `true` here, not editing the module. Option namespaces in play:
 
-- `custom.*` — e.g. `custom.steam`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.secrets`, `custom.secureBoot`, `custom.kernel.variant`. `custom.platform.*` (declared in `modules/platform.nix`, along with the fw-fanctrl config) is the hardware abstraction the hosts differ by: `gpu`, `cpu`, `framework`, and `displayGpu` — dGPU-vs-iGPU client-app rendering on dual-AMD hosts, which never routes Hyprland's own backend device to the dGPU (it has no display path and crashes the compositor; see `docs/dgpu-steam-forcing.md`). `custom.user.*` (`modules/user.nix`) and `custom.desktopFeatures.*` (`modules/desktop-features.nix`, gates `home/home.nix`) are what let a fresh clone default to something sane.
+- `custom.*` — e.g. `custom.steam`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.secrets`, `custom.secureBoot`, `custom.kernel.variant`, `custom.locale.*` (`modules/locale.nix` — language, timezone, keyboard, fonts, input method; see the landmine below). `custom.platform.*` (declared in `modules/platform.nix`, along with the fw-fanctrl config) is the hardware abstraction the hosts differ by: `gpu`, `cpu`, `framework`, and `displayGpu` — dGPU-vs-iGPU client-app rendering on dual-AMD hosts, which never routes Hyprland's own backend device to the dGPU (it has no display path and crashes the compositor; see `docs/dgpu-steam-forcing.md`). `custom.user.*` (`modules/user.nix`) and `custom.desktopFeatures.*` (`modules/desktop-features.nix`, gates `home/home.nix`) are what let a fresh clone default to something sane.
 - `services.*` — project-defined services like `services.ollamaAgentic`, `services.dcf-tray`, `services.boot-intro`, `services.oligarchyGreeting`, `services.dsp-vm`.
 - `networking.firewall.strictEgress` — the nftables egress firewall (`modules/security/strict-egress.nix`). Its `autoDetect.nixSubstituters` (default true) allows the hostname of every cache in `nix.settings.{substituters,trusted-substituters}`, so a module that adds a binary cache does not silently produce a firewall-blocked fetch. Derived from `nix.settings` rather than any one module's options, so it stays general and never references an option a given host may not declare.
 
@@ -271,6 +274,7 @@ Standalone operator scripts, not wired into any derivation: `dsp-latency-guest.s
 - **Unfree allowed; broken is NOT.** `pkgsConfig` sets `allowUnfree = true` and `permittedInsecurePackages = [ ]`. `allowBroken` was **deliberately removed** — it silently lets known-broken packages into the closure on a production machine. Do not re-add it; override per-package if ever needed.
 - **`nix fmt` is not the project formatter.** The flake's `formatter` is `nixfmt-rfc-style`, but the tree is written in `nixpkgs-fmt`. Format with `nixpkgs-fmt <file.nix>`, and don't blanket-format files you didn't touch.
 - **Pin everything through the flake.** New external dependencies become flake inputs, not ad-hoc fetches — the project explicitly avoids unpinned sources.
+- **Locale has one source, `custom.locale.*`** — `services.xserver.xkb` and Hyprland's `kb_*` both read it; `console.useXkbConfig` derives the TTY/LUKS keymap from the same xkb description. Never set any of the three directly; `.#locale-contract` asserts they agree. Override in `~/.config/oligarchy/local.nix` — `--impure` or it silently reverts. A user coming from a stock install runs `oligarchy-adopt` once to write that file from their existing `/etc/locale.conf`/`vconsole.conf`/`localtime`. See `docs/localization-roadmap.md`.
 - **Secrets** use `sops-nix`. `secrets/` is git-ignored except `secrets/.sops.yaml`. Never commit decrypted material, `*.age`, or `secrets/secrets.yaml`.
 - **State version is `25.11`** on `nixos-25.11` (nixpkgs stable). Keep new modules consistent with that. `nixpkgs-unstable` is available via the `unstable` overlay for cherry-picks.
 - **MCP servers are read-only + dry-run by construction.** The agent surface can never mutate the running system. Each aspect server has a per-aspect CLI allowlist (`modules/mcp-servers/crates/core/src/allowlist.rs`) enforced at runtime by `runner::run` — reach CLIs only through it, never via a bare `Command::new`. The `ports-sec` crate is the only one permitted to open sockets (loopback-only, feature-gated). `nix build .#mcp-self-audit` enforces the socket rule and checks `.mcp.json` for remote transports at the project level.
