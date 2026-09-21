@@ -1,0 +1,2 @@
+TZif2-fixture: a regular-file copy of /usr/share/zoneinfo/Europe/Rome.
+Not a real tzfile; oligarchy-adopt only checks that this is not a symlink.

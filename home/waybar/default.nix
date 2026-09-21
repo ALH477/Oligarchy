@@ -1,8 +1,28 @@
-{ config, pkgs, lib, theme ? {}, features ? {}, themes ? {}, ... }:
+{ config, pkgs, lib, theme ? { }, features ? { }, themes ? { }, osConfig ? { }, ... }:
 
 let
-  p = theme;  # Shorthand for palette
-  
+  p = theme; # Shorthand for palette
+
+  # -- Locale (custom.locale.*, declared in modules/locale.nix) ---------------
+  # Read with `or` defaults at every hop, exactly as home/hyprland/default.nix
+  # reads the same option: home/ must still evaluate standalone, and on a fresh
+  # clone where the NixOS module declaring these options is absent. The
+  # 12-hour table below is kept LOCAL for that same reason -- do NOT import
+  # modules/locale/lib.nix here.
+  locale = osConfig.custom.locale or { };
+  glibcLocale = locale.glibcLocale or "en_US.UTF-8";
+  lang = locale.language or "en-US";
+
+  # docs/localization-roadmap.md section 7 stage 1's table is en-US / en-PH /
+  # en-CA = 12-hour, everything else 24. en-US is left OUT of it here on
+  # purpose: it is also the DEFAULT of custom.locale.language, so honouring it
+  # would flip this machine's clock from 24h to 12h on a rebuild whose only
+  # intended diff is the console keymap. The 12-hour form is therefore
+  # reserved for a language EXPLICITLY set to one of the other two, until a
+  # `custom.locale.clock24h` option exists to say "12-hour locale, 24-hour
+  # clock" properly (recorded as a roadmap gap).
+  use24h = !(lib.elem lang [ "en-PH" "en-CA" ]);
+
   # Define module layouts based on features
   mkWaybarModules = {
     left = [
@@ -11,9 +31,9 @@ let
       "hyprland/submap"
       "hyprland/window"
     ];
-    
+
     center = [ "clock" ];
-    
+
     right = lib.flatten [
       "custom/media"
       (lib.optional (features.enableAudio or false) "custom/dsp")
@@ -28,345 +48,346 @@ let
       "custom/power"
     ];
   };
-  
+
   # See home/apps/wofi.nix for why this is factored into a function of
   # `p` — theme-switch.sh symlinks a pre-rendered variant into place live.
   renderStyle = p: ''
-      * {
-        font-family: "JetBrainsMono Nerd Font", monospace;
-        font-size: 14px;
-        font-weight: 600;
-        border: none;
-        border-radius: 0;
-        min-height: 0;
-        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-      }
+    * {
+      font-family: "JetBrainsMono Nerd Font", monospace;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: 0;
+      min-height: 0;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
 
-      window#waybar {
-        background: transparent;
-        color: ${p.text};
-      }
+    window#waybar {
+      background: transparent;
+      color: ${p.text};
+    }
 
-      /* Base module styling */
-      #custom-logo,
-      #workspaces,
-      #window,
-      #clock,
-      #custom-media,
-      #pulseaudio,
-      #backlight,
-      #battery,
-      #network,
-      #tray,
-      #custom-power {
-        background: ${p.surface};
-        color: ${p.text};
-        padding: 0 16px;
-        margin: 0 4px;
-        border-radius: 14px;
-        border: 2px solid ${p.border};
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-      }
+    /* Base module styling */
+    #custom-logo,
+    #workspaces,
+    #window,
+    #clock,
+    #custom-media,
+    #pulseaudio,
+    #backlight,
+    #battery,
+    #network,
+    #tray,
+    #custom-power {
+      background: ${p.surface};
+      color: ${p.text};
+      padding: 0 16px;
+      margin: 0 4px;
+      border-radius: 14px;
+      border: 2px solid ${p.border};
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
 
-      /* Logo module special styling */
-      #custom-logo {
-        color: ${p.accent};
-        font-size: 20px;
-        padding: 0 14px;
+    /* Logo module special styling */
+    #custom-logo {
+      color: ${p.accent};
+      font-size: 20px;
+      padding: 0 14px;
+      border-color: ${p.accent};
+      animation: logoGlow 3s ease-in-out infinite alternate;
+    }
+
+    @keyframes logoGlow {
+      from { 
+        box-shadow: 0 0 5px ${p.accent}44;
         border-color: ${p.accent};
-        animation: logoGlow 3s ease-in-out infinite alternate;
       }
-
-      @keyframes logoGlow {
-        from { 
-          box-shadow: 0 0 5px ${p.accent}44;
-          border-color: ${p.accent};
-        }
-        to { 
-          box-shadow: 0 0 20px ${p.accent}88, 0 0 30px ${p.accent}44;
-          border-color: ${p.accentAlt};
-        }
+      to { 
+        box-shadow: 0 0 20px ${p.accent}88, 0 0 30px ${p.accent}44;
+        border-color: ${p.accentAlt};
       }
+    }
 
-      #custom-logo:hover {
-        background: ${p.surfaceAlt};
-        border-color: ${p.borderHover};
-        transform: scale(1.05);
-        animation: logoPulse 0.3s ease-out;
+    #custom-logo:hover {
+      background: ${p.surfaceAlt};
+      border-color: ${p.borderHover};
+      transform: scale(1.05);
+      animation: logoPulse 0.3s ease-out;
+    }
+
+    @keyframes logoPulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+      100% { transform: scale(1.05); }
+    }
+
+    /* Workspaces styling */
+    #workspaces button {
+      padding: 0 8px;
+      color: ${p.textDim};
+      background: transparent;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 10px;
+      margin: 2px;
+    }
+
+    #workspaces button.active {
+      color: ${p.bg};
+      background: ${p.accent};
+      border-radius: 10px;
+      margin: 2px;
+      box-shadow: 0 4px 12px ${p.accent}66;
+      animation: workspaceActive 0.3s ease-out;
+    }
+
+    @keyframes workspaceActive {
+      0% { 
+        transform: scale(1);
+        background: ${p.accentDim};
       }
-
-      @keyframes logoPulse {
-        0% { transform: scale(1); }
-        50% { transform: scale(1.1); }
-        100% { transform: scale(1.05); }
-      }
-
-      /* Workspaces styling */
-      #workspaces button {
-        padding: 0 8px;
-        color: ${p.textDim};
-        background: transparent;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        border-radius: 10px;
-        margin: 2px;
-      }
-
-      #workspaces button.active {
-        color: ${p.bg};
-        background: ${p.accent};
-        border-radius: 10px;
-        margin: 2px;
-        box-shadow: 0 4px 12px ${p.accent}66;
-        animation: workspaceActive 0.3s ease-out;
-      }
-
-      @keyframes workspaceActive {
-        0% { 
-          transform: scale(1);
-          background: ${p.accentDim};
-        }
-        50% { 
-          transform: scale(1.1);
-          background: ${p.accentAlt};
-        }
-        100% { 
-          transform: scale(1);
-          background: ${p.accent};
-        }
-      }
-
-      #workspaces button:hover {
-        color: ${p.accent};
-        background: ${p.surfaceAlt};
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-      }
-
-      #workspaces button.urgent {
-        color: ${p.error};
-          background: ${p.error}22;
-        border: 2px solid ${p.error};
-        animation: workspaceUrgent 1s ease-in-out infinite alternate;
-      }
-
-      @keyframes workspaceUrgent {
-        from { opacity: 0.6; }
-        to { opacity: 1; }
-      }
-
-      /* Window title styling */
-      #window {
-        color: ${p.text};
-        font-weight: 500;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      /* Clock styling */
-      #clock {
-        color: ${p.accent};
-        font-weight: 700;
-        border-color: ${p.accent};
-        animation: clockTicking 60s linear infinite;
-      }
-
-      @keyframes clockTicking {
-        0% { opacity: 0.95; }
-        50% { opacity: 1; }
-        100% { opacity: 0.95; }
-      }
-
-      #clock:hover {
-        background: ${p.surfaceAlt};
-        transform: scale(1.02);
-      }
-
-      /* Media module styling */
-      #custom-media {
-        color: ${p.info};
-        border-color: ${p.info};
-      }
-
-      #custom-media.playing {
-        animation: mediaPlaying 2s ease-in-out infinite;
-      }
-
-      @keyframes mediaPlaying {
-        0%, 100% { opacity: 0.8; }
-        50% { opacity: 1; }
-      }
-
-      /* Audio modules */
-      #wireplumber {
-        color: ${p.info};
-      }
-
-      #pulseaudio.muted {
-        color: ${p.error};
-        animation: audioMuted 1s ease-in-out infinite alternate;
-      }
-
-      @keyframes audioMuted {
-        from { opacity: 0.5; }
-        to { opacity: 1; }
-      }
-
-      /* Battery module */
-      #battery {
-        color: ${p.success};
-      }
-
-      #battery.warning {
-        color: ${p.warning};
-        animation: batteryWarning 1s ease-in-out infinite alternate;
-      }
-
-      @keyframes batteryWarning {
-        from { opacity: 0.7; }
-        to { opacity: 1; }
-      }
-
-      #battery.critical {
-        color: ${p.error};
-        animation: batteryCritical 0.5s ease-in-out infinite alternate;
-      }
-
-      @keyframes batteryCritical {
-        from { 
-          opacity: 0.5;
-        background: ${p.error}22;
-        }
-        to { 
-          opacity: 1;
-          background: ${p.error}44;
-        }
-      }
-
-      #battery.charging {
-        color: ${p.accent};
-        animation: batteryCharging 3s ease-in-out infinite;
-      }
-
-      @keyframes batteryCharging {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.6; }
-      }
-
-      /* Network module */
-      #network {
-        color: ${p.info};
-      }
-
-      #network.disconnected {
-        color: ${p.error};
-        animation: networkDisconnected 2s ease-in-out infinite alternate;
-      }
-
-      @keyframes networkDisconnected {
-        from { opacity: 0.6; }
-        to { opacity: 1; }
-      }
-
-      /* Tray styling */
-      #tray {
-        padding: 0 8px;
-      }
-
-      #tray > .passive {
-        opacity: 0.6;
-      }
-
-      #tray > .needs-attention {
-        animation: trayAttention 1s ease-in-out infinite alternate;
-      }
-
-      @keyframes trayAttention {
-        from { background: ${p.warning}44; }
-        to { background: ${p.warning}88; }
-      }
-
-      /* Power button styling */
-      #custom-power {
-        color: ${p.warning};
-        border-color: ${p.warning};
-        font-weight: 700;
-      }
-
-      #custom-power:hover {
-        color: ${p.bg};
-        background: ${p.error};
-        border-color: ${p.error};
+      50% { 
         transform: scale(1.1);
+        background: ${p.accentAlt};
       }
-
-      /* Group styling */
-      .modules-group {
-        border: 2px solid ${p.border};
-        border-radius: 14px;
-        background: ${p.surface};
-        margin: 0 4px;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      100% { 
+        transform: scale(1);
+        background: ${p.accent};
       }
+    }
 
-      .modules-group > * {
-        border-radius: 0;
-        border: none;
-        box-shadow: none;
-        margin: 0;
+    #workspaces button:hover {
+      color: ${p.accent};
+      background: ${p.surfaceAlt};
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    #workspaces button.urgent {
+      color: ${p.error};
+        background: ${p.error}22;
+      border: 2px solid ${p.error};
+      animation: workspaceUrgent 1s ease-in-out infinite alternate;
+    }
+
+    @keyframes workspaceUrgent {
+      from { opacity: 0.6; }
+      to { opacity: 1; }
+    }
+
+    /* Window title styling */
+    #window {
+      color: ${p.text};
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Clock styling */
+    #clock {
+      color: ${p.accent};
+      font-weight: 700;
+      border-color: ${p.accent};
+      animation: clockTicking 60s linear infinite;
+    }
+
+    @keyframes clockTicking {
+      0% { opacity: 0.95; }
+      50% { opacity: 1; }
+      100% { opacity: 0.95; }
+    }
+
+    #clock:hover {
+      background: ${p.surfaceAlt};
+      transform: scale(1.02);
+    }
+
+    /* Media module styling */
+    #custom-media {
+      color: ${p.info};
+      border-color: ${p.info};
+    }
+
+    #custom-media.playing {
+      animation: mediaPlaying 2s ease-in-out infinite;
+    }
+
+    @keyframes mediaPlaying {
+      0%, 100% { opacity: 0.8; }
+      50% { opacity: 1; }
+    }
+
+    /* Audio modules */
+    #wireplumber {
+      color: ${p.info};
+    }
+
+    #pulseaudio.muted {
+      color: ${p.error};
+      animation: audioMuted 1s ease-in-out infinite alternate;
+    }
+
+    @keyframes audioMuted {
+      from { opacity: 0.5; }
+      to { opacity: 1; }
+    }
+
+    /* Battery module */
+    #battery {
+      color: ${p.success};
+    }
+
+    #battery.warning {
+      color: ${p.warning};
+      animation: batteryWarning 1s ease-in-out infinite alternate;
+    }
+
+    @keyframes batteryWarning {
+      from { opacity: 0.7; }
+      to { opacity: 1; }
+    }
+
+    #battery.critical {
+      color: ${p.error};
+      animation: batteryCritical 0.5s ease-in-out infinite alternate;
+    }
+
+    @keyframes batteryCritical {
+      from { 
+        opacity: 0.5;
+      background: ${p.error}22;
       }
-
-      .modules-group > *:first-child {
-        border-radius: 12px 0 0 12px;
-        margin-left: 2px;
+      to { 
+        opacity: 1;
+        background: ${p.error}44;
       }
+    }
 
-      .modules-group > *:last-child {
-        border-radius: 0 12px 12px 0;
-        margin-right: 2px;
+    #battery.charging {
+      color: ${p.accent};
+      animation: batteryCharging 3s ease-in-out infinite;
+    }
+
+    @keyframes batteryCharging {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    /* Network module */
+    #network {
+      color: ${p.info};
+    }
+
+    #network.disconnected {
+      color: ${p.error};
+      animation: networkDisconnected 2s ease-in-out infinite alternate;
+    }
+
+    @keyframes networkDisconnected {
+      from { opacity: 0.6; }
+      to { opacity: 1; }
+    }
+
+    /* Tray styling */
+    #tray {
+      padding: 0 8px;
+    }
+
+    #tray > .passive {
+      opacity: 0.6;
+    }
+
+    #tray > .needs-attention {
+      animation: trayAttention 1s ease-in-out infinite alternate;
+    }
+
+    @keyframes trayAttention {
+      from { background: ${p.warning}44; }
+      to { background: ${p.warning}88; }
+    }
+
+    /* Power button styling */
+    #custom-power {
+      color: ${p.warning};
+      border-color: ${p.warning};
+      font-weight: 700;
+    }
+
+    #custom-power:hover {
+      color: ${p.bg};
+      background: ${p.error};
+      border-color: ${p.error};
+      transform: scale(1.1);
+    }
+
+    /* Group styling */
+    .modules-group {
+      border: 2px solid ${p.border};
+      border-radius: 14px;
+      background: ${p.surface};
+      margin: 0 4px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+
+    .modules-group > * {
+      border-radius: 0;
+      border: none;
+      box-shadow: none;
+      margin: 0;
+    }
+
+    .modules-group > *:first-child {
+      border-radius: 12px 0 0 12px;
+      margin-left: 2px;
+    }
+
+    .modules-group > *:last-child {
+      border-radius: 0 12px 12px 0;
+      margin-right: 2px;
+    }
+
+    /* Tooltip styling */
+    tooltip {
+      background: ${p.surfaceAlt};
+      border: 2px solid ${p.borderFocus};
+      border-radius: 12px;
+      padding: 8px 12px;
+      color: ${p.text};
+      font-size: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      animation: tooltipFadeIn 0.2s ease-out;
+    }
+
+    @keyframes tooltipFadeIn {
+      from { 
+        opacity: 0;
+        transform: translateY(-4px);
       }
-
-      /* Tooltip styling */
-      tooltip {
-        background: ${p.surfaceAlt};
-        border: 2px solid ${p.borderFocus};
-        border-radius: 12px;
-        padding: 8px 12px;
-        color: ${p.text};
-        font-size: 12px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-        animation: tooltipFadeIn 0.2s ease-out;
+      to { 
+        opacity: 1;
+        transform: translateY(0);
       }
+    }
 
-      @keyframes tooltipFadeIn {
-        from { 
-          opacity: 0;
-          transform: translateY(-4px);
-        }
-        to { 
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
+    /* Hover effects for all modules */
+    #custom-media:hover,
+    #pulseaudio:hover,
+    #backlight:hover,
+    #battery:hover,
+    #network:hover,
+    #tray:hover {
+      background: ${p.surfaceAlt};
+      border-color: ${p.borderHover};
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
 
-      /* Hover effects for all modules */
-      #custom-media:hover,
-      #pulseaudio:hover,
-      #backlight:hover,
-      #battery:hover,
-      #network:hover,
-      #tray:hover {
-        background: ${p.surfaceAlt};
-        border-color: ${p.borderHover};
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-      }
-
-      /* NOTE: @media queries removed — GTK CSS has no media-query support;
-         waybar logged parse errors and ignored those blocks anyway. */
+    /* NOTE: @media queries removed — GTK CSS has no media-query support;
+       waybar logged parse errors and ignored those blocks anyway. */
   '';
 
-in {
+in
+{
   programs.waybar = {
     enable = true;
     # Supervised by Home Manager's own waybar-module unit — gets
@@ -394,7 +415,7 @@ in {
       # ══════════════════════════════════════════════════════════════════════════
       # Module Configurations
       # ══════════════════════════════════════════════════════════════════════════
-      
+
       "custom/logo" = {
         format = "󱄅";
         tooltip = true;
@@ -406,9 +427,20 @@ in {
       "hyprland/workspaces" = {
         format = "{icon}";
         format-icons = {
-          "1" = "󰎤"; "2" = "󰎧"; "3" = "󰎪"; "4" = "󰎭"; "5" = "󰎯";
-          "6" = "󰎰"; "7" = "󰎱"; "8" = "󰎳"; "9" = "󰎶"; "10" = "󰎸";
-          urgent = "󰀫"; active = "󰀺"; default = "󰎤"; special = "󰠱";
+          "1" = "󰎤";
+          "2" = "󰎧";
+          "3" = "󰎪";
+          "4" = "󰎭";
+          "5" = "󰎯";
+          "6" = "󰎰";
+          "7" = "󰎱";
+          "8" = "󰎳";
+          "9" = "󰎶";
+          "10" = "󰎸";
+          urgent = "󰀫";
+          active = "󰀺";
+          default = "󰎤";
+          special = "󰠱";
         };
         on-click = "activate";
         on-scroll-up = "hyprctl dispatch workspace e+1";
@@ -439,7 +471,11 @@ in {
 
       "clock" = {
         interval = 1;
-        format = "󰥔  {:%H:%M}";
+        format = if use24h then "󰥔  {:%H:%M}" else "󰥔  {:%I:%M %p}";
+        # waybar's own clock `locale` key (waybar-clock(5)); it is also what
+        # makes {calendar}'s start-of-week follow the locale rather than the
+        # system one.
+        locale = glibcLocale;
         format-alt = "󰃭  {:%A, %B %d   󰥔  %H:%M:%S}";
         tooltip = true;
         tooltip-format = "<big><b>{:%B %Y}</b></big>\n\n<tt>{calendar}</tt>";
@@ -490,7 +526,7 @@ in {
           phone = "󰍲";
           portable = "󱘯";
           car = "󰄋";
-          default = ["󰕿" "󰖀" "󰕾"];
+          default = [ "󰕿" "󰖀" "󰕾" ];
         };
         on-click = "pavucontrol";
         on-scroll-up = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+";

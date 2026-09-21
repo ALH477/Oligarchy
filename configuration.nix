@@ -37,9 +37,9 @@
   # evaluated to determine what `config` even contains, so referencing `config`
   # here is a circular dependency ("infinite recursion encountered").
   ++ lib.optional (builtins.pathExists "/home/asher/.config/oligarchy/local.nix")
-       "/home/asher/.config/oligarchy/local.nix"
+    "/home/asher/.config/oligarchy/local.nix"
   ++ lib.optional (builtins.pathExists "/home/asher/.config/oligarchy/state.nix")
-       "/home/asher/.config/oligarchy/state.nix";
+    "/home/asher/.config/oligarchy/state.nix";
 
   options = {
     custom.steam.enable = lib.mkEnableOption "Steam and gaming support";
@@ -607,12 +607,10 @@
       services.xserver = {
         enable = true; # Enable X11 for IceWM backup system
 
-        # Keyboard configuration (matches Wayland setup)
-        xkb = {
-          layout = "us";
-          variant = "";
-          options = "caps:escape";
-        };
+        # Keyboard now comes from `custom.locale.keyboard` (modules/locale.nix),
+        # which sets `services.xserver.xkb` and compiles `console.keyMap` from
+        # the same values with ckbcomp — the old hand-maintained "matches
+        # Wayland setup" mirror is gone, and an assertion refuses xkb set here.
 
         # Exclude unnecessary X11 packages
         excludePackages = [ pkgs.xterm ];
@@ -740,56 +738,56 @@
           '';
         in
         ''
-        # IceWM Menu Configuration
-        # Basic applications menu for backup system
+          # IceWM Menu Configuration
+          # Basic applications menu for backup system
 
-        prog Terminal terminal "/run/current-system/sw/bin/kitty"
-        prog File Manager folder "/run/current-system/sw/bin/thunar"
-        prog Web Browser browser "/run/current-system/sw/bin/firefox"
-        prog Text Editor editor "/run/current-system/sw/bin/kate"
-        prog System Monitor monitor "/run/current-system/sw/bin/htop"
+          prog Terminal terminal "/run/current-system/sw/bin/kitty"
+          prog File Manager folder "/run/current-system/sw/bin/thunar"
+          prog Web Browser browser "/run/current-system/sw/bin/firefox"
+          prog Text Editor editor "/run/current-system/sw/bin/kate"
+          prog System Monitor monitor "/run/current-system/sw/bin/htop"
 
-        separator
-        menu System {
-          prog "Audio Settings" settings "/run/current-system/sw/bin/easyeffects"
-          prog "Display Settings" display "/run/current-system/sw/bin/systemsettings5"
-          prog "Network Settings" network "/run/current-system/sw/bin/nm-connection-editor"
           separator
-          prog "NixOS Config" terminal "kitty -e sudo nano /etc/nixos/configuration.nix"
-          prog "Rebuild System" terminal "kitty -e sudo nixos-rebuild switch"
+          menu System {
+            prog "Audio Settings" settings "/run/current-system/sw/bin/easyeffects"
+            prog "Display Settings" display "/run/current-system/sw/bin/systemsettings5"
+            prog "Network Settings" network "/run/current-system/sw/bin/nm-connection-editor"
+            separator
+            prog "NixOS Config" terminal "kitty -e sudo nano /etc/nixos/configuration.nix"
+            prog "Rebuild System" terminal "kitty -e sudo nixos-rebuild switch"
+            separator
+            prog "Logout" logout "icewm-session --logout"
+            prog "Reboot" reboot "systemctl reboot"
+            prog "Shutdown" shutdown "systemctl poweroff"
+          }
+
           separator
-          prog "Logout" logout "icewm-session --logout"
-          prog "Reboot" reboot "systemctl reboot"
-          prog "Shutdown" shutdown "systemctl poweroff"
-        }
+          menu Development {
+            prog "Vim" terminal "kitty -e vim"
+            prog "Git" terminal "kitty -e git"
+            prog "Python" terminal "kitty -e python3"
+          }
 
-        separator
-        menu Development {
-          prog "Vim" terminal "kitty -e vim"
-          prog "Git" terminal "kitty -e git"
-          prog "Python" terminal "kitty -e python3"
-        }
+          separator
+          menu Multimedia {
+            prog "VLC" vlc "/run/current-system/sw/bin/vlc"
+            prog "Audacity" audacity "/run/current-system/sw/bin/audacity"
+            prog "OBS Studio" obs "/run/current-system/sw/bin/obs"
+          }
 
-        separator
-        menu Multimedia {
-          prog "VLC" vlc "/run/current-system/sw/bin/vlc"
-          prog "Audacity" audacity "/run/current-system/sw/bin/audacity"
-          prog "OBS Studio" obs "/run/current-system/sw/bin/obs"
-        }
+          separator
+          menu Graphics {
+            prog "GIMP" gimp "/run/current-system/sw/bin/gimp"
+            prog "Inkscape" inkscape "/run/current-system/sw/bin/inkscape"
+            prog "Blender" blender "/run/current-system/sw/bin/blender"
+          }
 
-        separator
-        menu Graphics {
-          prog "GIMP" gimp "/run/current-system/sw/bin/gimp"
-          prog "Inkscape" inkscape "/run/current-system/sw/bin/inkscape"
-          prog "Blender" blender "/run/current-system/sw/bin/blender"
-        }
-
-        separator
-        menu Games {
-          prog "Steam" steam "${steamNoSwapLauncher}"
-          prog "Doom 3" dhewm3 "/run/current-system/sw/bin/dhewm3"
-        }
-      '';
+          separator
+          menu Games {
+            prog "Steam" steam "${steamNoSwapLauncher}"
+            prog "Doom 3" dhewm3 "/run/current-system/sw/bin/dhewm3"
+          }
+        '';
 
       # KDE-free login: greetd + tuigreet (minimal Wayland TUI greeter, no Qt/Plasma).
       # tuigreet auto-lists the Hyprland wayland-session installed by
@@ -1182,23 +1180,14 @@
       services.blueman.enable = true;
 
       # ──────────────────────────────────────────────────────────────────────────
-      # Locale & Time (unchanged)
+      # Locale & Time — see `custom.locale.*` (modules/locale.nix)
       # ──────────────────────────────────────────────────────────────────────────
-      time.timeZone = "America/Los_Angeles";
-      i18n = {
-        defaultLocale = "en_US.UTF-8";
-        extraLocaleSettings = {
-          LC_ADDRESS = "en_US.UTF-8";
-          LC_IDENTIFICATION = "en_US.UTF-8";
-          LC_MEASUREMENT = "en_US.UTF-8";
-          LC_MONETARY = "en_US.UTF-8";
-          LC_NAME = "en_US.UTF-8";
-          LC_NUMERIC = "en_US.UTF-8";
-          LC_PAPER = "en_US.UTF-8";
-          LC_TELEPHONE = "en_US.UTF-8";
-          LC_TIME = "en_US.UTF-8";
-        };
-      };
+      # The default locale, the nine LC_* settings and the timezone are now
+      # `custom.locale.{language,region,timeZone}`; every sink there is
+      # mkDefault, so override them in ~/.config/oligarchy/local.nix rather
+      # than here. That file needs `--impure` — without it the pathExists
+      # guard answers false instead of erroring and your overrides are
+      # silently ignored, the same trap as every other local toggle.
 
       # ──────────────────────────────────────────────────────────────────────────
       # System Services (unchanged)

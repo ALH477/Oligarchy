@@ -1,0 +1,2 @@
+TZif2-fixture: a regular-file copy of a zone whose name is nowhere on
+this root. There is no etc/timezone either, so the zone is unknowable.
