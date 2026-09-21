@@ -14,22 +14,45 @@
 # Behaviours that are not obvious and that exist because the failure they
 # prevent is SILENT:
 #
-#   * An empty snapshot never overwrites a populated one. A compositor crash
-#     leaves `user@` alive for ~10s; a fast re-login can run a `save` against
-#     a brand-new, window-less compositor, and `clients: []` written over the
-#     good file means restore relaunches nothing and nothing says why. Saving
-#     0 clients over a file that holds >0 prints a notice and exits 0, leaving
-#     the old file alone.
-#   * Every successful replace rotates the previous snapshot to `<name>.prev.
-#     json` first, so one bad save is always recoverable by hand.
+#   * A save is refused only when it is almost certainly the RESTORE still in
+#     flight, and the rule is INSTANCE-AWARE rather than "is it empty". The
+#     failure it prevents: the save timer's `OnUnitActiveSec` clock belongs to
+#     the PREVIOUS compositor — the systemd user manager outlives Hyprland — so
+#     after a crash and a fast re-login the timer can fire seconds after
+#     restore has DISPATCHED, while only 3 of 40 windows have MAPPED. A
+#     3-client snapshot is not empty, so an emptiness test waves it through and
+#     the good file is gone. The save is refused (notice on stderr, exit 0, old
+#     file untouched) only when ALL THREE hold:
+#       - the existing snapshot's `hyprland_instance` differs from the current
+#         $HYPRLAND_INSTANCE_SIGNATURE — a DIFFERENT compositor wrote it; and
+#       - the live client count is LOWER than the recorded one; and
+#       - this compositor instance is younger than HYPR_SESSION_SETTLE seconds
+#         (default 180 — one save interval plus margin). Age comes from
+#         `hyprctl instances -j`, which is `[{instance, time}]` with `time` the
+#         epoch start of each instance; when it cannot be determined the
+#         instance counts as YOUNG, which keeps the refusal available rather
+#         than silently disabling it. HYPR_SESSION_SETTLE=0 disables the check.
+#     A save against the SAME instance that wrote the file is ALWAYS honoured,
+#     including an empty one: closing every window on purpose is a state the
+#     user is entitled to persist, and the old `n -eq 0` rule could never
+#     record it.
+#   * The previous snapshot rotates to `<name>.prev.json` only when the
+#     compositor INSTANCE changes — once per crash/re-login, not once per timer
+#     tick. Rotating on every save made `.prev.json` at most one save interval
+#     (120s) old, so by the time a bad session was noticed both copies held it.
 #   * A missing snapshot at the DEFAULT path is not an error: restore runs as
 #     a login oneshot, and `exit 1` there leaves a failed unit on every first
 #     boot. It prints a notice and exits 0. An explicit `--from FILE` that is
 #     missing is still exit 1 — the caller named a file that should exist.
-#   * Live restore skips any recorded client whose `class` is already running
-#     (one `hyprctl clients -j` query, taken once before the loop). Without it
-#     a restore after a partially-restored session doubles every window.
-#     `--force` relaunches everything regardless.
+#   * Live restore is COUNT-aware, not class-aware. One `hyprctl clients -j`
+#     query (taken once before the loop, filtered exactly as save filters)
+#     gives a per-class count of what is already on screen, and each class then
+#     launches `max(0, recorded - running)` of its recorded clients, in file
+#     order. Without any such check a restore after a partially-restored
+#     session doubles every window; with the old class-level boolean a PARTIAL
+#     session could never be completed — one kitty opened by hand suppressed
+#     all five recorded ones. `--force` skips the query and relaunches
+#     everything regardless.
 #
 # --dry-run prints one `hyprctl dispatch exec ...` line per launch and starts
 # nothing. It deliberately does NOT probe anything — no `command -v`, no `-x`
@@ -48,8 +71,10 @@
 # `hostile-argv.json` exists to hold that property still.
 #
 # Both save and restore run a FIXED number of jq processes — two for a dry
-# restore (three live, for the already-running query), three for save — not
-# one per window and one per argv element. A 40-window session used to fork
+# restore (three live, for the already-running query), three for save — four
+# when a snapshot is already on disk (one jq reads its instance and count),
+# five when that snapshot also has to be age-checked — not one per window and
+# one per argv element. A 40-window session used to fork
 # 642 jq processes and sleep 8s inside restore alone, plus 283 more on every
 # 2-minute save timer tick; it is 2 and 3 now, with no sleep.
 # jq emits one NUL-separated field stream (`--raw-output0`, jq >= 1.7) that a
@@ -60,6 +85,8 @@
 #
 # HYPRCTL / JQ override the binaries; both default to a PATH lookup, which is
 # what the systemd user units in home/hyprland/default.nix rely on.
+# HYPR_SESSION_SETTLE (seconds, default 180) is the age below which a fresh
+# compositor instance is still considered to be mapping its restored windows.
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
 
@@ -100,15 +127,21 @@ Options:
   --to FILE     write the snapshot here      (default ~/.config/oligarchy/session/last.json)
   --from FILE   read the snapshot from here  (default as above)
   --dry-run     print the hyprctl dispatch lines, launch nothing, exit 0
-  --force       relaunch every recorded client even if one of its class is
-                already running (live restore only; --dry-run never queries
-                the compositor, so --force changes nothing there)
+  --force       relaunch every recorded client even if clients of its class
+                are already running (live restore only; --dry-run never
+                queries the compositor, so --force changes nothing there)
   -h, --help    show this help
 
 Notes:
-  * Saving 0 clients over a snapshot that holds more than 0 is refused: the
-    old file is kept and the command still exits 0.
-  * Each successful save rotates the previous snapshot to <name>.prev.json.
+  * A save is refused only when a DIFFERENT compositor instance wrote the
+    snapshot AND the live client count is lower AND this instance is younger
+    than HYPR_SESSION_SETTLE seconds — that is the restore-still-mapping case.
+    The old file is kept and the command still exits 0. A save against the
+    instance that wrote the file always wins, including an empty one.
+  * A save rotates the previous snapshot to <name>.prev.json when the
+    compositor instance changes — once per crash/re-login, not every save.
+  * Live restore launches max(0, recorded - running) clients per class, so a
+    partially restored session can be completed rather than doubled.
   * A missing snapshot at the DEFAULT path is a notice and exit 0, so the
     login oneshot does not fail on a first boot. A missing explicit --from
     FILE is still an error.
@@ -117,6 +150,9 @@ Environment:
   HYPRCTL       hyprctl binary (default: hyprctl on PATH)
   JQ            jq binary      (default: jq on PATH, needs >= 1.7 for
                 --raw-output0)
+  HYPR_SESSION_SETTLE
+                seconds a new compositor instance counts as "still mapping
+                restored windows" (default 180; 0 disables the save refusal)
 USAGE
 }
 
@@ -129,6 +165,30 @@ sq() {
 }
 
 need_jq() { command -v "$JQ" >/dev/null 2>&1 || die "jq not found (set \$JQ)"; }
+
+# Seconds since the CURRENT compositor instance started, on stdout; non-zero
+# exit when that cannot be determined. `hyprctl instances -j` answers
+# [{"instance": "<sig>", "time": <epoch seconds>, ...}] — verified on this host
+# as {"instance":"unknown_1789999814_...","time":1789999814}. An unknown age is
+# treated by the caller as YOUNG: the conservative direction, since the other
+# way a hyprctl that stopped answering would silently retire the refusal.
+instance_age() {
+  local sig="${HYPRLAND_INSTANCE_SIGNATURE:-}"
+  [ -n "$sig" ] || return 1
+  local instances t now
+  instances=$("$HYPRCTL" instances -j 2>/dev/null) || return 1
+  [ -n "$instances" ] || return 1
+  # shellcheck disable=SC2016  # $sig is jq's binding, not the shell's
+  t=$(printf '%s' "$instances" | "$JQ" -r --arg sig "$sig" '
+    (if type == "array" then . else [] end)
+    | map(select((.instance // "") == $sig))
+    | (.[0].time // empty) | tostring
+  ' 2>/dev/null) || return 1
+  case "$t" in '' | *[!0-9]*) return 1 ;; esac
+  now=$(date +%s 2>/dev/null) || return 1
+  case "$now" in '' | *[!0-9]*) return 1 ;; esac
+  printf '%s' "$((now - t))"
+}
 
 # `last.json` -> `last.prev.json`; anything else just gains a .prev suffix.
 prev_path() {
@@ -227,15 +287,42 @@ cmd_save() {
     n=$((n + 1))
   done
 
-  # An empty snapshot must never replace a populated one. See the header: the
-  # crash-then-fast-relogin sequence produces exactly this, and the result is a
-  # restore that relaunches nothing with no visible cause.
-  if [ "$n" -eq 0 ] && [ -f "$out" ]; then
-    local old
-    old=$("$JQ" '(.clients // []) | length' "$out" 2>/dev/null) || old=0
-    case "$old" in ''|*[!0-9]*) old=0 ;; esac
-    if [ "$old" -gt 0 ]; then
-      note "refusing to overwrite $out ($old clients) with an empty snapshot; keeping the old one"
+  # ── is this save the restore still in flight? ──────────────────────────────
+  # One jq reads the instance signature and the client count of the snapshot
+  # already on disk; both drive the refusal AND the rotation below.
+  local cur_instance="${HYPRLAND_INSTANCE_SIGNATURE:-}"
+  local old_n=0 old_instance="" have_old=0 instance_changed=0
+  if [ -f "$out" ]; then
+    have_old=1
+    local -a old_meta=()
+    mapfile -t -d '' old_meta < <("$JQ" --raw-output0 '
+      ((.hyprland_instance // "") | tostring),
+      (((.clients // []) | length) | tostring)
+    ' "$out" 2>/dev/null)
+    if [ "${#old_meta[@]}" -ge 2 ]; then
+      old_instance=${old_meta[0]}
+      old_n=${old_meta[1]}
+      case "$old_n" in '' | *[!0-9]*) old_n=0 ;; esac
+    fi
+    # An unreadable/legacy snapshot leaves old_instance empty, which counts as
+    # "a different instance wrote it" — so it still gets rotated before it is
+    # replaced, while old_n stays 0 and can therefore never trigger a refusal.
+    [ "$old_instance" != "$cur_instance" ] && instance_changed=1
+  fi
+
+  # The refusal is INSTANCE-AWARE; see the header for why "is the new snapshot
+  # empty" was both too weak and too strong. All three conditions must hold:
+  # a DIFFERENT compositor wrote the file we would replace, we have FEWER
+  # clients than it records, and this compositor is young enough that a restore
+  # could still be mapping windows into it. A save against the instance that
+  # wrote the file is always honoured, empty included.
+  if [ "$instance_changed" -eq 1 ] && [ "$n" -lt "$old_n" ]; then
+    local settle="${HYPR_SESSION_SETTLE:-180}"
+    case "$settle" in '' | *[!0-9]*) settle=180 ;; esac
+    local age=""
+    age=$(instance_age) || age=""
+    if [ "$settle" -gt 0 ] && { [ -z "$age" ] || [ "$age" -lt "$settle" ]; }; then
+      note "refusing to overwrite $out ($old_n clients, instance ${old_instance:-unknown}) with $n from an instance only ${age:-?}s old; a restore is probably still mapping windows. Keeping the old snapshot (HYPR_SESSION_SETTLE=0 disables this)."
       exit 0
     fi
   fi
@@ -296,7 +383,14 @@ cmd_save() {
   # `mv` below is still the only thing that ever changes $out, and a reader
   # never sees a half-written snapshot (the temp is in the target directory,
   # so the rename never crosses a filesystem).
-  if [ -f "$out" ]; then
+  #
+  # ONLY on an instance change — one .prev.json per compositor instance, i.e.
+  # per crash/re-login. Rotating on every tick capped the recovery window at
+  # one save interval (120s), which is shorter than it takes to notice that a
+  # session came back wrong. The first save of a new instance writes $out with
+  # the new signature, so every later save in that instance sees
+  # instance_changed=0 and leaves the rotated copy alone.
+  if [ "$have_old" -eq 1 ] && [ "$instance_changed" -eq 1 ]; then
     local prev
     prev=$(prev_path "$out")
     cp -f -- "$out" "$prev" 2>/dev/null || note "could not rotate $out to $prev"
@@ -345,9 +439,15 @@ cmd_restore() {
     command -v "$HYPRCTL" > /dev/null 2>&1 || die "hyprctl not found — is Hyprland running? (set \$HYPRCTL)"
   fi
 
-  # Which classes are already on screen. Queried ONCE, before the loop, and
-  # never in --dry-run: the gate diffs dry-run output byte-for-byte, so it
-  # must not depend on what happens to be open on the runner.
+  # How MANY of each class are already on screen. Queried ONCE, before the
+  # loop, and never in --dry-run: the gate diffs dry-run output byte-for-byte,
+  # so it must not depend on what happens to be open on the runner.
+  #
+  # A count, not a boolean. A boolean made a partial restore unrecoverable —
+  # one kitty opened by hand suppressed all five recorded ones. The filter is
+  # save's, verbatim (pid, non-special workspace, non-scratch, mapped, then one
+  # entry per pid), so "recorded" and "running" are counting the same thing on
+  # both sides; a different filter here would silently bias every deficit.
   local -A running=()
   if [ "$dry" -eq 0 ] && [ "$force" -eq 0 ]; then
     local live k
@@ -357,9 +457,19 @@ cmd_restore() {
       # subscript of `@` or `*` is the expand-every-element form, so a window
       # whose class happened to be one of those would read as "everything is
       # already running".
+      # shellcheck disable=SC2016  # $c is jq's, not the shell's
       while IFS= read -r -d '' k; do
-        [ -n "$k" ] && running["c:$k"]=1
-      done < <(printf '%s' "$live" | "$JQ" --raw-output0 '.[]? | (.class // "" | tostring)' 2>/dev/null)
+        [ -n "$k" ] && running["c:$k"]=$(( ${running["c:$k"]:-0} + 1 ))
+      done < <(printf '%s' "$live" | "$JQ" --raw-output0 '
+        [ .[]?
+          | select((.pid // 0) > 0)
+          | select((.workspace.id // -1) >= 0)
+          | select(((.class // "") | startswith("scratch-")) | not)
+          | select(.mapped != false)
+        ]
+        | reduce .[] as $c ([]; if any(.[]; .pid == $c.pid) then . else . + [$c] end)
+        | .[] | (.class // "" | tostring)
+      ' 2>/dev/null)
     fi
   fi
 
@@ -399,6 +509,8 @@ cmd_restore() {
   # snapshot can be hand-edited or come from an older writer, and launching a
   # five-window browser five times is the expensive way to find that out.
   local -A seen_pid=()
+  # One "skip <class>: N already running" line per class, not per window.
+  local -A skip_logged=()
   local total=${#rec[@]} i=0
 
   while [ "$i" -lt "$total" ]; do
@@ -423,9 +535,17 @@ cmd_restore() {
       seen_pid[$pid]=1
     fi
 
-    # A second restore into a half-restored session doubled every window.
-    if [ -n "$class" ] && [ -n "${running["c:$class"]:-}" ]; then
-      skip "$class" "already running"
+    # A second restore into a half-restored session doubled every window; a
+    # class-level boolean fixed that and broke completing a PARTIAL one. Per
+    # class the first `running` recorded clients are consumed and the rest
+    # launch, so exactly max(0, recorded - running) of each class starts, in
+    # file order: 5 kitty recorded with 1 open by hand launches 4.
+    if [ -n "$class" ] && [ "${running["c:$class"]:-0}" -gt 0 ]; then
+      if [ -z "${skip_logged["c:$class"]:-}" ]; then
+        skip "$class" "${running["c:$class"]} already running"
+        skip_logged["c:$class"]=1
+      fi
+      running["c:$class"]=$(( ${running["c:$class"]} - 1 ))
       dup=$((dup + 1))
       continue
     fi

@@ -1187,13 +1187,23 @@
         # so the rule is checked over EVERY unit with TTYPath = /dev/tty1
         # rather than over that one unit by name.
         #
-        # A tty1 unit must carry all FOUR, because each covers a different
-        # start path: RemainAfterExit (the target restart finds nothing to do),
+        # A tty1 unit must carry THREE, because each covers a different start
+        # path: RemainAfterExit (the target restart finds nothing to do),
         # restartIfChanged = false (a changed unit file is not force-restarted),
-        # a PID 1 Condition* (evaluated before any exec context exists, so it
-        # can decline BEFORE the vhangup — which is why the old ExecCondition
-        # could not work), and specifically the live-session guard
-        # ConditionPathExistsGlob = "!/run/systemd/sessions/*".
+        # and a PID 1 Condition* (evaluated before any exec context exists, so
+        # it can decline BEFORE the vhangup — which is why the old
+        # ExecCondition could not work).
+        #
+        # A FOURTH is required of the units that actually hang up the VT, i.e.
+        # those with serviceConfig.TTYVHangup: specifically the live-session
+        # guard ConditionPathExistsGlob = "!/run/systemd/sessions/*". It is
+        # keyed on TTYVHangup rather than on "holds tty1" because TTYVHangup is
+        # the primitive that does the damage — it is EXEC CONTEXT, applied by
+        # the service manager as it sets up the process, which is after every
+        # Condition* has passed and after ExecCondition would have run, so
+        # nothing inside the unit's own command sequence can prevent it. A tty1
+        # unit that never hangs up the VT cannot reproduce this failure and is
+        # not asked for the guard.
         #
         # The fourth is separate from the third on purpose. "Some Condition*"
         # is satisfied by a once-per-boot stamp, which encodes "this boot
@@ -1206,7 +1216,8 @@
         # actually asks "is anybody logged in"; at boot the unit runs before
         # the display manager, nothing matches, and the intro still plays.
         # Checking for the exact string is deliberate: a gate that accepts any
-        # Condition* here is the gate that shipped the bug.
+        # Condition* here is the gate that shipped the bug. The glob string is
+        # the accepted implementation, not merely an example.
         #
         # greetd is the one exemption: it is the unit that legitimately owns
         # tty1, and its own protection is restartIfChanged = false, asserted
@@ -1255,6 +1266,9 @@
               tty1Units = lib'.mapAttrs
                 (_: svc: {
                   remainAfterExit = asBool (svc.serviceConfig.RemainAfterExit or false);
+                  # The primitive the live-session guard exists for. Same
+                  # bool-or-systemd-string normalisation as RemainAfterExit.
+                  ttyVHangup = asBool (svc.serviceConfig.TTYVHangup or false);
                   restartIfChanged = svc.restartIfChanged;
                   hasCondition = lib'.any
                     (k: lib'.hasPrefix "Condition" k)
@@ -1299,7 +1313,7 @@
               fi
 
               jq -r '.tty1Units | to_entries[]
-                     | "\(.key)\tRemainAfterExit=\(.value.remainAfterExit)\trestartIfChanged=\(.value.restartIfChanged)\tCondition*=\(.value.hasCondition)\tliveSessionGuard=\(.value.liveSessionGuard)"' \
+                     | "\(.key)\tRemainAfterExit=\(.value.remainAfterExit)\trestartIfChanged=\(.value.restartIfChanged)\tCondition*=\(.value.hasCondition)\tTTYVHangup=\(.value.ttyVHangup)\tliveSessionGuard=\(.value.liveSessionGuard)"' \
                 "$units" | tee $out/report.txt
 
               fail=0
@@ -1310,7 +1324,7 @@
                   | [ (if .remainAfterExit then empty else "RemainAfterExit" end)
                     , (if .restartIfChanged then "restartIfChanged=false" else empty end)
                     , (if .hasCondition then empty else "a Condition* in unitConfig" end)
-                    , (if .liveSessionGuard then empty else "unitConfig.ConditionPathExistsGlob = \"!/run/systemd/sessions/*\" (a once-per-boot stamp alone still vhangups a live session on the switch that deploys the unit)" end)
+                    , (if (.ttyVHangup | not) or .liveSessionGuard then empty else "unitConfig.ConditionPathExistsGlob = \"!/run/systemd/sessions/*\" (required because this unit sets TTYVHangup: that is exec context, applied by the service manager after every Condition* has passed and after ExecCondition would have run, so nothing inside the unit can stop it — and a once-per-boot stamp alone still vhangups a live session on the switch that first deploys the unit)" end)
                     ] | join(", ")' "$units")
                 if [ -n "$bad" ]; then
                   echo "FAIL  $name holds /dev/tty1 and is missing: $bad" >&2

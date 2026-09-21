@@ -732,19 +732,38 @@ in
   # (see the GPU targeting comment at the top of this file, and
   # docs/dgpu-steam-forcing.md): turns the
   # comment-only warning into a build-time check.
-  assertions = [{
-    # Also reject session-wide DRI_PRIME: `env=` in hyprland.conf lands in the
-    # systemd user manager's environment, so every user unit (hyprlock
-    # included) silently inherited it and rendered on the dGPU -- the
-    # flicker/pinned-awake/TTM-shutdown-wedge class documented in
-    # docs/dgpu-steam-forcing.md. dGPU offload is opt-in per app only
-    # (steam extraEnv / dgpu-run / per-unit Environment=).
-    assertion = !(lib.any
-      (v: lib.hasPrefix "AQ_DRM_DEVICES," v || lib.hasPrefix "WLR_DRM_DEVICES," v
-        || lib.hasPrefix "DRI_PRIME," v)
-      (lib.flatten (config.wayland.windowManager.hyprland.settings.env or [])));
-    message = "Do not set AQ_DRM_DEVICES/WLR_DRM_DEVICES toward the dGPU (no display path, fatal SIGABRT) nor a session-wide DRI_PRIME (whole desktop on dGPU; hyprlock TTM wedge; dGPU pinned awake). Offload is opt-in per-app. See docs/dgpu-steam-forcing.md.";
-  }];
+  assertions = [
+    {
+      # Also reject session-wide DRI_PRIME: `env=` in hyprland.conf lands in the
+      # systemd user manager's environment, so every user unit (hyprlock
+      # included) silently inherited it and rendered on the dGPU -- the
+      # flicker/pinned-awake/TTM-shutdown-wedge class documented in
+      # docs/dgpu-steam-forcing.md. dGPU offload is opt-in per app only
+      # (steam extraEnv / dgpu-run / per-unit Environment=).
+      assertion = !(lib.any
+        (v: lib.hasPrefix "AQ_DRM_DEVICES," v || lib.hasPrefix "WLR_DRM_DEVICES," v
+          || lib.hasPrefix "DRI_PRIME," v)
+        (lib.flatten (config.wayland.windowManager.hyprland.settings.env or [])));
+      message = "Do not set AQ_DRM_DEVICES/WLR_DRM_DEVICES toward the dGPU (no display path, fatal SIGABRT) nor a session-wide DRI_PRIME (whole desktop on dGPU; hyprlock TTM wedge; dGPU pinned awake). Offload is opt-in per-app. See docs/dgpu-steam-forcing.md.";
+    }
+    {
+      # The autologin boot lock hangs off a RUNTIME condition
+      # (ConditionEnvironment=OLIGARCHY_AUTOLOGIN=1), and systemd treats a
+      # declined condition as a clean skip, not a failure — so if that
+      # variable never reaches the user manager the lock simply does not
+      # happen, the autologin desktop comes up unlocked, and nothing anywhere
+      # goes red. The ONLY thing that puts it there is the generated line-1
+      # `dbus-update-activation-environment --systemd --all`, which is what
+      # `systemd.variables = [ "--all" ]` renders to. Trimming that list to a
+      # hand-picked set of variable names (a plausible tidy-up: it is
+      # otherwise just a performance/hygiene knob) would drop
+      # OLIGARCHY_AUTOLOGIN and disable the boot lock invisibly — hence a
+      # build-time check on the dependency rather than a comment.
+      assertion = lockOnLoginConfigured ->
+        lib.elem "--all" (config.wayland.windowManager.hyprland.systemd.variables or [ ]);
+      message = "custom.session.autoLogin.lockOnLogin is on, so wayland.windowManager.hyprland.systemd.variables must contain \"--all\": hypr-boot-lock fires on ConditionEnvironment=OLIGARCHY_AUTOLOGIN=1, and that variable only reaches the systemd user manager through Home Manager's `dbus-update-activation-environment --systemd --all`. With a trimmed list the condition declines, the autologin desktop comes up UNLOCKED, and no unit fails.";
+    }
+  ];
 
   # Session daemon supervision — bound to hyprland-session.target (see the
   # `systemd` block above). Previously these were unsupervised exec-once
@@ -758,7 +777,17 @@ in
       mkSessionService = { description, execStart }: {
         Unit = {
           inherit description;
-          After = [ "hyprland-session.target" ];
+          # Also ordered after the autologin boot lock whenever one is
+          # configured: nothing this factory mints may paint before the locker
+          # has a surface. The edge lives HERE rather than in hypr-boot-lock's
+          # `Before=` list so it holds for every future session daemon as
+          # well — the hand-kept list named hyprpaper and mako and silently
+          # missed hypridle, polkit-gnome and swayosd-server, each of which
+          # can draw (or pop a dialog) over the lock. No cycle: hypr-boot-lock
+          # is deliberately NOT a mkSessionService, so every edge points the
+          # same way.
+          After = [ "hyprland-session.target" ]
+            ++ lib.optional lockOnLoginConfigured "hypr-boot-lock.service";
           PartOf = [ "hyprland-session.target" ];
           StartLimitIntervalSec = 60;
           StartLimitBurst = 5;
@@ -882,8 +911,28 @@ in
     #    Hyprland inherits it, and HM's line-1 `dbus-update-activation-
     #    environment --systemd --all` imports it into the user manager before
     #    the target starts -- which is exactly when this condition is
-    #    evaluated. ExecStartPost then unsets it from the manager, so a logout
-    #    and greeter re-login in the same boot does not lock again.
+    #    evaluated. (That import is load-bearing and invisible when it breaks,
+    #    so it is asserted above: see the `--all` assertion.)
+    #
+    #  - ONE-SHOT BY CONSTRUCTION, not by cleanup. The env var alone cannot
+    #    make this fire exactly once. `systemctl --user unset-environment`,
+    #    which is what used to run here as ExecStartPost, is the wrong shape
+    #    twice over: it mutates the manager environment GLOBALLY, so it races
+    #    every other unit in the same startup transaction that is not ordered
+    #    after the lock (those still read OLIGARCHY_AUTOLOGIN=1 and there is
+    #    no edge making them wait), and being `-`-prefixed it is best-effort,
+    #    so a quiet failure leaves the var set for the rest of the boot with
+    #    nothing anywhere going red. Instead the unit stamps
+    #    `%t/oligarchy-boot-lock` in ExecStartPre and declines on that stamp,
+    #    ANDed with the ConditionEnvironment -- which stays the discriminator,
+    #    because it is the only point at which greetd's initial_session and a
+    #    later greeter login actually differ. `%t` is /run/user/<uid>, which
+    #    lives exactly as long as the user manager does (logind destroys it
+    #    ~10s after the last logout; no linger is configured here), so the
+    #    stamp expires precisely when the manager environment it stands in for
+    #    would. It is user-private, and like every Condition* it is evaluated
+    #    by PID 1 before any exec context exists, so a re-login within the
+    #    same manager lifetime is DECLINED rather than started and torn down.
     //
     lib.optionalAttrs lockOnLoginConfigured {
       hypr-boot-lock = {
@@ -891,19 +940,39 @@ in
           Description = "Lock the screen on autologin boot (no grace period)";
           After = [ "hyprland-session.target" ];
           PartOf = [ "hyprland-session.target" ];
-          # Nothing that paints may start before the locker is up. Type=exec
-          # below is what makes this ordering mean anything: without it the
-          # unit is "started" as soon as fork() returns, before hyprlock has a
-          # surface.
-          Before = [ "waybar.service" "hyprpaper.service" "mako.service" ]
+          # "Nothing that paints may start before the locker" is enforced by
+          # mkSessionService, not by this list: that factory orders everything
+          # it mints After= this unit, so a new session daemon inherits the
+          # rule instead of needing a line added here. What remains are the
+          # units the factory does NOT mint — waybar comes from
+          # programs.waybar, and the restore oneshot is hand-written below.
+          # (`mako` is declared twice: HM's services.mako in
+          # home/apps/default.nix and the factory copy above. The HM one is
+          # not factory-minted, so it still needs naming here.)
+          #
+          # Type=exec below is what makes any of this ordering mean anything:
+          # without it the unit is "started" as soon as fork() returns, before
+          # hyprlock has a surface.
+          Before = [ "waybar.service" "mako.service" ]
           ++ lib.optional restoreOn "hypr-session-restore.service";
+          # Both conditions must hold — Condition* entries AND together — and
+          # a declined condition is a clean skip rather than a failure, which
+          # is what keeps hypr-session-restore's Requires= satisfied on a
+          # greeter login. See the "one-shot by construction" note above.
           ConditionEnvironment = "OLIGARCHY_AUTOLOGIN=1";
+          ConditionPathExists = "!%t/oligarchy-boot-lock";
         };
         Service = {
           Type = "exec";
+          # Disarm before locking, not after: ExecStartPre runs first, so the
+          # unit is already one-shot for the rest of this user manager's life
+          # by the time hyprlock draws. `-` for the same reason the old unset
+          # carried one — failing to disarm must never fail the LOCK. The
+          # degraded mode is then a second lock prompt on a greeter re-login
+          # in the same boot (the password was just typed: annoying), which is
+          # strictly better than an unlocked autologin desktop.
+          ExecStartPre = "-${pkgs.coreutils}/bin/touch %t/oligarchy-boot-lock";
           ExecStart = "${pkgs.hyprlock}/bin/hyprlock --grace 0";
-          # `-` because failing to unset must never fail the lock.
-          ExecStartPost = "-${pkgs.systemd}/bin/systemctl --user unset-environment OLIGARCHY_AUTOLOGIN";
           Restart = "no";
           TimeoutStopSec = "5s";
           KillMode = "mixed";
