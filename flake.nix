@@ -291,6 +291,13 @@
         # Declared before configuration.nix and the modules that consume it.
         ./modules/user.nix
 
+        # custom.locale.* — the single source for language, timezone, keyboard
+        # and fonts. Same reason it sits here as platform.nix and user.nix:
+        # configuration.nix and home/ both SET/read these, so the declarations
+        # must come first. Every sink is mkDefault and every default equals
+        # today's value, so a fresh clone is unchanged by its presence.
+        ./modules/locale.nix
+
         # custom.desktopFeatures.* — makes home/home.nix's feature set
         # (enableDev/enableGaming/enableAudio/enableDCF/enableScratchpads/
         # enablePersonalApps) a real, overridable option instead of a
@@ -460,6 +467,24 @@
         echo "  4. sudo nixos-install --flake <path-to-flake>#<target>"
         echo
 
+        # The locale warning goes in front of the user HERE, on the ISO,
+        # before they make the choice they are about to lose: a Calamares
+        # install writes /etc/locale.conf + /etc/vconsole.conf + /etc/localtime
+        # and adopting this flake throws all three away unless they carry them
+        # across. `oligarchy-adopt` reads exactly those files back.
+        echo "== Locale (what this install is about to set) =="
+        if command -v localectl >/dev/null 2>&1; then
+          localectl status 2>/dev/null | sed 's/^/  /' || echo "  localectl produced nothing."
+        else
+          echo "  localectl not present on this image."
+        fi
+        echo "  After installing: clone the flake, run 'oligarchy-adopt', review the"
+        echo "  ~/.config/oligarchy/local.nix it writes, then:"
+        echo "    sudo nixos-rebuild switch --flake .#nixos --impure"
+        echo "  --impure is REQUIRED. Without it that file is silently ignored and"
+        echo "  your locale reverts to America/Los_Angeles with a successful build."
+        echo
+
         if command -v fwupdmgr >/dev/null 2>&1; then
           echo "== Firmware (BIOS/EC) check via fwupd/LVFS =="
           fwupdmgr get-devices || true
@@ -478,6 +503,15 @@
           echo "fwupdmgr not present on this image."
         fi
       '';
+
+      # Locale adoption tool (stage 2 of docs/localization-roadmap.md): reads
+      # the /etc/locale.conf, /etc/vconsole.conf and /etc/localtime a stock
+      # install left behind and writes the matching custom.locale.* into
+      # ~/.config/oligarchy/local.nix — the override channel that already
+      # exists, merged rather than clobbered. Installed onto the ISO below
+      # next to oligarchy-hw-detect, and `nix run .#oligarchy-adopt`-able on an
+      # already-installed system.
+      oligarchyAdopt = pkgs.callPackage ./modules/locale/adopt.nix { };
     in
     {
       # ════════════════════════════════════════════════════════════════════════
@@ -832,7 +866,10 @@
 
               # Framework hardware-detect + fwupd firmware-check helper —
               # run `oligarchy-hw-detect` from a TTY before nixos-install.
-              environment.systemPackages = [ oligarchyHwDetect ];
+              # oligarchy-adopt ships beside it so the locale round-trip is
+              # available on the installed system without fetching anything:
+              # the user runs it once, after install, before the first switch.
+              environment.systemPackages = [ oligarchyHwDetect oligarchyAdopt ];
               services.fwupd.enable = lib.mkForce true;
             })
           ];
@@ -844,6 +881,11 @@
         # directly on an already-installed system for a firmware check:
         #   nix run .#oligarchy-hw-detect
         oligarchy-hw-detect = oligarchyHwDetect;
+
+        # Locale adoption tool — same shape, same reason:
+        #   nix run .#oligarchy-adopt
+        # Guarded by `nix build .#locale-adopt-fixtures`.
+        oligarchy-adopt = oligarchyAdopt;
 
         # USB scrcpy game-display wrapper. Same derivation the NixOS module
         # installs when custom.androidMirror.enable is set.
@@ -1422,6 +1464,332 @@
               [ "$fail" -eq 0 ] || exit 1
               echo "$found hypr-session restore fixture(s) match their expected dry-run output" \
                 > $out/report.txt
+            '';
+
+        # ════════════════════════════════════════════════════════════════════
+        # Locale contract gate — docs/localization-roadmap.md §8.
+        #
+        # Evaluates every nixosConfiguration under five languages and asserts
+        # the things that are silent when they break. Pure eval: no KVM, no
+        # closure — but it does evaluate 25 complete system configs (Home
+        # Manager included), so it is minutes, not seconds. On demand only.
+        #
+        # The line this gate exists for is the MIRROR: services.xserver.xkb
+        # (X11/XWayland), Hyprland's input.kb_layout (Wayland) and
+        # console.useXkbConfig (the TTY and the LUKS prompt) are three
+        # different consumers of one keyboard description, and they used to be
+        # three independent literals. Nothing at runtime complains when they
+        # disagree — you find out at the LUKS prompt, in the dark, typing a
+        # passphrase on a layout nobody chose. So: they are all derived from
+        # custom.locale.keyboard.*, and this asserts the derivation still
+        # holds on every host.
+        #
+        # Anti-vacuity, per mcp_self_audit's two rules: a combination that was
+        # not inspected is a SKIP that is REPORTED and counts against the
+        # required 25, and the mirror check itself must have run at least once
+        # (a Home-Manager-less host would otherwise let the most valuable
+        # assertion in the file pass having compared nothing).
+        #
+        # Run on demand:  nix build .#locale-contract
+        # ════════════════════════════════════════════════════════════════════
+        locale-contract =
+          let
+            lib' = nixpkgs.lib;
+
+            hosts = [ "nixos" "nixos-fw13" "nixos-intel" "nixos-optimus" "builder" ];
+
+            # en-US is the maintainer's machine and must stay a no-op; de-DE
+            # is a Latin layout change; ja-JP is CJK fonts + an input method;
+            # ar-SA is RTL + a third script; xx-pseudo is the test locale the
+            # module is required to warn about rather than reject.
+            langs = [
+              { l = "en-US"; tz = "America/Los_Angeles"; kb = "us"; }
+              { l = "de-DE"; tz = "Europe/Berlin"; kb = "de"; }
+              { l = "ja-JP"; tz = "Asia/Tokyo"; kb = "jp"; }
+              { l = "ar-SA"; tz = "Asia/Riyadh"; kb = "ara"; }
+              { l = "xx-pseudo"; tz = "UTC"; kb = "us"; }
+            ];
+
+            inspect = host: lang:
+              let
+                cfg = (self.nixosConfigurations.${host}.extendModules {
+                  modules = [{
+                    custom.locale.language = lang.l;
+                    custom.locale.timeZone = lang.tz;
+                    custom.locale.keyboard.layout = lang.kb;
+                  }];
+                }).config;
+
+                # `a.b.c or null` returns null if ANY hop is missing, which is
+                # what makes this safe on a host that carries no Hyprland (or
+                # no Home Manager at all).
+                hmUser = cfg.custom.user.name;
+                hm = cfg.home-manager.users.${hmUser} or null;
+                hyprKb = hm.wayland.windowManager.hyprland.settings.input.kb_layout or null;
+
+                defaultLocale = cfg.i18n.defaultLocale;
+                # supportedLocales entries carry a /CHARSET suffix that
+                # defaultLocale does not; compare the locale half only.
+                supported = cfg.i18n.supportedLocales or [ ];
+
+                fontNames = map (p: lib'.toLower (p.name or "")) cfg.fonts.packages;
+              in
+              {
+                inherit host;
+                language = lang.l;
+                requestedTimeZone = lang.tz;
+                requestedLayout = lang.kb;
+                skipped = false;
+                # Forced explicitly: nothing else in a pure eval forces
+                # assertions, and a gate that never evaluated one inspected
+                # nothing. Warnings are recorded, not failed — §4.4 says
+                # xx-pseudo and a fontless input method are warnings.
+                failedAssertions = map (a: a.message) (lib'.filter (a: !a.assertion) cfg.assertions);
+                warnings = cfg.warnings;
+                inherit defaultLocale;
+                defaultLocaleSupported =
+                  lib'.any (e: builtins.head (lib'.splitString "/" e) == defaultLocale) supported;
+                timeZone = cfg.time.timeZone;
+                xkbLayout = cfg.services.xserver.xkb.layout;
+                consoleUseXkbConfig = cfg.console.useXkbConfig;
+                hmPresent = hm != null;
+                hyprKbLayout = hyprKb;
+                cjkFont = lib'.any (n: lib'.hasInfix "cjk" n) fontNames;
+                notoFont = lib'.any (n: lib'.hasInfix "noto" n) fontNames;
+              };
+
+            # tryEval + deepSeq so one host/language that fails to evaluate
+            # becomes a reported SKIP (and therefore a FAIL, since the gate
+            # demands 25 inspected combinations) rather than an opaque trace
+            # that says nothing about which combination died.
+            probe = host: lang:
+              let
+                r = builtins.tryEval (let v = inspect host lang; in builtins.deepSeq v v);
+              in
+              if r.success then r.value
+              else {
+                inherit host;
+                language = lang.l;
+                requestedTimeZone = lang.tz;
+                requestedLayout = lang.kb;
+                skipped = true;
+                reason = "evaluation failed for this host/language combination";
+              };
+
+            payload = pkgs.writeText "locale-contract.json"
+              (builtins.toJSON {
+                rows = lib'.concatMap (h: map (l: probe h l) langs) hosts;
+              });
+          in
+          pkgs.runCommand "locale-contract"
+            {
+              nativeBuildInputs = [ pkgs.jq ];
+              TZDATA = pkgs.tzdata;
+              meta = with nixpkgs.lib; {
+                description = "Assert custom.locale.* drives xkb, Hyprland, console, fonts and tz on every host";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              rows=${payload}
+              : > $out/report.txt
+
+              total=$(jq '.rows | length' "$rows")
+              if [ "$total" -ne 25 ]; then
+                echo "locale-contract: $total combination(s) in the payload, expected 25 (5 hosts x 5 languages) — inspected nothing, or only part of the matrix" >&2
+                exit 1
+              fi
+
+              fail=0
+              mirrors=0
+
+              while IFS= read -r row; do
+                get() { printf '%s\n' "$row" | jq -r "$1"; }
+
+                host=$(get '.host')
+                lang=$(get '.language')
+                want_tz=$(get '.requestedTimeZone')
+
+                if [ "$(get '.skipped')" != "false" ]; then
+                  echo "SKIP  $host/$lang — $(get '.reason // "unknown"')" | tee -a $out/report.txt >&2
+                  fail=1
+                  continue
+                fi
+
+                defloc=$(get '.defaultLocale')
+                supported=$(get '.defaultLocaleSupported')
+                tz=$(get '.timeZone')
+                xkb=$(get '.xkbLayout')
+                hypr=$(get '.hyprKbLayout // "<absent>"')
+                usexkb=$(get '.consoleUseXkbConfig')
+                cjk=$(get '.cjkFont')
+                noto=$(get '.notoFont')
+                nassert=$(get '.failedAssertions | length')
+                nwarn=$(get '.warnings | length')
+
+                echo "$host/$lang	tz=$tz	locale=$defloc	xkb=$xkb	hypr=$hypr	useXkbConfig=$usexkb	cjk=$cjk	noto=$noto	assertions=$nassert	warnings=$nwarn" >> $out/report.txt
+
+                bad=""
+
+                if [ "$nassert" -ne 0 ]; then
+                  bad="$bad; failing assertions: $(get '.failedAssertions | join(" | ")')"
+                fi
+
+                # Warnings are legitimate here (xx-pseudo is a test locale,
+                # §4.4), so they are recorded rather than failed — but they go
+                # in the report where a reviewer sees them.
+                if [ "$nwarn" -ne 0 ]; then
+                  get '.warnings[] | "        warning: \(.)"' >> $out/report.txt
+                fi
+
+                if [ "$supported" != "true" ]; then
+                  bad="$bad; i18n.defaultLocale=$defloc is not in the derived i18n.supportedLocales (glibc will not generate it and falls back to C silently)"
+                fi
+
+                if [ "$tz" != "$want_tz" ]; then
+                  bad="$bad; time.timeZone=$tz but custom.locale.timeZone asked for $want_tz"
+                fi
+
+                if [ ! -e "$TZDATA/share/zoneinfo/$tz" ]; then
+                  bad="$bad; time.timeZone=$tz names no zone in tzdata"
+                fi
+
+                # The TTY/LUKS half of the mirror: with
+                # keyboard.consoleKeyMap = null (the default in every
+                # combination here) the console keymap must be COMPILED from
+                # the same xkb description, not left to the us default.
+                if [ "$usexkb" != "true" ]; then
+                  bad="$bad; console.useXkbConfig is $usexkb — the TTY and the LUKS prompt are no longer derived from custom.locale.keyboard"
+                fi
+
+                # THE mirror assertion.
+                if [ "$hypr" = "<absent>" ]; then
+                  echo "        mirror not checked on $host/$lang (no Home Manager Hyprland config)" >> $out/report.txt
+                else
+                  mirrors=$((mirrors+1))
+                  if [ "$xkb" != "$hypr" ]; then
+                    bad="$bad; MIRROR: services.xserver.xkb.layout=$xkb but Hyprland input.kb_layout=$hypr — two literals again"
+                  fi
+                fi
+
+                case "$lang" in
+                  ja-JP)
+                    [ "$cjk" = "true" ] || bad="$bad; ja-JP pulls no CJK font into fonts.packages (tofu everywhere, no error)"
+                    ;;
+                  ar-SA)
+                    [ "$noto" = "true" ] || bad="$bad; ar-SA pulls no noto font into fonts.packages (no Arabic coverage)"
+                    ;;
+                esac
+
+                if [ -n "$bad" ]; then
+                  echo "FAIL  $host/$lang$bad" >&2
+                  fail=1
+                else
+                  echo "PASS  $host/$lang"
+                fi
+              done < <(jq -c '.rows[]' "$rows")
+
+              # The mirror is the reason this gate exists; if no combination
+              # could check it, it passed having compared nothing.
+              if [ "$mirrors" -eq 0 ]; then
+                echo "locale-contract: the xkb/Hyprland mirror was never checked — no host exposed wayland.windowManager.hyprland.settings.input.kb_layout" >&2
+                fail=1
+              fi
+
+              [ "$fail" -eq 0 ] || exit 1
+              echo "inspected $total combination(s); mirror checked on $mirrors of them" >> $out/report.txt
+            '';
+
+        # ════════════════════════════════════════════════════════════════════
+        # oligarchy-adopt fixtures — docs/localization-roadmap.md §8.
+        #
+        # The adoption tool reads the /etc a stock install left behind and
+        # writes custom.locale.* into ~/.config/oligarchy/local.nix. Both
+        # halves are testable without a VM: the fixtures are fake filesystem
+        # roots, and the assertion is an exact diff of the Nix it emits.
+        #
+        # A fixture carrying `existing-local.nix` is the merge case — the tool
+        # must not clobber a file the user already has (the control centre's
+        # wholesale overwrite of state.nix is the failure this avoids) — so it
+        # is run with --out against a COPY and the resulting file is diffed,
+        # not stdout.
+        #
+        # Run on demand:  nix build .#locale-adopt-fixtures
+        # ════════════════════════════════════════════════════════════════════
+        locale-adopt-fixtures =
+          let
+            fixtures = ./modules/locale/tests/fixtures;
+          in
+          pkgs.runCommand "locale-adopt-fixtures"
+            {
+              nativeBuildInputs = [ oligarchyAdopt pkgs.coreutils pkgs.diffutils ];
+              meta = with nixpkgs.lib; {
+                description = "Assert oligarchy-adopt turns fixture /etc trees into the expected custom.locale.*";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out work
+              cd work
+              # The tool defaults --out under $HOME; give it one that exists so
+              # no code path can ever write to /.
+              export HOME="$PWD"
+
+              found=0
+              fail=0
+              for case in ${fixtures}/*/; do
+                [ -d "$case" ] || continue
+                name=$(basename "$case")
+                expected="$case/expected.nix"
+                found=$((found+1))
+
+                if [ ! -e "$expected" ]; then
+                  echo "FAIL  $name — no expected.nix beside the fixture" >&2
+                  fail=1
+                  continue
+                fi
+
+                if [ -e "$case/existing-local.nix" ]; then
+                  # Merge case: run against a writable copy and diff the RESULT.
+                  cp "$case/existing-local.nix" "$name.local.nix"
+                  chmod u+w "$name.local.nix"
+                  if ! oligarchy-adopt --root "$case" --out "$name.local.nix" > "$name.log" 2>&1; then
+                    echo "FAIL  $name — oligarchy-adopt exited non-zero:" >&2
+                    cat "$name.log" >&2
+                    fail=1
+                    continue
+                  fi
+                  actual="$name.local.nix"
+                else
+                  if ! oligarchy-adopt --root "$case" --stdout > "$name.actual" 2> "$name.err"; then
+                    echo "FAIL  $name — oligarchy-adopt --stdout exited non-zero:" >&2
+                    cat "$name.err" >&2
+                    fail=1
+                    continue
+                  fi
+                  actual="$name.actual"
+                fi
+
+                if diff -u "$expected" "$actual"; then
+                  echo "PASS  $name"
+                else
+                  echo "FAIL  $name — emitted Nix differs from expected.nix" >&2
+                  fail=1
+                fi
+              done
+
+              # Inspected nothing is a FAIL: a renamed fixture directory must
+              # not quietly turn this gate into a no-op.
+              if [ "$found" -eq 0 ]; then
+                echo "locale-adopt-fixtures: no fixture directories found; inspected nothing" >&2
+                exit 1
+              fi
+
+              [ "$fail" -eq 0 ] || exit 1
+              echo "$found oligarchy-adopt fixture(s) emit exactly their expected.nix" > $out/report.txt
             '';
       }
       # ══════════════════════════════════════════════════════════════════════

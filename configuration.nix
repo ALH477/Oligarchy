@@ -607,12 +607,10 @@
       services.xserver = {
         enable = true; # Enable X11 for IceWM backup system
 
-        # Keyboard configuration (matches Wayland setup)
-        xkb = {
-          layout = "us";
-          variant = "";
-          options = "caps:escape";
-        };
+        # Keyboard now comes from `custom.locale.keyboard` (modules/locale.nix),
+        # which sets `services.xserver.xkb` and derives the console keymap from
+        # the same xkb description via `console.useXkbConfig` — the old
+        # hand-maintained "matches Wayland setup" mirror is gone.
 
         # Exclude unnecessary X11 packages
         excludePackages = [ pkgs.xterm ];
@@ -1182,23 +1180,14 @@
       services.blueman.enable = true;
 
       # ──────────────────────────────────────────────────────────────────────────
-      # Locale & Time (unchanged)
+      # Locale & Time — see `custom.locale.*` (modules/locale.nix)
       # ──────────────────────────────────────────────────────────────────────────
-      time.timeZone = "America/Los_Angeles";
-      i18n = {
-        defaultLocale = "en_US.UTF-8";
-        extraLocaleSettings = {
-          LC_ADDRESS = "en_US.UTF-8";
-          LC_IDENTIFICATION = "en_US.UTF-8";
-          LC_MEASUREMENT = "en_US.UTF-8";
-          LC_MONETARY = "en_US.UTF-8";
-          LC_NAME = "en_US.UTF-8";
-          LC_NUMERIC = "en_US.UTF-8";
-          LC_PAPER = "en_US.UTF-8";
-          LC_TELEPHONE = "en_US.UTF-8";
-          LC_TIME = "en_US.UTF-8";
-        };
-      };
+      # The default locale, the nine LC_* settings and the timezone are now
+      # `custom.locale.{language,region,timeZone}`; every sink there is
+      # mkDefault, so override them in ~/.config/oligarchy/local.nix rather
+      # than here. That file needs `--impure` — without it the pathExists
+      # guard answers false instead of erroring and your overrides are
+      # silently ignored, the same trap as every other local toggle.
 
       # ──────────────────────────────────────────────────────────────────────────
       # System Services (unchanged)

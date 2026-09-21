@@ -117,7 +117,11 @@ jobs:
             echo "No usable base commit; skipping the formatting check."
             exit 0
           fi
-          mapfile -t changed < <(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.nix')
+          # modules/locale/tests/fixtures/*/expected.nix are `custom.locale`
+          # FRAGMENTS the .#locale-adopt-fixtures gate diffs byte-for-byte —
+          # not standalone Nix, so nixpkgs-fmt cannot parse them. Excluded here;
+          # the gate is what checks them.
+          mapfile -t changed < <(git diff --name-only --diff-filter=ACMR "$base" HEAD -- '*.nix' ':(exclude)modules/locale/tests/fixtures/**')
           if [ ${#changed[@]} -eq 0 ]; then
             echo "No .nix files changed."
             exit 0

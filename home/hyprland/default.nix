@@ -80,6 +80,17 @@ let
     then monitors.laptop
     else monitors.desktop;
 
+  # ── Keyboard (custom.locale.keyboard.*, declared in modules/locale.nix) ──
+  # Read with `or` defaults at every hop, for the same reason the session
+  # block below does: home/ must still evaluate standalone, and on a fresh
+  # clone where the NixOS module declaring these options is absent.
+  locale = osConfig.custom.locale or { };
+  kb = locale.keyboard or { };
+  kb_layout = kb.layout or "us";
+  kb_variant = kb.variant or "";
+  kb_options = kb.options or "caps:escape";
+  kb_model = kb.model or "pc105";
+
   # ── Session resume (custom.session.*, declared in modules/session-resume.nix) ──
   # Read with `or` defaults at every hop, the same way `osConfig.custom.platform`
   # is read in home/scripts/default.nix: home/ has to evaluate on a host — or a
@@ -221,9 +232,13 @@ in
       ];
 
       # Input configuration
+      #
+      # This is the Wayland half of what used to be a hand-maintained mirror:
+      # the X11 half is `services.xserver.xkb`, set from the same
+      # `custom.locale.keyboard` option (modules/locale.nix), so the two
+      # sessions can no longer disagree about the layout.
       input = {
-        kb_layout = "us";
-        kb_options = "caps:escape";
+        inherit kb_layout kb_variant kb_options kb_model; # let-bound at the top
         follow_mouse = 1;
         repeat_delay = 300;
         repeat_rate = 50;
@@ -743,7 +758,7 @@ in
       assertion = !(lib.any
         (v: lib.hasPrefix "AQ_DRM_DEVICES," v || lib.hasPrefix "WLR_DRM_DEVICES," v
           || lib.hasPrefix "DRI_PRIME," v)
-        (lib.flatten (config.wayland.windowManager.hyprland.settings.env or [])));
+        (lib.flatten (config.wayland.windowManager.hyprland.settings.env or [ ])));
       message = "Do not set AQ_DRM_DEVICES/WLR_DRM_DEVICES toward the dGPU (no display path, fatal SIGABRT) nor a session-wide DRI_PRIME (whole desktop on dGPU; hyprlock TTM wedge; dGPU pinned awake). Offload is opt-in per-app. See docs/dgpu-steam-forcing.md.";
     }
     {

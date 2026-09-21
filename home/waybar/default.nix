@@ -1,7 +1,27 @@
-{ config, pkgs, lib, theme ? {}, features ? {}, themes ? {}, ... }:
+{ config, pkgs, lib, theme ? {}, features ? {}, themes ? {}, osConfig ? { }, ... }:
 
 let
   p = theme;  # Shorthand for palette
+
+  # -- Locale (custom.locale.*, declared in modules/locale.nix) ---------------
+  # Read with `or` defaults at every hop, exactly as home/hyprland/default.nix
+  # reads the same option: home/ must still evaluate standalone, and on a fresh
+  # clone where the NixOS module declaring these options is absent. The
+  # 12-hour table below is kept LOCAL for that same reason -- do NOT import
+  # modules/locale/lib.nix here.
+  locale = osConfig.custom.locale or { };
+  glibcLocale = locale.glibcLocale or "en_US.UTF-8";
+  lang = locale.language or "en-US";
+
+  # docs/localization-roadmap.md section 7 stage 1's table is en-US / en-PH /
+  # en-CA = 12-hour, everything else 24. en-US is left OUT of it here on
+  # purpose: it is also the DEFAULT of custom.locale.language, so honouring it
+  # would flip this machine's clock from 24h to 12h on a rebuild whose only
+  # intended diff is console.useXkbConfig. The 12-hour form is therefore
+  # reserved for a language EXPLICITLY set to one of the other two, until a
+  # `custom.locale.clock24h` option exists to say "12-hour locale, 24-hour
+  # clock" properly (recorded as a roadmap gap).
+  use24h = !(lib.elem lang [ "en-PH" "en-CA" ]);
   
   # Define module layouts based on features
   mkWaybarModules = {
@@ -439,7 +459,11 @@ in {
 
       "clock" = {
         interval = 1;
-        format = "󰥔  {:%H:%M}";
+        format = if use24h then "󰥔  {:%H:%M}" else "󰥔  {:%I:%M %p}";
+        # waybar's own clock `locale` key (waybar-clock(5)); it is also what
+        # makes {calendar}'s start-of-week follow the locale rather than the
+        # system one.
+        locale = glibcLocale;
         format-alt = "󰃭  {:%A, %B %d   󰥔  %H:%M:%S}";
         tooltip = true;
         tooltip-format = "<big><b>{:%B %Y}</b></big>\n\n<tt>{calendar}</tt>";
