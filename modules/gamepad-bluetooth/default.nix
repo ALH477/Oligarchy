@@ -12,11 +12,10 @@
 #
 # Residual: a BLE advertiser spoofing appearance 0x03c4 + HID UUID can get a
 # Just-Works Pair(). Same class as the user clicking Pair on a fake gamepad.
-{
-  config,
-  lib,
-  pkgs,
-  ...
+{ config
+, lib
+, pkgs
+, ...
 }:
 
 let
@@ -42,6 +41,10 @@ in
   config = lib.mkIf cfg.enable {
     hardware.xpadneo.enable = true;
 
+    # BlueZ HID-over-GATT instantiates the pad through uhid. If the module
+    # is not loaded, Pair+Trust succeed and /dev/input/js* never appears.
+    boot.kernelModules = [ "uhid" ];
+
     environment.systemPackages = [ hog ];
 
     systemd.services.gamepad-hog-bond = {
@@ -51,6 +54,10 @@ in
       serviceConfig = {
         Type = "oneshot";
         ExecStart = "${hog}/bin/hog-finish-bond";
+        # A udev SYSTEMD_WANTS trigger arriving mid-run merges into the running
+        # job instead of queueing a new one, so an unbounded run means a second
+        # pad powered on during a hung pair is never classified.
+        TimeoutStartSec = "120s";
         # bluetoothctl talks to bluetoothd over the system bus only.
         RestrictAddressFamilies = [ "AF_UNIX" ];
         ProtectSystem = "strict";

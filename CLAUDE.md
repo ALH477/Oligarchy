@@ -80,6 +80,7 @@ nix flake update
 nix build .#malwareScan             # YARA-scan the full system closure
 nix build .#forge-catalog           # every forge agent still renders a flake that parses
 nix build .#mcp-self-audit          # verify no MCP crate opens sockets / escapes its allowlist
+nix build .#gamepad-bluetooth-tests # the BLE gamepad bond allowlist still refuses keyboards/audio; unittest, no KVM
 nix build .#plugins-wx-enforcement  # boot a real kernel; assert the plugin tier/jit W^X split holds
 nix build .#plugins-policy-refusal  # assert plugin policy refuses at install time, not at load time
 nix build .#plugins-signed-install  # assert an unprivileged user can install a signed plugin and only a signed one

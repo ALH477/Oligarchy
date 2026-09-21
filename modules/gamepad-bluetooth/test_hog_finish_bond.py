@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Unit tests for hog_finish_bond.classify. No D-Bus, no bluetoothctl."""
+"""Unit tests for hog_finish_bond. No D-Bus, no bluetoothctl."""
 
+import contextlib
+import io
+import subprocess
 import unittest
+from unittest import mock
 
+import hog_finish_bond
 from hog_finish_bond import Action, classify
 
 
@@ -207,6 +212,325 @@ B: KEY=7fff000000000000 0 8000000000 0 0
 """
         self.assertFalse(hog_input_bound("78:86:2E:BA:73:6E", other_js))
         self.assertTrue(hog_input_bound("78:86:2E:BA:73:6E", other_js + "\n\n" + xbox))
+
+
+MAC = "78:86:2E:BA:73:6E"
+
+
+@contextlib.contextmanager
+def _quiet():
+    """Swallow the module's operator chatter so test output stays readable."""
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        yield
+
+
+class _FakeRunner:
+    """Stand-in for _run_bluetoothctl: records argv, replies per verb."""
+
+    def __init__(self, replies):
+        self.replies = replies
+        self.calls = []
+
+    def __call__(self, args, *, timeout=20):
+        args = list(args)
+        self.calls.append(args)
+        rc, out = self.replies.get(args[0], (0, ""))
+        return subprocess.CompletedProcess(
+            args=["bluetoothctl", *args], returncode=rc, stdout=out, stderr=""
+        )
+
+    def verbs(self):
+        return [a[0] for a in self.calls]
+
+
+class TimeoutTests(unittest.TestCase):
+    def test_run_bluetoothctl_converts_timeout_into_rc124(self):
+        def boom(*a, **kw):
+            raise subprocess.TimeoutExpired(cmd=["bluetoothctl", "pair", MAC], timeout=30)
+
+        with mock.patch.object(hog_finish_bond.subprocess, "run", side_effect=boom):
+            proc = hog_finish_bond._run_bluetoothctl(["pair", MAC], timeout=30)
+
+        self.assertEqual(proc.returncode, 124)
+        self.assertEqual(proc.stdout, "")
+        self.assertEqual(proc.stderr, "timed out after 30s")
+
+    def test_timeout_keeps_the_childs_own_stderr(self):
+        def boom(*a, **kw):
+            raise subprocess.TimeoutExpired(
+                cmd=["bluetoothctl", "pair", MAC],
+                timeout=30,
+                stderr=b"Failed to pair: org.bluez.Error.AuthenticationCanceled",
+            )
+
+        with mock.patch.object(hog_finish_bond.subprocess, "run", side_effect=boom):
+            proc = hog_finish_bond._run_bluetoothctl(["pair", MAC], timeout=30)
+
+        self.assertEqual(proc.returncode, 124)
+        self.assertIn("Failed to pair: org.bluez.Error.AuthenticationCanceled", proc.stderr)
+        self.assertIn("timed out after", proc.stderr)
+
+    def test_run_bluetoothctl_decodes_bytes_stdout_from_timeout(self):
+        def boom(*a, **kw):
+            raise subprocess.TimeoutExpired(
+                cmd=["bluetoothctl", "pair", MAC], timeout=30, output=b"partial\n"
+            )
+
+        with mock.patch.object(hog_finish_bond.subprocess, "run", side_effect=boom):
+            proc = hog_finish_bond._run_bluetoothctl(["pair", MAC], timeout=30)
+
+        self.assertEqual(proc.returncode, 124)
+        self.assertEqual(proc.stdout, "partial\n")
+
+
+class ApplyCommandsTests(unittest.TestCase):
+    def test_timed_out_pair_still_trusts_when_bluez_finished_the_bond(self):
+        runner = _FakeRunner({"pair": (124, ""), "info": (0, XBOX_PAIRED)})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
+            hog_finish_bond.apply_commands([("pair", MAC)], dry_run=False)
+
+        self.assertIn("trust", runner.verbs())
+        self.assertEqual(runner.calls[-1], ["trust", MAC])
+
+    def test_timed_out_pair_does_not_trust_when_still_unpaired(self):
+        runner = _FakeRunner({"pair": (124, ""), "info": (0, XBOX_UNPAIRED)})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
+            hog_finish_bond.apply_commands([("pair", MAC)], dry_run=False)
+
+        self.assertNotIn("trust", runner.verbs())
+        self.assertIn("info", runner.verbs())
+
+    def test_failed_trust_does_not_re_read_info(self):
+        runner = _FakeRunner({"trust": (1, ""), "info": (0, XBOX_PAIRED)})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+            hog_finish_bond.apply_commands([("trust", MAC)], dry_run=False)
+
+        self.assertEqual(runner.verbs(), ["trust"])
+
+    def test_dry_run_runs_no_bluetoothctl_at_all(self):
+        runner = _FakeRunner({})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+            hog_finish_bond.apply_commands([("pair", MAC)], dry_run=True)
+
+        self.assertEqual(runner.calls, [])
+
+    def test_wait_until_paired_polls_until_paired_yes(self):
+        replies = [
+            (0, XBOX_UNPAIRED),
+            (0, XBOX_UNPAIRED),
+            (0, XBOX_PAIRED),
+        ]
+
+        def flip(args, *, timeout=10):
+            rc, out = replies.pop(0)
+            return subprocess.CompletedProcess(
+                args=["bluetoothctl", *args], returncode=rc, stdout=out, stderr=""
+            )
+
+        sleeps = []
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", flip), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda s: sleeps.append(s)):
+            info = hog_finish_bond.wait_until_paired(MAC, attempts=6, delay=2.0)
+
+        self.assertTrue(hog_finish_bond.should_trust_after_pair(info))
+        self.assertEqual(sleeps, [2.0, 2.0])
+        self.assertEqual(replies, [])
+
+    def test_wait_until_paired_gives_up_still_unpaired(self):
+        runner = _FakeRunner({"info": (0, XBOX_UNPAIRED)})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None):
+            info = hog_finish_bond.wait_until_paired(MAC, attempts=3, delay=2.0)
+
+        self.assertFalse(hog_finish_bond.should_trust_after_pair(info))
+        self.assertEqual(runner.verbs(), ["info", "info", "info"])
+
+    def test_timed_out_pair_trusts_after_delayed_paired_yes(self):
+        infos = [XBOX_UNPAIRED, XBOX_PAIRED]
+
+        class Runner(_FakeRunner):
+            def __call__(self, args, *, timeout=20):
+                args = list(args)
+                self.calls.append(args)
+                if args[0] == "pair":
+                    return subprocess.CompletedProcess(
+                        args=["bluetoothctl", *args], returncode=124, stdout="", stderr=""
+                    )
+                if args[0] == "info":
+                    out = infos.pop(0)
+                    return subprocess.CompletedProcess(
+                        args=["bluetoothctl", *args], returncode=0, stdout=out, stderr=""
+                    )
+                if args[0] == "trust":
+                    return subprocess.CompletedProcess(
+                        args=["bluetoothctl", *args], returncode=0, stdout="", stderr=""
+                    )
+                return subprocess.CompletedProcess(
+                    args=["bluetoothctl", *args], returncode=0, stdout="", stderr=""
+                )
+
+        runner = Runner({})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
+            hog_finish_bond.apply_commands([("pair", MAC)], dry_run=False)
+
+        self.assertIn("trust", runner.verbs())
+
+
+class MaybeReconnectTests(unittest.TestCase):
+    def test_empty_info_does_not_fire_blind_disconnect_connect(self):
+        runner = _FakeRunner({"info": (124, "")})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
+            hog_finish_bond.maybe_reconnect(MAC, dry_run=False)
+
+        self.assertEqual(runner.verbs(), ["info"])
+
+    def test_paired_connected_without_js_reconnects(self):
+        runner = _FakeRunner({"info": (0, XBOX_PAIRED)})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), \
+                mock.patch.object(hog_finish_bond, "hog_input_bound", lambda *_: False), _quiet():
+            hog_finish_bond.maybe_reconnect(MAC, dry_run=False)
+
+        self.assertEqual(runner.verbs(), ["info", "disconnect", "connect"])
+
+    def test_dry_run_skips_the_info_call(self):
+        runner = _FakeRunner({})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond, "hog_input_bound", lambda *_: False), _quiet():
+            hog_finish_bond.maybe_reconnect(MAC, dry_run=True)
+
+        self.assertEqual(runner.calls, [])
+
+
+MAC2 = "AA:BB:CC:DD:EE:FF"
+
+
+class _ScriptedRunner:
+    """Replies per (verb, arg) so two `info` calls can differ. Records argv."""
+
+    def __init__(self, replies):
+        self.replies = replies
+        self.calls = []
+
+    def __call__(self, args, *, timeout=10):
+        args = list(args)
+        self.calls.append(args)
+        key = tuple(args)
+        rc, out, err = self.replies.get(key, self.replies.get((args[0],), (0, "", "")))
+        return subprocess.CompletedProcess(
+            args=["bluetoothctl", *args], returncode=rc, stdout=out, stderr=err
+        )
+
+
+class CollectInfosTests(unittest.TestCase):
+    def test_devices_call_is_filtered_to_connected(self):
+        runner = _ScriptedRunner({("devices", "Connected"): (0, "", "")})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+            hog_finish_bond.collect_infos()
+
+        self.assertEqual(runner.calls[0], ["devices", "Connected"])
+
+    def test_failed_devices_call_raises_instead_of_inspecting_nothing(self):
+        runner = _ScriptedRunner(
+            {("devices", "Connected"): (124, "", "timed out after 10s")}
+        )
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+            with self.assertRaises(hog_finish_bond.CollectError):
+                hog_finish_bond.collect_infos()
+
+        self.assertEqual(runner.calls, [["devices", "Connected"]])
+
+    def test_main_returns_1_when_it_could_not_list_devices(self):
+        runner = _ScriptedRunner(
+            {("devices", "Connected"): (124, "", "timed out after 10s")}
+        )
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
+            self.assertEqual(hog_finish_bond.main([]), 1)
+
+    def test_failed_info_skips_that_mac_without_poisoning_the_map(self):
+        listing = f"Device {MAC} Xbox Wireless Controller\nDevice {MAC2} Mystery\n"
+        runner = _ScriptedRunner(
+            {
+                ("devices", "Connected"): (0, listing, ""),
+                ("info", MAC): (0, XBOX_UNPAIRED, ""),
+                ("info", MAC2): (1, "", "Device AA:BB:CC:DD:EE:FF not available"),
+            }
+        )
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+            infos = hog_finish_bond.collect_infos()
+
+        self.assertEqual(list(infos), [MAC])
+        self.assertEqual(infos[MAC], XBOX_UNPAIRED)
+
+    def test_collect_retries_until_a_connected_unpaired_pad_appears(self):
+        listing = f"Device {MAC} Xbox Wireless Controller\n"
+        empty = _ScriptedRunner({("devices", "Connected"): (0, "", "")})
+        later = _ScriptedRunner(
+            {
+                ("devices", "Connected"): (0, listing, ""),
+                ("info", MAC): (0, XBOX_UNPAIRED, ""),
+            }
+        )
+        calls = {"n": 0}
+
+        def flip(args, *, timeout=10):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return empty(args, timeout=timeout)
+            return later(args, timeout=timeout)
+
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", flip), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
+            infos = hog_finish_bond.collect_infos_until_action(tries=5, delay=1.0)
+
+        self.assertEqual(list(infos), [MAC])
+        self.assertEqual(hog_finish_bond.classify(infos[MAC]), Action.PAIR)
+        self.assertGreaterEqual(calls["n"], 2)
+
+    def test_collect_retries_raises_if_every_listing_fails(self):
+        runner = _ScriptedRunner(
+            {("devices", "Connected"): (124, "", "timed out after 10s")}
+        )
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
+            with self.assertRaises(hog_finish_bond.CollectError):
+                hog_finish_bond.collect_infos_until_action(tries=3, delay=1.0)
+
+        self.assertEqual(len(runner.calls), 3)
+
+    def test_main_retries_then_pairs(self):
+        listing = f"Device {MAC} Xbox Wireless Controller\n"
+        n = {"i": 0}
+
+        def flip(args, *, timeout=10):
+            args = list(args)
+            n["i"] += 1
+            if args[:2] == ["devices", "Connected"] and n["i"] == 1:
+                return subprocess.CompletedProcess(
+                    args=["bluetoothctl", *args], returncode=0, stdout="", stderr=""
+                )
+            replies = {
+                ("devices", "Connected"): (0, listing, ""),
+                ("info", MAC): (0, XBOX_UNPAIRED, ""),
+                ("pair", MAC): (0, "", ""),
+                ("trust", MAC): (0, "", ""),
+            }
+            key = tuple(args)
+            rc, out, err = replies.get(key, (0, "", ""))
+            return subprocess.CompletedProcess(
+                args=["bluetoothctl", *args], returncode=rc, stdout=out, stderr=err
+            )
+
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", flip), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), \
+                mock.patch.object(hog_finish_bond, "hog_input_bound", lambda *_: True), \
+                _quiet():
+            self.assertEqual(hog_finish_bond.main([]), 0)
 
 
 if __name__ == "__main__":
