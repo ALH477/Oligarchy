@@ -253,8 +253,22 @@ class TimeoutTests(unittest.TestCase):
 
         self.assertEqual(proc.returncode, 124)
         self.assertEqual(proc.stdout, "")
-        self.assertTrue(proc.stderr)
-        self.assertIn("30", proc.stderr)
+        self.assertEqual(proc.stderr, "timed out after 30s")
+
+    def test_timeout_keeps_the_childs_own_stderr(self):
+        def boom(*a, **kw):
+            raise subprocess.TimeoutExpired(
+                cmd=["bluetoothctl", "pair", MAC],
+                timeout=30,
+                stderr=b"Failed to pair: org.bluez.Error.AuthenticationCanceled",
+            )
+
+        with mock.patch.object(hog_finish_bond.subprocess, "run", side_effect=boom):
+            proc = hog_finish_bond._run_bluetoothctl(["pair", MAC], timeout=30)
+
+        self.assertEqual(proc.returncode, 124)
+        self.assertIn("Failed to pair: org.bluez.Error.AuthenticationCanceled", proc.stderr)
+        self.assertIn("timed out after", proc.stderr)
 
     def test_run_bluetoothctl_decodes_bytes_stdout_from_timeout(self):
         def boom(*a, **kw):
@@ -326,6 +340,67 @@ class MaybeReconnectTests(unittest.TestCase):
             hog_finish_bond.maybe_reconnect(MAC, dry_run=True)
 
         self.assertEqual(runner.calls, [])
+
+
+MAC2 = "AA:BB:CC:DD:EE:FF"
+
+
+class _ScriptedRunner:
+    """Replies per (verb, arg) so two `info` calls can differ. Records argv."""
+
+    def __init__(self, replies):
+        self.replies = replies
+        self.calls = []
+
+    def __call__(self, args, *, timeout=10):
+        args = list(args)
+        self.calls.append(args)
+        key = tuple(args)
+        rc, out, err = self.replies.get(key, self.replies.get((args[0],), (0, "", "")))
+        return subprocess.CompletedProcess(
+            args=["bluetoothctl", *args], returncode=rc, stdout=out, stderr=err
+        )
+
+
+class CollectInfosTests(unittest.TestCase):
+    def test_devices_call_is_filtered_to_connected(self):
+        runner = _ScriptedRunner({("devices", "Connected"): (0, "", "")})
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+            hog_finish_bond.collect_infos()
+
+        self.assertEqual(runner.calls[0], ["devices", "Connected"])
+
+    def test_failed_devices_call_raises_instead_of_inspecting_nothing(self):
+        runner = _ScriptedRunner(
+            {("devices", "Connected"): (124, "", "timed out after 10s")}
+        )
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+            with self.assertRaises(hog_finish_bond.CollectError):
+                hog_finish_bond.collect_infos()
+
+        self.assertEqual(runner.calls, [["devices", "Connected"]])
+
+    def test_main_returns_1_when_it_could_not_list_devices(self):
+        runner = _ScriptedRunner(
+            {("devices", "Connected"): (124, "", "timed out after 10s")}
+        )
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+            self.assertEqual(hog_finish_bond.main([]), 1)
+
+    def test_failed_info_skips_that_mac_without_poisoning_the_map(self):
+        listing = f"Device {MAC} Xbox Wireless Controller\nDevice {MAC2} Mystery\n"
+        runner = _ScriptedRunner(
+            {
+                ("devices", "Connected"): (0, listing, ""),
+                ("info", MAC): (0, XBOX_UNPAIRED, ""),
+                ("info", MAC2): (1, "", "Device AA:BB:CC:DD:EE:FF not available"),
+            }
+        )
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), _quiet():
+            infos = hog_finish_bond.collect_infos()
+
+        self.assertEqual(list(infos), [MAC])
+        self.assertEqual(infos[MAC], XBOX_UNPAIRED)
 
 
 if __name__ == "__main__":

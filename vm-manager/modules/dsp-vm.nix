@@ -291,24 +291,43 @@
     let
       cfg = config.custom.vm.dsp;
 
-      # Stock QEMU, deliberately: do NOT `override`/`overrideAttrs` this.
+      # Stock QEMU, deliberately: do NOT `override`/`overrideAttrs` this, and
+      # do NOT narrow it to a host-only build.
       #
       # This used to be `pkgs.qemu.override { gtkSupport = false; sdlSupport =
       # false; spiceSupport = false; }`. Any non-stock flag set yields a
       # derivation cache.nixos.org has never built, so every `nixos-rebuild
       # switch` following a flake.lock bump compiled QEMU from source — about
       # an hour, on a machine that had asked for nothing but a config change.
-      # `pkgs.qemu_kvm` (= `qemu.override { hostCpuOnly = true; }`) is what
-      # nixpkgs itself builds and publishes, so it substitutes.
+      # Stock `pkgs.qemu` substitutes, and is already in this system's closure
+      # via `environment.systemPackages`, so this binding drags in no second,
+      # distinct QEMU either.
+      #
+      # `pkgs.qemu_kvm` is the same trap one step quieter: it is
+      # `qemu.override { hostCpuOnly = true; }` (`--target-list=i386,x86_64`),
+      # and this binding is ALSO `virtualisation.libvirtd.qemu.package` below,
+      # so it silently empties /run/libvirt/nix-emulators/ of every non-x86
+      # emulator (~30 of them, `qemu-system-aarch64` and `-riscv64` included)
+      # on a host that sets `boot.binfmt.emulatedSystems` for aarch64+riscv64
+      # and drives riscv64 guests from virt-manager.
       #
       # Headless is a RUNTIME property here, not a build one: `displayOpts`
       # below emits `-display none` whenever neither `spice` nor `vnc` is set,
-      # so GTK never initialises regardless of whether it was linked in. The
-      # override predated that line and stopped earning its keep the moment it
-      # landed. Worse, it was self-defeating — `cfg.spice` emits
-      # `-display gtk,gl=on`, which a gtk-less build cannot honour, so the
-      # option could not work at all. Dropping the override restores it.
-      qemu = pkgs.qemu_kvm;
+      # so GTK never initialises regardless of whether it was linked in —
+      # verified, a GTK-linked QEMU with `-display none` runs fine under
+      # `env -i` with DISPLAY unset or `:99`, attempting no X11 connection at
+      # all. `-display none` was already in the file when the override was
+      # added, but a trailing newline terminating the exec line meant it never
+      # reached QEMU; once that was fixed the override was dead weight.
+      #
+      # Dropping the override does NOT make `cfg.spice` work. The override
+      # made spice impossible at BUILD time (it emits `-display gtk,gl=on`,
+      # which a gtk-less binary cannot honour); it remains non-functional at
+      # RUNTIME for want of a display server — this is a root systemd service
+      # whose `DISPLAY = ":99"` below is a dead Xvfb leftover, so `-display
+      # gtk` fails "gtk initialization failed" and `gl=on` fails "OpenGL is
+      # not supported by display backend gtk". Separate issue, not fixed here.
+      qemu = pkgs.qemu;
 
       # The guest's serial console, as an INTERACTIVE socket plus a log.
       #

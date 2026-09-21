@@ -1141,7 +1141,7 @@
               nativeBuildInputs = [ pkgs.python3 ];
               meta = with nixpkgs.lib; {
                 description = "Run the gamepad BLE bond-finisher unit tests";
-                license = licenses.mit;
+                license = licenses.bsd3;
                 platforms = platforms.linux;
               };
             }
@@ -1153,12 +1153,23 @@
               cp ${./modules/gamepad-bluetooth}/*.py work/
               cd work
               export PYTHONDONTWRITEBYTECODE=1
+              # Keep the log and the exit status independent of each other:
+              # a pipeline's status is the LAST command's, so `| tee` would
+              # hand this shell tee's success unless PIPESTATUS is consulted.
+              # Redirecting instead makes the failure path unambiguous.
+              python3 -m unittest -v > unittest.log 2>&1 || { cat unittest.log; exit 1; }
+              cat unittest.log
               # A gate that inspected nothing is a FAIL (same rule as
               # mcp_self_audit): a rename that breaks discovery must not pass.
-              python3 -m unittest -v 2>&1 | tee unittest.log
-              test "''${PIPESTATUS[0]}" -eq 0
+              # This MUST be an `if`, not `test -n "$ran" && test "$ran" -gt 0`:
+              # under `set -e` a failing non-final command in an `&&` list only
+              # short-circuits the list, and a list that ends up false is not
+              # an errexit trigger — so an empty $ran passed the build green.
               ran=$(sed -n 's/^Ran \([0-9]*\) tests\?.*/\1/p' unittest.log)
-              test -n "$ran" && test "$ran" -gt 0
+              if [ -z "$ran" ] || [ "$ran" -le 0 ]; then
+                echo "gamepad-bluetooth-tests: no 'Ran N tests' line found; inspected nothing" >&2
+                exit 1
+              fi
               mkdir -p $out
               cp unittest.log $out/
               echo "ran $ran unit tests" > $out/report.txt
