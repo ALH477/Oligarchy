@@ -1174,6 +1174,214 @@
               cp unittest.log $out/
               echo "ran $ran unit tests" > $out/report.txt
             '';
+
+        # ════════════════════════════════════════════════════════════════════
+        # "A rebuild must not kill the session" — eval-only gate.
+        #
+        # boot-intro-player.service used to tear down the live Hyprland session
+        # on every `nixos-rebuild switch`: switch-to-configuration restarts each
+        # active target after activation, a finished Type=oneshot without
+        # RemainAfterExit is inactive (dead), so multi-user.target started it
+        # again — and TTYVHangup on /dev/tty1 took the compositor's VT with it.
+        # Anything else that ever claims tty1 can reproduce that exact failure,
+        # so the rule is checked over EVERY unit with TTYPath = /dev/tty1
+        # rather than over that one unit by name.
+        #
+        # A tty1 unit must carry all three, because each covers a different
+        # start path: RemainAfterExit (the target restart finds nothing to do),
+        # restartIfChanged = false (a changed unit file is not force-restarted),
+        # and a PID 1 Condition* (evaluated before any exec context exists, so
+        # it can decline BEFORE the vhangup — which is why the old ExecCondition
+        # could not work). greetd is the one exemption: it is the unit that
+        # legitimately owns tty1, and its own protection is restartIfChanged =
+        # false, asserted separately here.
+        #
+        # No KVM, no closure — but it does evaluate the whole system config.
+        # Run on demand:  nix build .#session-survives-switch
+        # ════════════════════════════════════════════════════════════════════
+        session-survives-switch =
+          let
+            lib' = nixpkgs.lib;
+            # extendModules, not the bare config: this is a PURE eval, so the
+            # fresh-clone defaults apply and services.boot-intro.enable is
+            # false — the unit this gate exists for would not exist, and the
+            # gate would pass green having inspected only greetd (it did,
+            # first time round). Force the intro on so its unit is always in
+            # the inspected set; the require-by-name check below is what
+            # makes that failure impossible to repeat quietly.
+            services =
+              (self.nixosConfigurations.nixos.extendModules {
+                modules = [{ services.boot-intro.enable = true; }];
+              }).config.systemd.services;
+
+            # RemainAfterExit reaches the generator as a bool from Nix but as a
+            # systemd boolean string from anything that writes the unit file by
+            # hand; normalise rather than trust one shape.
+            asBool = v:
+              if builtins.isBool v then v
+              else if v == null then false
+              else lib'.elem (lib'.toLower (toString v)) [ "yes" "true" "on" "1" ];
+
+            tty1 = lib'.filterAttrs
+              (_: svc: (svc.serviceConfig.TTYPath or null) == "/dev/tty1")
+              services;
+
+            payload = builtins.toJSON {
+              tty1Units = lib'.mapAttrs
+                (_: svc: {
+                  remainAfterExit = asBool (svc.serviceConfig.RemainAfterExit or false);
+                  restartIfChanged = svc.restartIfChanged;
+                  hasCondition = lib'.any
+                    (k: lib'.hasPrefix "Condition" k)
+                    (builtins.attrNames (svc.unitConfig or { }));
+                })
+                tty1;
+              greetdRestartIfChanged = services.greetd.restartIfChanged or null;
+            };
+
+            units = pkgs.writeText "session-tty1-units.json" payload;
+          in
+          pkgs.runCommand "session-survives-switch"
+            {
+              nativeBuildInputs = [ pkgs.jq ];
+              meta = with nixpkgs.lib; {
+                description = "Assert no tty1 unit but greetd can vhangup the session on a switch";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              units=${units}
+
+              # A gate that inspected nothing is a FAIL (same rule as
+              # mcp_self_audit and forge-catalog): if the TTYPath filter ever
+              # stops matching — an option rename, a unit moved to a different
+              # VT — this must go red rather than green-on-empty.
+              count=$(jq '.tty1Units | length' "$units")
+              if [ "$count" -eq 0 ]; then
+                echo "session-survives-switch: no unit with TTYPath=/dev/tty1; inspected nothing" >&2
+                exit 1
+              fi
+
+              # The unit this gate was written for must be among what it
+              # inspected, or the TTYPath filter (or the extendModules above)
+              # has silently stopped reaching it.
+              if ! jq -e '.tty1Units["boot-intro-player"]' "$units" >/dev/null; then
+                echo "session-survives-switch: boot-intro-player not inspected; the gate is not looking at the unit it guards" >&2
+                exit 1
+              fi
+
+              jq -r '.tty1Units | to_entries[]
+                     | "\(.key)\tRemainAfterExit=\(.value.remainAfterExit)\trestartIfChanged=\(.value.restartIfChanged)\tCondition*=\(.value.hasCondition)"' \
+                "$units" | tee $out/report.txt
+
+              fail=0
+              while IFS= read -r name; do
+                if [ "$name" = "greetd" ]; then continue; fi
+                bad=$(jq -r --arg n "$name" '
+                  .tty1Units[$n]
+                  | [ (if .remainAfterExit then empty else "RemainAfterExit" end)
+                    , (if .restartIfChanged then "restartIfChanged=false" else empty end)
+                    , (if .hasCondition then empty else "a Condition* in unitConfig" end)
+                    ] | join(", ")' "$units")
+                if [ -n "$bad" ]; then
+                  echo "FAIL  $name holds /dev/tty1 and is missing: $bad" >&2
+                  fail=1
+                else
+                  echo "PASS  $name"
+                fi
+              done < <(jq -r '.tty1Units | keys[]' "$units")
+
+              # greetd owns tty1 on purpose; restarting it kills the Hyprland
+              # session it spawned (not a separately-managed logind session),
+              # which is the crash configuration.nix's restartIfChanged=false
+              # exists to prevent.
+              greetd=$(jq -r '.greetdRestartIfChanged' "$units")
+              echo "greetd.restartIfChanged=$greetd" >> $out/report.txt
+              if [ "$greetd" != "false" ]; then
+                echo "FAIL  greetd.restartIfChanged is '$greetd', expected false" >&2
+                fail=1
+              fi
+
+              [ "$fail" -eq 0 ] || exit 1
+              echo "inspected $count unit(s) on /dev/tty1" >> $out/report.txt
+            '';
+
+        # ════════════════════════════════════════════════════════════════════
+        # hypr-session restore fixtures.
+        #
+        # `hypr-session restore` relaunches the windows from the last saved
+        # session, which means it builds a `hyprctl dispatch exec` line per
+        # entry out of /proc-derived argv. The quoting in those lines is the
+        # whole correctness story and it cannot be exercised live in a sandbox
+        # (no compositor), so `--dry-run` prints them and this gate diffs them
+        # against checked-in expectations. Bash and jq only: no KVM, no X, no
+        # compositor.
+        #
+        # Run on demand:  nix build .#hypr-session-tests
+        # ════════════════════════════════════════════════════════════════════
+        hypr-session-tests =
+          let
+            script = ./home/scripts/hypr-session.sh;
+            fixtures = ./home/scripts/testdata/hypr-session;
+          in
+          pkgs.runCommand "hypr-session-tests"
+            {
+              nativeBuildInputs = [ pkgs.bash pkgs.jq pkgs.coreutils ];
+              meta = with nixpkgs.lib; {
+                description = "Assert hypr-session restore --dry-run matches its fixtures";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out work
+              cd work
+              # The script defaults its session file under $HOME; give it one
+              # that exists so a --from-less code path can never write to /.
+              export HOME="$PWD"
+
+              found=0
+              fail=0
+              for fixture in ${fixtures}/*.json; do
+                [ -e "$fixture" ] || continue
+                name=$(basename "$fixture" .json)
+                expected="${fixtures}/$name.expected"
+                found=$((found+1))
+
+                if [ ! -e "$expected" ]; then
+                  echo "FAIL  $name — no $name.expected beside the fixture" >&2
+                  fail=1
+                  continue
+                fi
+
+                if ! bash ${script} restore --dry-run --from "$fixture" > "$name.actual" 2> "$name.err"; then
+                  echo "FAIL  $name — restore --dry-run exited non-zero:" >&2
+                  cat "$name.err" >&2
+                  fail=1
+                  continue
+                fi
+
+                if diff -u "$expected" "$name.actual"; then
+                  echo "PASS  $name"
+                else
+                  echo "FAIL  $name — dry-run output differs from $name.expected" >&2
+                  fail=1
+                fi
+              done
+
+              # Inspected nothing is a FAIL: a renamed fixture directory must
+              # not quietly turn this gate into a no-op.
+              if [ "$found" -eq 0 ]; then
+                echo "hypr-session-tests: no *.json fixtures found; inspected nothing" >&2
+                exit 1
+              fi
+
+              [ "$fail" -eq 0 ] || exit 1
+              echo "$found hypr-session restore fixture(s) match their expected dry-run output" \
+                > $out/report.txt
+            '';
       }
       # ══════════════════════════════════════════════════════════════════════
       # The tests/default.nix VM suite, surfaced as `packages.test-<name>`.

@@ -574,17 +574,54 @@ in {
       conflicts = [ "getty@tty1.service" ];
       restartIfChanged = false;
 
+      # ══════════════════════════════════════════════════════════════════════
+      # Play ONCE PER BOOT, and never during a `nixos-rebuild switch`.
+      #
+      # This unit used to tear down the live Hyprland session on every switch.
+      # switch-to-configuration restarts each ACTIVE target after activation,
+      # and a finished Type=oneshot without RemainAfterExit is inactive (dead)
+      # — so restarting multi-user.target pulled this unit in again, every
+      # single time. `restartIfChanged = false` (kept, still wanted) does not
+      # cover that: it only suppresses restarting a unit that is *running*,
+      # which a long-finished oneshot never is. RemainAfterExit leaves it
+      # active (exited), so the target restart finds nothing left to start —
+      # the same protection greetd has.
+      #
+      # The old guard was an ExecCondition shelling out to `systemctl is-active
+      # display-manager.service`. It was the wrong layer, twice over and
+      # silently: TTYVHangup below is *exec context*, applied before EVERY
+      # Exec* command including ExecCondition, so vhangup(2) had already hit
+      # the VT greetd put Hyprland on before the guard could decline; and the
+      # guard failed OPEN — any systemctl error at all meant "play". Condition*=
+      # is evaluated by PID 1 itself, before any exec context exists, so it is
+      # the only layer that can refuse without first touching the tty.
+      #
+      # Journal, 2026-09-20 boot -2 (intro had already played at 15:42:50):
+      # switch 16:15:33.967 → "Starting DeMoD Boot Intro..." 16:15:35.247 →
+      # "Session 3 logged out" 16:15:35.302 → xdg-desktop-portal-hyprland
+      # SIGSEGV / Xwayland SIGABRT 16:15:35.3-5 → "Finished" 16:15:37.328.
+      #
+      # /run is tmpfs, so the stamp vanishes at reboot and the intro plays once
+      # per boot. It lives OUTSIDE RuntimeDirectory=boot-intro deliberately:
+      # systemd wipes that directory when the unit stops, which would make the
+      # stamp disappear the moment anything deactivated this unit. To replay it
+      # while iterating on the video:
+      #   rm /run/boot-intro-played && systemctl restart boot-intro-player
+      # ══════════════════════════════════════════════════════════════════════
+      unitConfig.ConditionPathExists = "!/run/boot-intro-played";
+
       serviceConfig = {
         Type = "oneshot";
+        RemainAfterExit = true;
         RuntimeDirectory = "boot-intro";  # creates/cleans /run/boot-intro (mpv IPC socket)
 
-        ExecCondition = pkgs.writeShellScript "boot-intro-condition" ''
-          if ${pkgs.systemd}/bin/systemctl is-active display-manager.service >/dev/null 2>&1; then
-            exit 1
-          fi
-          exit 0
-        '';
-
+        # Stamp BEFORE playing, not after: the stamp means "attempted this
+        # boot", not "played to completion". With ExecStartPost, an mpv that
+        # hit TimeoutStartSec would leave the unit failed and stampless, and
+        # the next switch would replay it — straight back to the session kill
+        # this block exists to prevent. Exec*Pre/Post never run when the
+        # Condition above declines, so a no-op start refreshes nothing.
+        ExecStartPre = "${pkgs.coreutils}/bin/touch /run/boot-intro-played";
         ExecStart = "${playScript}/bin/boot-intro-play";
 
         StandardInput = "tty";

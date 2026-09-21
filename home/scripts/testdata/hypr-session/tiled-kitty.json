@@ -1,0 +1,27 @@
+{
+  "saved_at": "2026-09-20T10:00:00-07:00",
+  "hyprland_instance": "fixture_tiled_kitty",
+  "clients": [
+    {
+      "class": "kitty",
+      "initialClass": "kitty",
+      "workspace": 2,
+      "floating": false,
+      "at": [
+        11,
+        59
+      ],
+      "size": [
+        1258,
+        729
+      ],
+      "monitor": 0,
+      "pid": 4242,
+      "argv": [
+        "kitty"
+      ],
+      "cwd": "/home/asher/Documents",
+      "exe": "/nix/store/0000000000000000000000000000000a-kitty-0.44.0/bin/.kitty-wrapped"
+    }
+  ]
+}

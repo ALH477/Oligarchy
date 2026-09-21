@@ -111,6 +111,13 @@ if [ "${#update_inputs[@]}" -gt 0 ]; then
   fi
 fi
 
+# ── Snapshot the session ─────────────────────────────────────────────────────
+# Cheap insurance: a switch should never tear the compositor down, but the day
+# something does, the windows are already on disk. Never fatal to the rebuild.
+if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v hypr-session > /dev/null 2>&1; then
+  hypr-session save || true
+fi
+
 # ── Build + activate ──────────────────────────────────────────────────────────
 echo "==> nixos-rebuild $mode --flake $FLAKE_DIR#$HOST (max-jobs=$max_jobs cores=$cores)"
 sudo nixos-rebuild "$mode" \

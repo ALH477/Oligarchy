@@ -80,6 +80,20 @@ let
     then monitors.laptop
     else monitors.desktop;
 
+  # ── Session resume (custom.session.*, declared in modules/session-resume.nix) ──
+  # Read with `or` defaults at every hop, the same way `osConfig.custom.platform`
+  # is read in home/scripts/default.nix: home/ has to evaluate on a host — or a
+  # fresh clone — where the NixOS module declaring these options is absent, and
+  # `osConfig` itself is `{ }` when home.nix is evaluated standalone.
+  session = osConfig.custom.session or { };
+  autoLogin = session.autoLogin or { };
+  restore = session.restore or { };
+  restoreOn = restore.enable or false;
+  saveInterval = restore.saveInterval or "2min";
+  # lockOnLogin only means anything under autoLogin: with a greeter in front of
+  # the session the password has already been asked for.
+  lockOnLogin = (autoLogin.enable or false) && (autoLogin.lockOnLogin or true);
+
 in
 {
   wayland.windowManager.hyprland = {
@@ -106,6 +120,14 @@ in
 
       # Startup applications - optimized, no gnome-keyring
       exec-once = lib.flatten [
+        # FIRST, before anything that can paint: under autologin there is no
+        # greeter asking for a password, so an unlocked desktop must never be
+        # on screen even for a frame. LUKS is the real gate on this machine
+        # (whole-disk); hyprlock is what keeps the post-boot desktop from
+        # being handed to whoever pressed the power button. Same unit and same
+        # invocation hypridle's lock_cmd uses, so there is one locker path.
+        (lib.optional lockOnLogin "systemctl --user start --no-block hyprlock.service")
+
         # System tray apps
         [ "nm-applet --indicator" "udiskie --automount --notify" ]
         (lib.optional features.hasBluetooth "blueman-applet")
@@ -488,6 +510,15 @@ in
         "$mod, F3, exec, persona-layout restore"
         "$mod SHIFT, F3, exec, persona-layout save"
 
+        # Session save/restore (hypr-session) — the launching counterpart of
+        # F3. F3 only MOVES windows that are already open; F4 records each
+        # window's argv/cwd and starts the programs again, so it is what brings
+        # a session back after a reboot. Bound unconditionally: the script is
+        # always installed, and custom.session.restore.enable only controls
+        # whether systemd drives it on its own.
+        "$mod, F4, exec, hypr-session restore"
+        "$mod SHIFT, F4, exec, hypr-session save"
+
         # System
         "$mod, M, exec, gnome-system-monitor"
         "$mod, equal, exec, gnome-calculator"
@@ -809,7 +840,97 @@ in
         description = "swayosd on-screen display daemon";
         execStart = "${pkgs.swayosd}/bin/swayosd-server";
       };
+    }
+    # ── Session resume (custom.session.restore.enable) ───────────────────────
+    # lib.optionalAttrs, not lib.mkIf: this whole binding is a plain attrset
+    # built in a `let`, so mkIf would land inside an attribute value rather
+    # than on the option.
+    //
+    lib.optionalAttrs restoreOn {
+      # Neither of these is a mkSessionService: they are oneshots, and
+      # Restart=on-failure on a oneshot that legitimately finds nothing to do
+      # is a restart loop.
+      #
+      # PATH is set explicitly rather than inherited: the user manager's
+      # environment comes from whatever `systemctl --user import-environment`
+      # happened to pick up, and a restore that silently found no hyprctl
+      # looks exactly like a restore with nothing to restore. Per-user profile
+      # first so hyprctl is the one Home Manager installed, i.e. the same
+      # build as the running compositor. JQ is pinned to the store outright —
+      # the script honours $JQ/$HYPRCTL with PATH as the fallback.
+      hypr-session-restore = {
+        Unit = {
+          Description = "Relaunch the previous Hyprland window set";
+          After = [ "hyprland-session.target" ]
+          ++ lib.optional lockOnLogin "hyprlock.service";
+          PartOf = [ "hyprland-session.target" ];
+        };
+        Service = {
+          Type = "oneshot";
+          RemainAfterExit = true;
+          Environment = [
+            "PATH=%h/.local/bin:/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin"
+            "JQ=${pkgs.jq}/bin/jq"
+          ];
+          ExecStart = "%h/.local/bin/hypr-session restore";
+          # The bonus save; the timer below is what actually protects the
+          # snapshot. `-` prefix because this usually CANNOT succeed: the unit
+          # is PartOf hyprland-session.target, which is stopped in response to
+          # the compositor already having exited, so `hyprctl clients -j` has
+          # no socket left to talk to. It earns its place for the case where
+          # the unit is stopped while the session is still up (a manual
+          # `systemctl --user restart`), and without the `-` every logout would
+          # leave a `failed` unit behind for a save that was never possible.
+          ExecStop = "-%h/.local/bin/hypr-session save";
+          TimeoutStopSec = "10s";
+        };
+        Install.WantedBy = [ "hyprland-session.target" ];
+      };
+
+      hypr-session-save = {
+        Unit = {
+          Description = "Snapshot the current Hyprland window set";
+          After = [ "hyprland-session.target" ];
+          PartOf = [ "hyprland-session.target" ];
+        };
+        Service = {
+          Type = "oneshot";
+          Environment = [
+            "PATH=%h/.local/bin:/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin"
+            "JQ=${pkgs.jq}/bin/jq"
+          ];
+          ExecStart = "%h/.local/bin/hypr-session save";
+        };
+        # No Install: the timer below is what starts it.
+      };
     };
+
+  # The timer is the workhorse, not hypr-session-restore's ExecStop: a crash, a
+  # power cut or an OOM kill never runs an ExecStop, and the whole point is to
+  # survive exactly those. Worst case the snapshot is one saveInterval old.
+  systemd.user.timers = lib.mkIf restoreOn {
+    hypr-session-save = {
+      Unit = {
+        Description = "Periodic Hyprland window-set snapshot";
+        PartOf = [ "hyprland-session.target" ];
+        # Never let the first tick race the restore: a save that ran while the
+        # desktop was still empty would overwrite the snapshot it is meant to
+        # protect.
+        After = [ "hypr-session-restore.service" ];
+      };
+      Timer = {
+        # OnActiveSec (relative to this timer's activation, i.e. session start)
+        # rather than OnStartupSec (relative to the *user manager's* start).
+        # The user manager outlives the compositor, so on a re-login within the
+        # same boot OnStartupSec is already elapsed and the timer fires
+        # instantly — see the After= above for why that is the one moment a
+        # save must not happen.
+        OnActiveSec = saveInterval;
+        OnUnitActiveSec = saveInterval;
+      };
+      Install.WantedBy = [ "hyprland-session.target" ];
+    };
+  };
 
   # Wallpaper directory is created by the .keep file in home.nix; a bare
   # home.file with only `recursive` and no source is invalid.

@@ -1,0 +1,1 @@
+hyprctl dispatch exec "[workspace 2 silent] sh -c 'cd /home/asher/Documents && exec kitty'"

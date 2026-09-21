@@ -274,6 +274,16 @@ in
     executable = true;
     source = ./persona-layout.sh;
   };
+  # Sibling of persona-layout, deliberately a separate tool: persona-layout only
+  # MOVES windows that are already open (the persona app-set does the launching),
+  # while hypr-session records argv/cwd/exe per pid and starts the programs again
+  # after a reboot. Keeping them apart means neither can spawn the wrong thing.
+  # Its `restore --dry-run` output is what the `hypr-session-tests` gate diffs
+  # against home/scripts/testdata/hypr-session/*.expected.
+  home.file.".local/bin/hypr-session" = {
+    executable = true;
+    source = ./hypr-session.sh;
+  };
   home.file.".local/bin/dsp-latency" = {
     executable = true;
     source = ./dsp-latency.sh;
