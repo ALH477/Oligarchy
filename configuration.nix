@@ -19,6 +19,7 @@
     ./modules/hypr-controller/nixos-module.nix
     ./modules/terminus-dev.nix
     ./modules/gamepad-bluetooth
+    ./modules/session-resume.nix
   ]
   # Optional local overrides, both at absolute paths OUTSIDE the repo so a
   # fresh clone never sees them (Nix's local-flake source filtering excludes
