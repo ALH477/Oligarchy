@@ -41,6 +41,10 @@ in
   config = lib.mkIf cfg.enable {
     hardware.xpadneo.enable = true;
 
+    # BlueZ HID-over-GATT instantiates the pad through uhid. If the module
+    # is not loaded, Pair+Trust succeed and /dev/input/js* never appears.
+    boot.kernelModules = [ "uhid" ];
+
     environment.systemPackages = [ hog ];
 
     systemd.services.gamepad-hog-bond = {
