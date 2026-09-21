@@ -198,6 +198,34 @@ def collect_infos() -> Dict[str, str]:
     return infos
 
 
+def collect_infos_until_action(*, tries: int = 5, delay: float = 1.0) -> Dict[str, str]:
+    """Re-list connected devices until classify() wants work, or tries are exhausted.
+
+    udev ACTION=add often fires before BlueZ has Connected=yes. An empty
+    listing is not CollectError — we did look — so keep retrying. A failed
+    listing still raises on the last try.
+    """
+    last: Dict[str, str] = {}
+    last_err: CollectError | None = None
+    for i in range(tries):
+        try:
+            last = collect_infos()
+            last_err = None
+        except CollectError as e:
+            last_err = e
+            if i == tries - 1:
+                raise
+            time.sleep(delay)
+            continue
+        if any(classify(text) is not Action.NOOP for text in last.values()):
+            return last
+        if i < tries - 1:
+            time.sleep(delay)
+    if last_err is not None:
+        raise last_err
+    return last
+
+
 def apply_commands(cmds: List[Tuple[str, str]], *, dry_run: bool) -> None:
     for op, mac in cmds:
         print(f"hog-finish-bond: {op} {mac}")
@@ -262,7 +290,7 @@ def main(argv: list[str]) -> int:
         print("usage: hog_finish_bond.py [--dry-run]")
         return 0
     try:
-        infos = collect_infos()
+        infos = collect_infos_until_action()
     except CollectError:
         # A check that inspected nothing is a FAIL, not a quiet success.
         print("hog-finish-bond: could not list devices; inspected nothing", file=sys.stderr)

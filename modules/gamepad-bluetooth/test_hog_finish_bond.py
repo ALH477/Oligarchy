@@ -402,6 +402,71 @@ class CollectInfosTests(unittest.TestCase):
         self.assertEqual(list(infos), [MAC])
         self.assertEqual(infos[MAC], XBOX_UNPAIRED)
 
+    def test_collect_retries_until_a_connected_unpaired_pad_appears(self):
+        listing = f"Device {MAC} Xbox Wireless Controller\n"
+        empty = _ScriptedRunner({("devices", "Connected"): (0, "", "")})
+        later = _ScriptedRunner(
+            {
+                ("devices", "Connected"): (0, listing, ""),
+                ("info", MAC): (0, XBOX_UNPAIRED, ""),
+            }
+        )
+        calls = {"n": 0}
+
+        def flip(args, *, timeout=10):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return empty(args, timeout=timeout)
+            return later(args, timeout=timeout)
+
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", flip), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
+            infos = hog_finish_bond.collect_infos_until_action(tries=5, delay=1.0)
+
+        self.assertEqual(list(infos), [MAC])
+        self.assertEqual(hog_finish_bond.classify(infos[MAC]), Action.PAIR)
+        self.assertGreaterEqual(calls["n"], 2)
+
+    def test_collect_retries_raises_if_every_listing_fails(self):
+        runner = _ScriptedRunner(
+            {("devices", "Connected"): (124, "", "timed out after 10s")}
+        )
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", runner), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), _quiet():
+            with self.assertRaises(hog_finish_bond.CollectError):
+                hog_finish_bond.collect_infos_until_action(tries=3, delay=1.0)
+
+        self.assertEqual(len(runner.calls), 3)
+
+    def test_main_retries_then_pairs(self):
+        listing = f"Device {MAC} Xbox Wireless Controller\n"
+        n = {"i": 0}
+
+        def flip(args, *, timeout=10):
+            args = list(args)
+            n["i"] += 1
+            if args[:2] == ["devices", "Connected"] and n["i"] == 1:
+                return subprocess.CompletedProcess(
+                    args=["bluetoothctl", *args], returncode=0, stdout="", stderr=""
+                )
+            replies = {
+                ("devices", "Connected"): (0, listing, ""),
+                ("info", MAC): (0, XBOX_UNPAIRED, ""),
+                ("pair", MAC): (0, "", ""),
+                ("trust", MAC): (0, "", ""),
+            }
+            key = tuple(args)
+            rc, out, err = replies.get(key, (0, "", ""))
+            return subprocess.CompletedProcess(
+                args=["bluetoothctl", *args], returncode=rc, stdout=out, stderr=err
+            )
+
+        with mock.patch.object(hog_finish_bond, "_run_bluetoothctl", flip), \
+                mock.patch.object(hog_finish_bond.time, "sleep", lambda *_: None), \
+                mock.patch.object(hog_finish_bond, "hog_input_bound", lambda *_: True), \
+                _quiet():
+            self.assertEqual(hog_finish_bond.main([]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
