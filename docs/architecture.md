@@ -85,10 +85,12 @@ reader at the wrong place to start.
 
 ## 2. Flake composition
 
-`flake.nix` defines five NixOS configurations — four laptops
-(`nixosConfigurations.nixos`, `nixos-fw13`, `nixos-intel`,
-`nixos-optimus`) and one headless CI build server (`builder`, §5d) — plus
-the installer ISO (`packages.x86_64-linux.iso`).
+`flake.nix` defines six NixOS configurations — the primary laptop
+(`nixosConfigurations.nixos`), the maintainer's own machine
+(`nixos-asher`, a committed `extendModules` layer on top of `nixos`, see
+below), three more laptops (`nixos-fw13`, `nixos-intel`, `nixos-optimus`)
+and one headless CI build server (`builder`, §5d) — plus the installer ISO
+(`packages.x86_64-linux.iso`).
 
 ### Input layers (order matters)
 
@@ -115,11 +117,29 @@ into every module. The commented-out
 `archibaldos` input is the template for adding the external DSP
 coprocessor when available.
 
+### `nixosConfigurations.nixos-asher`
+
+A fourth layer on top of the three above, not a parallel host definition:
+`nixos.extendModules { modules = [ ./hosts/asher ]; }`. `hosts/asher/`
+carries `default.nix` (the toggles migrated off
+`~/.config/oligarchy/local.nix` — feature flags plus one filesystem UUID,
+nothing unsuitable for a public repo) and `state.nix` (the machine-mutable
+persona/kernel state `oligarchy-ctl` used to write to
+`~/.config/oligarchy/state.nix`, now relocated into the flake source tree
+and imported by relative path so pure eval can read it). Because it's
+`extendModules`, `nixosConfigurations.nixos` itself is untouched — a fresh
+clone still gets exactly the fresh-clone-minimal config, and `nixos-asher`
+is the one host that resolves with no `builtins.pathExists` guard involved
+at all. `custom.localOverrides.expected = false` on this host (and on
+`builder`) suppresses the pure-eval advisory described in §5, since neither
+reads the out-of-repo files that advisory exists to catch.
+
 ### Output shape
 
 | Output | Purpose |
 |---|---|
 | `nixosConfigurations.nixos` | Framework 16 AMD (primary) |
+| `nixosConfigurations.nixos-asher` | the maintainer's real Framework 16 — `nixos` + committed `hosts/asher/`, pure eval, no `--impure` |
 | `nixosConfigurations.nixos-fw13` | Framework 13 AMD (iGPU only) |
 | `nixosConfigurations.nixos-intel` | pure Intel iGPU |
 | `nixosConfigurations.nixos-optimus` | Intel iGPU + NVIDIA dGPU (PRIME offload) |
@@ -148,9 +168,9 @@ Option namespaces in play:
 
 | Namespace | Handles |
 |---|---|
-| `custom.*` | `custom.steam`, `custom.gamepadBluetooth`, `custom.androidMirror`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.secrets`, `custom.secureBoot`, `custom.kernel.variant`, `custom.platform.gpu`, `custom.platform.displayGpu`, `custom.security.hardening`, `custom.dsp.enable`, `custom.session`, `custom.locale` (language/timezone/keyboard/fonts — the single source `services.xserver.xkb`, Hyprland's `kb_*` and the `console.keyMap` ckbcomp derivation all derive from; `modules/locale.nix`) |
+| `custom.*` | `custom.steam`, `custom.gamepadBluetooth`, `custom.androidMirror`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.secrets`, `custom.secureBoot`, `custom.vpn`, `custom.windscribeApp`, `custom.kernel.variant`, `custom.platform.gpu`, `custom.platform.displayGpu`, `custom.security.hardening`, `custom.dsp.enable`, `custom.session`, `custom.locale` (language/timezone/keyboard/fonts — the single source `services.xserver.xkb`, Hyprland's `kb_*` and the `console.keyMap` ckbcomp derivation all derive from; `modules/locale.nix`), `custom.localOverrides.expected` (bool, default `true` — when true and evaluation is pure, emits a `warnings` entry saying the out-of-repo `~/.config/oligarchy/{local,state}.nix` overrides were not read; `hosts/asher` and `nixosConfigurations.builder` set it `false` since neither reads those files) |
 | `services.*` | project-defined services like `services.ollamaAgentic`, `services.dcf-tray`, `services.boot-intro`, `services.oligarchyGreeting`, `services.dsp-vm` |
-| `networking.firewall.strictEgress` | the nftables egress firewall (`modules/security/strict-egress.nix`) |
+| `networking.firewall.strictEgress` | the nftables egress firewall (`modules/security/strict-egress.nix`). `allow.interfaces` is the full-tunnel-VPN escape hatch: it accepts by `oifname`, which hands the egress boundary to whatever is on the far end of that interface for as long as it is up |
 | `hardware.cpuSecurity` | CPU/kernel mitigations (forced spectre/MDS/SRSO + MSR-write block) |
 
 ## 4. Installer ISO
@@ -206,6 +226,8 @@ input.
 | `modules/dcf-tray.nix` | DCF tray controller (KDE/Qt) |
 | `modules/agentic-local-ai.nix` | Ollama + ROCm/CUDA/CPU (`services.ollamaAgentic`) |
 | `modules/secrets.nix` | sops-nix wiring for `custom.secrets` |
+| `modules/windscribe-app/` | The vendor Windscribe client (`custom.windscribeApp`): Qt GUI, `windscribe-cli`, root helper daemon. A sub-flake, repackaged from the upstream GPLv2 release `.deb` because upstream's own build needs the network at configure time. The alternative to `modules/vpn.nix`, mutually exclusive with it by assertion. `modules/windscribe-app/README.md` |
+| `modules/vpn.nix` | Windscribe over WireGuard (`custom.vpn`). Points `networking.wg-quick.interfaces.<n>.configFile` at a sops-held Windscribe config, then feeds the endpoint address into both `strictEgress.allow.ips` and `blocklists.allow.ips` so the outer encapsulated packet has a path out. Opt-in, defaults off, and on demand even when enabled — `autoStart = false`, driven by `oligarchy-vpn up`/`down`. No kill switch. `docs/vpn-windscribe.md` |
 | `modules/secure-boot.nix` | lanzaboote signed boot chain + optional TPM2-sealed LUKS |
 | `modules/platform.nix` | GPU/CPU/framework probes, `custom.platform.gpu`, kernel-module fixes (e.g. AMD `usb-storage.quirks=:u`), Framework "You are based" banner. On dual-AMD-GPU hosts, `custom.platform.displayGpu` (default `"dgpu"`) plus `dgpuPciId`/`igpuPciId` select which GPU client apps (games, anything launched from Hyprland) render on via Mesa `DRI_PRIME`. This never touches Hyprland/Aquamarine's own backend device — the compositor always uses the iGPU, since the dGPU module has no display engine path of its own and telling Aquamarine to open it as primary is a fatal, unrecoverable crash (see `docs/dgpu-steam-forcing.md`) |
 | `modules/personas.nix` | `studio / gaming / dev / battery / minimal` — one-switch re-arming of kernel + DSP + AI + audio quantum + power (`minimal` is the fresh-clone default) |
@@ -547,7 +569,12 @@ never duplicate dispatch logic:
   system). Mutates live state (`hyprctl keyword`, `pw-metadata`,
   `powerprofilesctl`) and persists build-time choices (persona/kernel/gpu)
   to `~/.config/oligarchy/state.nix` (outside the repo, requires `nixos-rebuild switch --impure` to be picked up) — this is the read-write control layer,
-  deliberately separate from the read-only MCP surface.
+  deliberately separate from the read-only MCP surface. `OLIGARCHY_STATE_NIX`
+  overrides the write target and `OLIGARCHY_REBUILD_FLAGS` overrides the
+  rebuild command's flags (default `--impure`); on the maintainer's own
+  machine (`hosts/asher/default.nix`) the former points at the committed
+  `hosts/asher/state.nix` and the latter is empty, which together are why
+  `nixos-asher` rebuilds pure — see §2.
 - `oligarchy-menu` (wofi, Super+D) / `oligarchy-control` (fzf, terminal) —
   both support the category→action browse and a flat "🔎 Search all
   actions…" entry point.
@@ -748,7 +775,7 @@ tier, audio quantum, gamemode and power in one switch. They do **not**
 flip `custom.vm.dsp.enable` — that stays in local.nix (see the Arming
 row above). Runtime toggles (power profile, animations, live PipeWire
 quantum) flip instantly; build-time pieces are written to
-`~/.config/oligarchy/state.nix` and applied on the next `nixos-rebuild switch --impure`.
+`~/.config/oligarchy/state.nix` and applied on the next `nixos-rebuild switch --impure` — except on the maintainer's own machine, where they land in the committed `hosts/asher/state.nix` and `nixos-asher` picks them up with no flags (§7a).
 
 **DSP Rigs — Pedalboard as Code** (optional via `custom.dsp.enable`):
 declarative LV2 plugin chains *and* Faust `.dsp` programs that run as JACK
@@ -826,13 +853,17 @@ MCP `node_config` tool reads the host copy.
 | `docs/security-hardening.md` | security rollout runbook (presets, soak steps) |
 | `docs/secure-boot-enrollment.md` | secure-boot enrollment procedure |
 | `docs/dcf-mesh-agent.md` | DCF mesh agent design |
+| `docs/vpn-windscribe.md` | Windscribe setup, the Discord/Steam egress story, and the DNS tie-break |
 | `README.md` | the in-character satire (technical tables near the bottom are the source of truth) |
 
 ## 15. Build & verification
 
 ```bash
-# full evaluation + build (the actual build gate)
+# full evaluation + build (the actual build gate) — fresh-clone-minimal config
 nix build .#nixosConfigurations.nixos.config.system.build.toplevel
+
+# the maintainer's real machine — also pure, no --impure needed (§2)
+nix build .#nixosConfigurations.nixos-asher.config.system.build.toplevel
 
 # install ISO build
 nix build .#iso

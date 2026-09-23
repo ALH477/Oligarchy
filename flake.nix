@@ -33,6 +33,17 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # windscribe-app — the vendor Windscribe desktop client, helper daemon and
+    # CLI (custom.windscribeApp). Repackaged from the upstream GPLv2 release
+    # artifact, because upstream's own Linux build drives vcpkg against a
+    # custom registry and FetchContent-clones wsnet at configure time, neither
+    # of which a sandboxed Nix build can do. Opt-in, defaults OFF, and
+    # mutually exclusive with custom.vpn. See modules/windscribe-app/README.md.
+    windscribe-app = {
+      url = "path:./modules/windscribe-app";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # oligarchy-vault — user-data encryption (custom.vault.*): age blobs,
     # fscrypt directories, gocryptfs overlays. Opt-in, defaults OFF, no
     # always-on unit, so the ISO needs no mkForce.
@@ -215,6 +226,7 @@
     , demod-talk
     , minecraft
     , android-mirror
+    , windscribe-app
     , greeting
     , boot-intro
     , blipply-assistant
@@ -340,6 +352,12 @@
         # USB scrcpy phone-mirror (custom.androidMirror). Opt-in, defaults OFF,
         # so the ISO needs no mkForce. See modules/android-mirror/README.md.
         android-mirror.nixosModules.default
+
+        # Windscribe vendor client (custom.windscribeApp). Opt-in, defaults
+        # OFF, and an assertion refuses to run alongside custom.vpn — both take
+        # the default route. Read-write and network-facing, so like
+        # oligarchy-forge it stays out of the MCP surface.
+        windscribe-app.nixosModules.default
         # User-data encryption (custom.vault.*): age blobs, fscrypt dirs,
         # gocryptfs overlays. Opt-in, defaults OFF — like android-mirror it
         # declares no always-on unit, so the ISO needs no mkForce. Turn it on
@@ -368,8 +386,13 @@
         # oligarchy-mcp.nix removed — replaced by mcp-servers.nixosModules.default
         ./modules/secrets.nix
         ./modules/security/strict-egress.nix
+        # Windscribe over WireGuard (custom.vpn). Opt-in, defaults OFF, and
+        # ON DEMAND even when enabled — nothing starts at boot. Must come after
+        # strict-egress and ip-blocklists, whose allow.* lists it writes into.
+        # See docs/vpn-windscribe.md.
         ./modules/security/dcf-spa-gate.nix
         ./modules/security/ip-blocklists.nix
+        ./modules/vpn.nix
         ./modules/security/hardening.nix
         ./modules/security/malware-shield.nix
         ./modules/security/security-cli.nix
@@ -523,7 +546,27 @@
         nixos-hardware.nixosModules.framework-16-7040-amd
         ./modules/hardware-configuration.nix
         { networking.hostName = "nixos"; }
-        { custom.platform = { gpu = "amd"; cpu = "amd"; framework = true; }; }
+
+        # mkDefault on `gpu`, and only on `gpu`. The control center's
+        # build_fragment() (home/apps/control-center/oligarchy-ctl.sh) emits
+        # `custom.platform.gpu = "..."` at NORMAL priority into state.nix, so
+        # a host that also pins it at normal priority turns every `oligarchy-
+        # ctl gpu-*` action into "conflicting definition values" — the gpu
+        # verbs have never been able to work. (kernel-* and persona-* are
+        # fine: both of their sinks are already mkDefault.)
+        #
+        # It is fixed here rather than left alone because hosts/asher moved
+        # state.nix INTO the flake tree: the clash used to be reachable only
+        # on an `--impure` run, and now it would break the ordinary pure daily
+        # rebuild. `cpu`/`framework` stay pinned — nothing writes them, and
+        # they are statements of fact about the chassis.
+        #
+        # Safe for the downstream readers: `hasDgpu`'s default is computed
+        # from the RESOLVED value of `gpu` (modules/platform.nix:106), as is
+        # `displayGpu`'s from `hasDgpu`, and the two assertions there read the
+        # resolved values too — mkDefault changes which definition wins, not
+        # what anything sees afterwards.
+        { custom.platform = { gpu = nixpkgs.lib.mkDefault "amd"; cpu = "amd"; framework = true; }; }
 
         # Tiered plugin runtime — STAGE 1 (tier 0 only), and this is the only
         # host that gets it. The other three and the ISO are untouched;
@@ -652,6 +695,30 @@
         }
       ];
 
+      # ────────────────────────────────────────────────────────────────────
+      # The maintainer's actual machine: `nixos` plus hosts/asher.
+      #
+      # Same hardware as `nixos` above — this adds no hardware-configuration
+      # and no nixos-hardware profile, only one person's toggles. Those
+      # toggles used to live at ~/.config/oligarchy/local.nix and reached the
+      # build only under `--impure`; pure evaluation answers `pathExists`
+      # FALSE rather than erroring, so a forgotten flag silently built a
+      # different machine with no warning of any kind (hosts/asher/default.nix
+      # carries the incident that motivated moving them in here).
+      #
+      # extendModules, NOT a second mkHost list. `nixos`'s module list above
+      # is ~130 lines carrying the plugin runtime, the P2P substituter, the
+      # DSP VM and their reasoning; a copy would drift from it silently. This
+      # way `.#nixos` is literally not edited — `git diff` proves that in one
+      # line — and the fresh-clone-minimal promise it makes is untouched.
+      # Same idiom the session-survives-switch and locale-contract gates use
+      # further down this file.
+      #
+      #   sudo nixos-rebuild switch --flake .#nixos-asher     (no --impure)
+      # ────────────────────────────────────────────────────────────────────
+      nixosConfigurations.nixos-asher =
+        self.nixosConfigurations.nixos.extendModules { modules = [ ./hosts/asher ]; };
+
       # Framework 13 AMD 7040 — iGPU only, no expansion-bay dGPU. Unverified
       # against real hardware (see hosts/framework13/hardware-configuration.nix).
       nixosConfigurations.nixos-fw13 = mkHost [
@@ -660,7 +727,9 @@
         {
           networking.hostName = "nixos-fw13";
           custom.platform = {
-            gpu = "amd";
+            # mkDefault so `oligarchy-ctl gpu-*` can write state.nix without
+            # a conflicting-definition error — see the nixos host above.
+            gpu = nixpkgs.lib.mkDefault "amd";
             cpu = "amd";
             framework = true;
             frameworkModel = "13";
@@ -678,7 +747,9 @@
         ./hosts/intel/hardware-configuration.nix
         {
           networking.hostName = "nixos-intel";
-          custom.platform = { gpu = "intel"; cpu = "intel"; framework = false; };
+          # mkDefault on gpu — see the nixos host above (control-center
+          # gpu-* actions write custom.platform.gpu at normal priority).
+          custom.platform = { gpu = nixpkgs.lib.mkDefault "intel"; cpu = "intel"; framework = false; };
         }
       ];
 
@@ -693,7 +764,8 @@
         {
           networking.hostName = "nixos-optimus";
           custom.platform = {
-            gpu = "nvidia-optimus";
+            # mkDefault on gpu — see the nixos host above.
+            gpu = nixpkgs.lib.mkDefault "nvidia-optimus";
             cpu = "intel";
             framework = false;
             # Obtain with: lspci | grep -E 'VGA|3D|Display'  ("01:00.0" -> "PCI:1:0:0")
@@ -734,12 +806,21 @@
           # modprobe line in modules/ci-builder.nix. `gpu` is irrelevant on a
           # headless host but the option is an enum with no "none" member.
           custom.platform = {
-            gpu = "amd";
+            # mkDefault on gpu — see the nixos host above.
+            gpu = nixpkgs.lib.mkDefault "amd";
             cpu = "amd";
             framework = false;
             hasDgpu = false;
             displayGpu = "igpu";
           };
+
+          # Headless CI box: it has no ~/.config/oligarchy and never will, by
+          # construction — every one of its builds is a pure evaluation on
+          # purpose. Silence configuration.nix's pure-eval advisory here so it
+          # stays a signal rather than a line every gates.yml run prints.
+          # The three alternate laptops deliberately keep it: they are real
+          # machines somebody could sit down at and forget --impure on.
+          custom.localOverrides.expected = false;
 
           custom.ciBuilder = {
             enable = true;
@@ -803,6 +884,14 @@
               # the installer; force it off wherever SDDM was forced on.
               services.greetd.enable = lib.mkForce false;
 
+              # The installer has no maintainer's home directory and is always
+              # built purely, so configuration.nix's pure-eval advisory is
+              # noise here — and it DOES reach this output: the ISO embeds the
+              # system closure, so it evaluates system.build.toplevel, which is
+              # where showWarnings sits. Silence it the way the advisory's own
+              # text tells you to.
+              custom.localOverrides.expected = lib.mkForce false;
+
               # Disable production services in ISO
               services.ollamaAgentic.enable = lib.mkForce false;
               custom.dcfCommunityNode.enable = lib.mkForce false;
@@ -826,6 +915,10 @@
               # `custom.desktopFeatures` default — force the whole feature off.
               custom.desktopFeatures.enablePersonalApps = lib.mkForce false;
               custom.androidMirror.enable = lib.mkForce false;
+              # Same Rule 9 reading: off by default already, forced anyway so
+              # the installer never carries a tunnel or a secret slot for one.
+              custom.vpn.enable = lib.mkForce false;
+              custom.windscribeApp.enable = lib.mkForce false;
 
               # fwupd is enabled above for oligarchy-hw-detect, but the weekly
               # refresh timer phones LVFS the moment the live image nets up.

@@ -9,6 +9,12 @@ set -uo pipefail
 
 FLAKE_DIR="${OLIGARCHY_FLAKE_DIR:-/etc/nixos}"
 HOST="${OLIGARCHY_HOST:-nixos}"
+# OLIGARCHY_REBUILD_FLAGS: extra nixos-rebuild flags (e.g. "--impure"). Same
+# ${VAR=default} (no colon) as oligarchy-ctl.sh uses, and for the same
+# reason: it substitutes only when the variable is UNSET, so a pure host's
+# explicit OLIGARCHY_REBUILD_FLAGS="" (hosts/asher/default.nix) survives
+# instead of getting --impure silently reattached by a ${VAR:=default}.
+: "${OLIGARCHY_REBUILD_FLAGS=--impure}"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/oligarchy-update"
 RESULT="$CACHE_DIR/result"
 LOG="$CACHE_DIR/last-build.log"
@@ -178,8 +184,15 @@ case "$deploy" in
   *) say "  ${DIM}standing down — the forged system stays cached for later.${RESET}"; exit 0 ;;
 esac
 
-say "  ${DIM}sudo nixos-rebuild $mode --flake $FLAKE_DIR#$HOST --impure${RESET}\n"
-if sudo nixos-rebuild "$mode" --flake "$FLAKE_DIR#$HOST" --impure; then
+# Build the extra-flags argv from OLIGARCHY_REBUILD_FLAGS as an array, not a
+# string: this command is actually executed (unlike oligarchy-ctl.sh's copy-
+# to-clipboard version), so an empty OLIGARCHY_REBUILD_FLAGS must vanish
+# entirely rather than becoming a stray empty '' argument via word-splitting.
+# An empty array expands to nothing under `"${arr[@]}"` even with `set -u`.
+rebuild_flags=()
+[ -n "$OLIGARCHY_REBUILD_FLAGS" ] && read -ra rebuild_flags <<< "$OLIGARCHY_REBUILD_FLAGS"
+say "  ${DIM}sudo nixos-rebuild $mode --flake $FLAKE_DIR#$HOST${OLIGARCHY_REBUILD_FLAGS:+ $OLIGARCHY_REBUILD_FLAGS}${RESET}\n"
+if sudo nixos-rebuild "$mode" --flake "$FLAKE_DIR#$HOST" "${rebuild_flags[@]}"; then
   say ""
   say "${GREEN}  ╔══════════════════════════════════════════════════════╗${RESET}"
   say "${GREEN}  ║   ⌁  REARMAMENT COMPLETE — the regime is ($mode)ed"'      '"║${RESET}"

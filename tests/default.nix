@@ -278,7 +278,259 @@ let
     '';
   };
 
+  # ── Windscribe VPN: on-demand tunnel + the strict-egress interface hatch ───
+  # The point of this gate is the two things that are silent when wrong: the
+  # tunnel starting at boot when it was meant to be on demand, and the outer
+  # encapsulated packet having no way past the egress filter.
+  vpn = pkgs.testers.runNixOSTest {
+    name = "vpn";
+
+    nodes.machine = { config, pkgs, lib, ... }: {
+      # ip-blocklists is imported but left off: custom.vpn writes the endpoint
+      # into its allow list unconditionally, because on every real host both
+      # modules are in commonModules together.
+      imports = [
+        ../modules/vpn.nix
+        ../modules/security/strict-egress.nix
+        ../modules/security/ip-blocklists.nix
+      ];
+
+      # A throwaway keypair and an unroutable endpoint (TEST-NET-1). wg-quick
+      # brings an interface up fine without ever completing a handshake, which
+      # is exactly what lets this run offline.
+      custom.vpn = {
+        enable = true;
+        endpoints = [ "192.0.2.7:443" ];
+        configFile = toString (pkgs.writeText "windscribe-test.conf" ''
+          [Interface]
+          PrivateKey = SLFtAcBTjZ4ScTWNxaGXCSzXnwbvMD6E0Qpv/VDDGWA=
+          Address = 100.64.7.2/32
+          DNS = 10.255.255.3
+
+          [Peer]
+          PublicKey = 1uJrwPzHHVXCz1m7bJJMxUjTsvUQbLrJjKOsCGdTuVU=
+          PresharedKey = 6WcDdJTEJ1ZlvKxmGl+Ct1SrJLfZIaHHDZ4xEHVQfCE=
+          AllowedIPs = 0.0.0.0/0
+          Endpoint = 192.0.2.7:443
+        '');
+      };
+
+      networking.firewall.strictEgress = {
+        enable = true;
+        preset = "minimal";
+        recovery.dryRun = false;
+        recovery.failOpen = false;
+      };
+      # Offline VM: the resolver's post-resolve reachability check would fail.
+      systemd.services.strict-egress-resolve.serviceConfig.ExecStart =
+        lib.mkForce "${pkgs.coreutils}/bin/true";
+
+      # On so the dns.useTunnelDns ExecStartPost has something to talk to. The
+      # first version of this test ran without it and caught the real bug: an
+      # unprefixed resolvectl failure took the whole tunnel down with it.
+      services.resolved.enable = true;
+    };
+
+    testScript = ''
+      machine.wait_for_unit("strict-egress-rules.service", timeout=120)
+
+      # ── On demand: declared, but NOT started at boot. ────────────────────
+      machine.succeed("systemctl cat wg-quick-wsc0.service >/dev/null")
+      machine.fail("systemctl is-active wg-quick-wsc0.service")
+      machine.fail("ip link show wsc0")
+
+      # ── The interface escape hatch landed in the chain. ──────────────────
+      machine.succeed("nft list chain inet strict-egress egress | grep -q 'oifname \"wsc0\" accept'")
+
+      # ── The OUTER packet has a path out: endpoint address, port stripped. ─
+      machine.succeed("nft list set inet strict-egress egress_static4 | grep -q '192.0.2.7'")
+
+      # ── Bring it up by hand, the way oligarchy-vpn does. ─────────────────
+      machine.succeed("systemctl start wg-quick-wsc0.service")
+      machine.wait_until_succeeds("ip link show wsc0", timeout=30)
+      machine.succeed("wg show wsc0 | grep -q 'peer:'")
+
+      # ExecStartPost applied the MTU that configFile made unreachable from Nix.
+      machine.succeed("ip -o link show wsc0 | grep -q 'mtu 1420'")
+
+      # ...and pinned the tunnel resolver with a `~.` routing domain, which is
+      # what stops this host's global `domains = [ "~." ]` from winning.
+      machine.succeed("resolvectl status wsc0 | grep -q '10.255.255.3'")
+      machine.succeed("resolvectl domain wsc0 | grep -q '~\\.'")
+
+      # The CLI agrees with reality in both directions.
+      machine.succeed("oligarchy-vpn status --icon | grep -q VPN")
+      machine.succeed("systemctl stop wg-quick-wsc0.service")
+      machine.fail("ip link show wsc0")
+      machine.fail("oligarchy-vpn status --icon | grep -q VPN")
+
+      print("vpn: on-demand start, interface hatch, endpoint allow, MTU and CLI verified")
+    '';
+  };
+
+  # ── Windscribe vendor client: the silent-failure surface ──────────────────
+  # Three things here fail without an error message, which is why they are a
+  # gate rather than a read-through: the helper unlinks its own socket and
+  # returns when the "windscribe" group is missing, the binaries reach their
+  # scripts through a compiled-in /opt/windscribe, and those scripts are
+  # #!/bin/bash with an FHS PATH.
+  windscribe-app = pkgs.testers.runNixOSTest {
+    name = "windscribe-app";
+
+    nodes.machine = { config, pkgs, lib, ... }: {
+      # The module takes the sub-flake as its `self`. Re-entering that flake
+      # from here with getFlake fails (the evaluated source tree has no nested
+      # flake), so hand it the one attribute it reads: a packages set built
+      # from the same package expression the sub-flake calls.
+      imports = [
+        (import ../modules/windscribe-app/nixos-module.nix {
+          packages.${pkgs.stdenv.hostPlatform.system}.default =
+            pkgs.callPackage ../modules/windscribe-app/pkgs/windscribe-desktop.nix { };
+        })
+        ../modules/security/strict-egress.nix
+      ];
+      custom.windscribeApp = {
+        enable = true;
+        users = [ "tester" ];
+      };
+      users.users.tester = { isNormalUser = true; };
+      # patchelf reads the RUNPATH; the minimal test image has no binutils.
+      environment.systemPackages = [ pkgs.patchelf ];
+
+      # ── Exec-smoke: does the binary even start? ───────────────────────────
+      # autoPatchelfHook rewrites every binary's interpreter/RPATH the same
+      # way regardless of toolchain. That is fine for the C/C++ helpers and
+      # fatal for the two Go ones: relocating a Go binary's program headers
+      # makes its runtime SIGSEGV on exec, and the client only ever reports
+      # "wstunnel failed to start" / ConnectionManager error 5 — never a
+      # loader error. Every other assertion in this test (group, /opt tree,
+      # shebangs, socket, RUNPATH) stayed green the whole time this was
+      # broken, so the frozen contract is checked here, out-of-line, once
+      # per binary: run it, and fail ONLY if it died on a signal. A clean
+      # non-zero exit (windscribeamneziawg with no interface argument, for
+      # instance) is not a corruption and must not be flagged as one.
+      environment.etc."windscribe-exec-smoke.sh" = {
+        mode = "0755";
+        source = pkgs.writeShellScript "windscribe-exec-smoke" ''
+          set -u
+          bin="/opt/windscribe/$1"
+          name="$1"
+
+          # rc classification, per the frozen contract:
+          #   139 SIGSEGV / 132 SIGILL / 134 SIGABRT / any 128+n -> died on
+          #   a signal -> FAIL. 124 is timeout(1) itself giving up on a
+          #   still-alive process -> PASS. Anything else (0 included) is a
+          #   normal exit -> PASS, whether or not it succeeded.
+          died_on_signal() {
+            rc="$1"
+            [ "$rc" -eq 139 ] && return 0
+            [ "$rc" -eq 132 ] && return 0
+            [ "$rc" -eq 134 ] && return 0
+            [ "$rc" -ge 128 ] && [ "$rc" -ne 124 ] && return 0
+            return 1
+          }
+
+          # Returns 0 = pass (stop here), 1 = inconclusive (try next
+          # invocation), 2 = signal death (stop, fail the whole script).
+          attempt() {
+            label="$1"
+            shift
+            rc=0
+            timeout 5 "$bin" "$@" >/tmp/windscribe-exec-smoke.out 2>&1 || rc=$?
+            if died_on_signal "$rc"; then
+              echo "windscribe-exec-smoke: $name DIED ON SIGNAL $((rc - 128)) (rc=$rc) invoked with $label -- autoPatchelfHook corrupted a non-C binary's ELF layout; see modules/windscribe-app/README.md landmine list" >&2
+              return 2
+            fi
+            if [ "$rc" -eq 0 ] || [ "$rc" -eq 124 ]; then
+              echo "windscribe-exec-smoke: $name OK (rc=$rc, $label)"
+              return 0
+            fi
+            last_rc="$rc"
+            return 1
+          }
+
+          attempt "--version" --version && exit 0
+          rc=$?; [ "$rc" -eq 2 ] && exit 1
+          attempt "--help" --help && exit 0
+          rc=$?; [ "$rc" -eq 2 ] && exit 1
+          attempt "no args" && exit 0
+          rc=$?; [ "$rc" -eq 2 ] && exit 1
+
+          echo "windscribe-exec-smoke: $name OK (clean non-zero exit rc=$last_rc after --version/--help/bare, no signal death)"
+          exit 0
+        '';
+      };
+    };
+
+    testScript = ''
+      machine.wait_for_unit("multi-user.target", timeout=180)
+
+      # ── The group whose absence makes the helper fail silently. ──────────
+      machine.succeed("getent group windscribe")
+      machine.succeed("id -nG tester | tr ' ' '\\n' | grep -qx windscribe")
+
+      # ── The compiled-in install dir resolves, scripts included. ──────────
+      machine.succeed("test -d /opt/windscribe")
+      machine.succeed("test -x /opt/windscribe/helper")
+      machine.succeed("test -x /opt/windscribe/scripts/cgroups-up")
+
+      # Every script must have a real interpreter: NixOS has no /bin/bash.
+      machine.fail("head -1 /opt/windscribe/scripts/* | grep -q '^#!/bin/bash$'")
+      machine.succeed("head -1 /opt/windscribe/scripts/cgroups-up | grep -q '^#!/nix/store/'")
+
+      # In-app update must refuse rather than try to dpkg over the store.
+      machine.fail("/opt/windscribe/scripts/install-update /tmp/whatever")
+
+      # ── The platform id the updater parses. ──────────────────────────────
+      machine.succeed("grep -qE '^linux_deb_(x64|arm64)$' /etc/windscribe/platform")
+
+      # ── The helper runs and publishes a socket the group can reach. ──────
+      machine.wait_for_unit("windscribe-helper.service", timeout=120)
+      machine.wait_for_file("/var/run/windscribe/helper.sock", timeout=60)
+      machine.succeed("stat -c '%G' /var/run/windscribe/helper.sock | grep -qx windscribe")
+      machine.succeed("stat -c '%U:%G' /var/run/windscribe | grep -qx root:windscribe")
+
+      # ── The client binaries actually execute after autoPatchelf. ─────────
+      machine.succeed("su - tester -c 'windscribe-cli --help' | grep -q 'windscribe-cli v'")
+
+      # ── libdbus must stay reachable, and nothing else will tell you. ─────
+      # Qt dlopen()s libdbus-1.so.3, so there is no DT_NEEDED entry and
+      # autoPatchelfHook reports a clean build without it. The symptom of
+      # losing it is not a missing-library error: the GUI segfaults inside
+      # QDBusMenuConnection, four frames deep in the system-tray probe.
+      machine.succeed(
+          "patchelf --print-rpath /opt/windscribe/Windscribe | tr ':' '\\n' | grep -q dbus"
+      )
+      # ...and the directory it points at really holds the soname Qt asks for.
+      machine.succeed(
+          "test -e \"$(patchelf --print-rpath /opt/windscribe/Windscribe "
+          "| tr ':' '\\n' | grep dbus | head -1)/libdbus-1.so.3\""
+      )
+
+      # ── The launcher defaults to XWayland. ───────────────────────────────
+      # Native Wayland paints the fixed-size window clipped inside a surface
+      # the compositor sized differently.
+      machine.succeed("grep -q 'QT_QPA_PLATFORM' $(command -v windscribe)")
+      machine.succeed("grep -q 'xcb' $(command -v windscribe)")
+
+      # ── Exec-smoke: every bundled helper actually starts. ────────────────
+      # Every assertion above passed the whole time windscribewstunnel and
+      # windscribeamneziawg were autoPatchelf'd into an immediate SIGSEGV on
+      # exec, because none of them ever runs the binaries. This does.
+      for helper in [
+          "windscribewstunnel",
+          "windscribeamneziawg",
+          "windscribeopenvpn",
+          "windscribectrld",
+          "windscribe-cli",
+      ]:
+          machine.succeed(f"/etc/windscribe-exec-smoke.sh {helper}")
+
+      print("windscribe-app: group, /opt tree, patched scripts, platform id, helper socket, CLI, libdbus runpath, XWayland default and helper exec-smoke verified")
+    '';
+  };
+
 in
 {
-  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists;
+  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app;
 }

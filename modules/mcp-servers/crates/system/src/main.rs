@@ -14,6 +14,24 @@ use rmcp::{ServerHandler, model::{ServerCapabilities, ServerInfo}, tool};
 
 const ASPECT: &str = "system";
 
+/// The full, closed set of `nixosConfigurations.*` names `flake.nix` defines.
+/// `dry_build` uses this as a strict allowlist, not a lookup table: an MCP
+/// client supplies `host` as a free-form string that gets interpolated into
+/// a `nixos-rebuild dry-build --flake <dir>#<host>` invocation, so anything
+/// not an exact match for a real flake output must be refused outright
+/// rather than pattern-matched or passed through. `dry-build` never
+/// activates anything, so every configuration flake.nix defines — including
+/// `builder` and `nixos-fw13` — is equally safe to list here; keep this in
+/// sync with flake.nix's `nixosConfigurations`.
+const VALID_HOSTS: &[&str] = &[
+    "nixos",
+    "nixos-fw13",
+    "nixos-intel",
+    "nixos-optimus",
+    "nixos-asher",
+    "builder",
+];
+
 #[derive(Debug, Clone, Default)]
 struct Server;
 
@@ -77,13 +95,16 @@ impl Server {
     #[tool(description = "Available custom.platform.gpu values and the matching flake targets.")]
     fn gpu_options(&self) -> String {
         audit::tool(ASPECT, "gpu_options", "");
-        "amd (.#nixos), intel (.#nixos-intel), nvidia-optimus (.#nixos-optimus)".into()
+        "amd (.#nixos, .#nixos-fw13, .#nixos-asher), intel (.#nixos-intel), nvidia-optimus (.#nixos-optimus)".into()
     }
 
-    #[tool(description = "nixos-rebuild dry-build for a host (.#nixos / nixos-intel / nixos-optimus). Computes what WOULD build without activating. Heavy; may take minutes.")]
+    #[tool(description = "nixos-rebuild dry-build for a host (nixos / nixos-fw13 / nixos-intel / nixos-optimus / nixos-asher / builder). Computes what WOULD build without activating. Heavy; may take minutes.")]
     fn dry_build(&self, #[tool(param)] host: String) -> String {
-        if !matches!(host.as_str(), "nixos" | "nixos-intel" | "nixos-optimus") {
-            return "[denied] host must be nixos | nixos-intel | nixos-optimus".into();
+        if !VALID_HOSTS.contains(&host.as_str()) {
+            return format!(
+                "[denied] host must be one of: {}",
+                VALID_HOSTS.join(" | ")
+            );
         }
         audit::tool(ASPECT, "dry_build", &host);
         let flake_dir = sandbox::flake_dir();
@@ -181,5 +202,19 @@ mod tests {
     #[test]
     fn aspect_name_is_system() {
         assert_eq!(ASPECT, "system");
+    }
+
+    #[test]
+    fn valid_hosts_accepts_every_known_configuration() {
+        for host in ["nixos", "nixos-fw13", "nixos-intel", "nixos-optimus", "nixos-asher", "builder"] {
+            assert!(VALID_HOSTS.contains(&host), "expected {host} to be a valid dry_build host");
+        }
+    }
+
+    #[test]
+    fn valid_hosts_refuses_arbitrary_strings() {
+        for host in ["; rm -rf /", "../../etc", "nixos-nonexistent", "nixos ", "NIXOS", ""] {
+            assert!(!VALID_HOSTS.contains(&host), "expected {host:?} to be refused as a dry_build host");
+        }
     }
 }

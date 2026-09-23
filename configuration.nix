@@ -21,17 +21,37 @@
     ./modules/gamepad-bluetooth
     ./modules/session-resume.nix
   ]
-  # Optional local overrides, both at absolute paths OUTSIDE the repo so a
-  # fresh clone never sees them (Nix's local-flake source filtering excludes
-  # gitignored files from the evaluated source tree entirely — an in-repo
-  # override file would vanish from `nix build`/`nixos-rebuild switch` even on
-  # this machine the moment it's gitignored, which is why these live under
-  # ~/.config/oligarchy instead of the old in-repo oligarchy-local.nix):
-  #   local.nix — hand-maintained personal toggles (steam, malware-shield,
-  #     the DSP VM, the personal package list, etc.), never touched by tooling.
+  # ── The fresh-user hatch (NOT the maintainer's channel any more) ──────────
+  #
+  # Two optional files at absolute paths OUTSIDE the repo, so a fresh clone
+  # never sees them. They live under ~/.config/oligarchy rather than in-tree
+  # because Nix's local-flake source filtering excludes gitignored files from
+  # the evaluated source tree entirely — an in-repo, gitignored override would
+  # vanish from `nix build` / `nixos-rebuild switch` even on this machine.
+  #
+  #   local.nix — hand-maintained personal toggles. This is what
+  #     `nix run .#oligarchy-adopt` writes for somebody arriving from a stock
+  #     NixOS install: it reads their existing /etc/locale.conf, vconsole.conf
+  #     and localtime and turns them into custom.locale.* here, so a fresh
+  #     user keeps their language and keyboard on the first rebuild. A shipped
+  #     flow with its own gate — `nix build .#locale-adopt-fixtures`.
   #   state.nix — written by the control center (kernel/gpu/persona picks);
   #     kept separate because the control center wholesale-overwrites its file
   #     on every UI action, which would silently wipe local.nix if shared.
+  #
+  # WHAT CHANGED: this pair used to be the MAINTAINER's channel as well, and
+  # it is a bad one. `builtins.pathExists` on an out-of-tree absolute path does
+  # not *error* under pure evaluation — Nix catches its own RestrictedPathError
+  # and answers `false` — so a rebuild that forgot `--impure` quietly built a
+  # machine with every toggle back at its fresh-clone default, printed nothing,
+  # and switched to it. An autoLogin flip arrived that way, put a boot on
+  # hyprlock instead of the greeter, and never showed up in `git diff`.
+  #
+  # So the maintainer's settings now live IN the repo, at `hosts/asher/`, and
+  # are built as `.#nixos-asher` — pure, diffable, bisectable, reviewable. See
+  # hosts/asher/default.nix for the full account. The advisory in the `config`
+  # block below (`custom.localOverrides.expected`) is what makes a pure build
+  # of a host that still relies on these two files say so out loud.
   #
   # NOTE: hardcodes "asher" rather than config.custom.user.name — `imports` is
   # evaluated to determine what `config` even contains, so referencing `config`
@@ -43,6 +63,25 @@
 
   options = {
     custom.steam.enable = lib.mkEnableOption "Steam and gaming support";
+
+    # Does this host expect to be configured through the two
+    # ~/.config/oligarchy files imported above? True for anything that might
+    # be somebody's daily laptop; false for hosts that carry their overrides
+    # in-tree (hosts/asher) or have no home directory at all (the headless
+    # builder). It gates ONE warning and nothing else — never an assertion,
+    # because pure evaluation is the CORRECT mode for CI, the ISO,
+    # `nix flake check` and a fresh clone.
+    custom.localOverrides.expected = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether this host's configuration is expected to be completed by
+        ~/.config/oligarchy/{local,state}.nix. When true, a PURE evaluation
+        (no `--impure`) emits a warning, because those files were not read and
+        cannot even be probed for existence. Set false on hosts whose settings
+        are tracked in the repository.
+      '';
+    };
   };
 
   config =
@@ -382,7 +421,64 @@
       warnings = lib.optional
         (config.boot.resumeDevice == ""
           && builtins.elem config.services.upower.criticalPowerAction [ "Hibernate" "HybridSleep" ])
-        "Oligarchy: upower criticalPowerAction is ${config.services.upower.criticalPowerAction} but boot.resumeDevice is unset — hibernation cannot resume. See the hibernate block near swapDevices in configuration.nix.";
+        "Oligarchy: upower criticalPowerAction is ${config.services.upower.criticalPowerAction} but boot.resumeDevice is unset — hibernation cannot resume. See the hibernate block near swapDevices in configuration.nix."
+
+      # ── Pure-eval advisory ───────────────────────────────────────────────
+      # The failure this exists for is SILENT: `builtins.pathExists` on an
+      # out-of-tree absolute path does not throw under pure evaluation, it
+      # answers `false` (Nix catches its own RestrictedPathError), so the two
+      # ~/.config/oligarchy imports at the top of this file simply do not
+      # happen and nothing anywhere says so. A rebuild that forgot `--impure`
+      # therefore builds a machine with every personal toggle back at its
+      # fresh-clone default — successfully, quietly — and switches to it.
+      #
+      # Detector: `builtins.getEnv "HOME"`. Pure evaluation returns "" for
+      # every getEnv; `--impure` returns the real value. Verified on this
+      # machine. (Under `sudo nixos-rebuild` HOME is /root, which is still a
+      # non-empty string, so the impure path stays quiet as intended.)
+      #
+      # This is the NixOS `warnings` option, NOT `lib.warnIf` wrapped around
+      # the `imports` list. `imports` is evaluated to work out what `config`
+      # even contains, so nothing placed there can be conditioned on an option
+      # or suppressed per host — which is exactly what
+      # `custom.localOverrides.expected` needs to be able to do. Precedent:
+      # the hibernate warning directly above, and modules/kernel.nix:190.
+      #
+      # Advisory, never an assertion. Pure evaluation is the CORRECT mode for
+      # .github/workflows/eval.yml, the installer ISO, `nix flake check` and
+      # anybody building from a fresh clone; none of them has a home directory
+      # full of this machine's opinions, and each silences this by setting
+      # custom.localOverrides.expected = false (see hosts/asher/default.nix
+      # and nixosConfigurations.builder in flake.nix).
+      ++ lib.optional
+        (config.custom.localOverrides.expected && builtins.getEnv "HOME" == "")
+        ''
+          Oligarchy: this is a PURE evaluation, and this host
+          (custom.localOverrides.expected = true) expects out-of-repo overrides.
+
+          ~/.config/oligarchy/local.nix and ~/.config/oligarchy/state.nix were
+          NOT read. Pure evaluation cannot even tell you whether they exist —
+          builtins.pathExists answers "false" for an out-of-tree absolute path
+          rather than erroring — so every toggle they would have set (steam,
+          malware-shield, strict-egress, the DSP VM, the persona, the kernel
+          and GPU picks, ...) has fallen back to its fresh-clone-minimal
+          default.
+
+          This build will SUCCEED anyway. That is the problem: the result is a
+          working but different machine, with no other signal that it is.
+
+            * The maintainer's Framework 16 is now tracked in the repository.
+              Rebuild it as:
+                  sudo nixos-rebuild switch --flake .#nixos-asher
+              No --impure needed, and the settings show up in `git diff`.
+
+            * Still using the out-of-repo channel on this host? Add --impure:
+                  sudo nixos-rebuild switch --flake .#nixos --impure
+
+            * Building CI, the ISO, `nix flake check`, or a fresh clone? Then
+              nothing is wrong and this message is noise — that host should
+              set `custom.localOverrides.expected = false;`.
+        '';
 
       boot.kernel.sysctl = {
         # Deliberately left at 10 even though zramSwap is now on. The usual
@@ -984,6 +1080,15 @@
             "huggingface.co"
             # dcf-node-binary
             "api.demod.ltd"
+            # Discord. The `workstation` preset carries discord.com and
+            # gateway.discord.gg, but this host runs `developer`, so they are
+            # not allowlisted here without this. Voice is NOT in this list —
+            # it is IP-diverse UDP, see allow.ports below.
+            "discord.com"
+            "discordapp.com"
+            "gateway.discord.gg"
+            "cdn.discordapp.com"
+            "media.discordapp.net"
             # Steam store/community/API/CDN — confirmed against live
             # WOULDBLOCK entries during the dry-run soak (store.steampowered.com
             # -> 23.0.194.117, api.steampowered.com -> 23.41.4.x,
@@ -1045,9 +1150,32 @@
             # 27055/27061/27079/27123 during the same soak.
             { port = 27000; to = 27100; proto = "tcp"; }
             { port = 27000; to = 27100; proto = "udp"; }
+            # Discord voice. Same escape-hatch reasoning as Steam above: the
+            # voice server is handed out per-call from a pool spanning
+            # unrelated /24s, so there is no address to allowlist. UDP only,
+            # and only the ephemeral range Discord actually uses.
+            { port = 50000; to = 65535; proto = "udp"; }
           ];
         };
       };
+
+      # Windscribe over WireGuard (modules/vpn.nix). Off here; turn it on in
+      # ~/.config/oligarchy/local.nix together with custom.secrets.vpn.enable
+      # and the custom.vpn.endpoints line that `oligarchy-vpn import` prints.
+      #
+      # ON DEMAND even when enabled: autoStart stays false, so the tunnel only
+      # exists between `oligarchy-vpn up` and `oligarchy-vpn down`. There is no
+      # kill switch — a dropped tunnel falls back to the plain route rather
+      # than going dark. See docs/vpn-windscribe.md.
+      custom.vpn.enable = lib.mkDefault false;
+
+      # The vendor Windscribe client (modules/windscribe-app) — GUI, server
+      # picker, R.O.B.E.R.T., split tunnelling, and a root helper daemon.
+      # The ALTERNATIVE to custom.vpn above, not a companion: both take the
+      # default route and an assertion refuses to have both on. Repackaged
+      # from the upstream GPLv2 release artifact, since upstream's own Linux
+      # build needs the network at configure time.
+      custom.windscribeApp.enable = lib.mkDefault false;
 
       # Minecraft server — Paper + Geyser + Floodgate, so Java AND Bedrock
       # clients join one world. Reachable over the tailnet only: the ports are

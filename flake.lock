@@ -1340,6 +1340,7 @@
         "sops-nix": "sops-nix",
         "vm-manager": "vm-manager",
         "warroom": "warroom",
+        "windscribe-app": "windscribe-app",
         "yara-rules": "yara-rules"
       }
     },
@@ -1733,6 +1734,22 @@
       },
       "original": {
         "path": "./modules/warroom",
+        "type": "path"
+      },
+      "parent": []
+    },
+    "windscribe-app": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "path": "./modules/windscribe-app",
+        "type": "path"
+      },
+      "original": {
+        "path": "./modules/windscribe-app",
         "type": "path"
       },
       "parent": []
