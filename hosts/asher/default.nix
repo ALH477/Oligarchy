@@ -40,7 +40,7 @@
 #   Rebuild with:  sudo nixos-rebuild switch --flake .#nixos-asher
 #   (no --impure; that is the entire point)
 # ════════════════════════════════════════════════════════════════════════════
-{ pkgs, lib, ... }:
+{ lib, ... }:
 
 let
   # The real checkout. Not /etc/nixos — that is a stale root-owned clone; see
@@ -160,27 +160,77 @@ in
   # Windscribe vendor client (modules/windscribe-app): GUI, windscribe-cli and
   # the root helper. Mutually exclusive with custom.vpn — leave that one off.
   custom.windscribeApp.enable = true;
-  services.ollamaAgentic.dedicatedSwap.enable = true;
 
-  # Machine-specific: external drive, moved verbatim out of configuration.nix
-  # (it referenced a physical drive UUID that only exists on this machine).
-  swapDevices = [
-    {
-      device = "/run/media/asher/a82fcfcf-e913-413e-ab4f-4a3b104b2de0/.swapfile";
-      priority = 10;
-      options = [ "nofail" ];
-    }
-  ];
+  # services.ollamaAgentic.dedicatedSwap deliberately left off: it has never
+  # functioned on this host (see modules/agentic-local-ai.nix — the auto-
+  # created swapfile's parent directory didn't exist, so mkswap/the .swap
+  # unit failed every switch) and there's no reason to fix that here. This
+  # machine already carries 43 GiB of swap (zram + /swapfile below) with the
+  # disk tier sitting at 0 bytes used, so a 24 GiB AI-dedicated file on the
+  # same root fs would buy nothing.
 
-  system.activationScripts.btrfsSwapfile = ''
-    swapfile=/run/media/asher/a82fcfcf-e913-413e-ab4f-4a3b104b2de0/.swapfile
-    mountpoint=/run/media/asher/a82fcfcf-e913-413e-ab4f-4a3b104b2de0
-    if [ -d "$mountpoint" ] && ${pkgs.util-linux}/bin/mountpoint -q "$mountpoint" && [ ! -e "$swapfile" ]; then
-      ${pkgs.coreutils}/bin/truncate -s 0 "$swapfile"
-      ${pkgs.e2fsprogs}/bin/chattr +C "$swapfile" 2>/dev/null || true
-      ${pkgs.util-linux}/bin/fallocate -l 32G "$swapfile"
-      ${pkgs.coreutils}/bin/chmod 600 "$swapfile"
-      ${pkgs.util-linux}/bin/mkswap "$swapfile"
-    fi
-  '';
+  # ── The second NVMe, and the swapfile on it ───────────────────────────────
+  # Machine-specific, and this is the only host that has it.
+  #
+  # It is INTERNAL. The comment that used to sit here called it an "external
+  # drive" and the declaration agreed with the comment rather than with the
+  # hardware: it pointed a swapDevice at
+  #
+  #   /run/media/asher/a82fcfcf-e913-413e-ab4f-4a3b104b2de0/.swapfile
+  #
+  # which is a *udisks2 automount path* — the directory a desktop session's
+  # udisks2 invents when a user clicks a removable volume in a file manager.
+  # a82fcfcf… is in fact nvme1n1p2: 929.5 G of btrfs bolted inside the laptop,
+  # which udisks2 was never going to mount for anyone. /run/media/asher/ did
+  # not exist, so the generated .swap unit failed on every single
+  # `nixos-rebuild switch`, and the accompanying `system.activationScripts.
+  # btrfsSwapfile` guarded itself with `mountpoint -q` and therefore skipped
+  # silently, every time, for as long as it existed.
+  #
+  # Both are now one declaration in modules/mounts.nix, which refuses a
+  # /run/media path at eval time (so this exact bug is no longer
+  # representable), orders the swapfile's creation after the mount with
+  # RequiresMountsFor, and does the `chattr +C` that a btrfs swapfile cannot
+  # live without and that `swapDevices.*.size` auto-creation cannot perform.
+  #
+  # Priority 10 is deliberate and unchanged: zram sits at 100, so this is the
+  # last-resort tier beneath it. nvme1n1p1 — a 2 GiB vfat ESP orphaned by a
+  # prior install — is left strictly alone, as is the existing data on p2:
+  # this module only ever mounts, never formats.
+  # ── Xbox controllers: defeat xpadneo's GameSir-Nova heuristic ────────────
+  # Both pads are genuine Microsoft 045E:0B13 (Xbox Series), but xpadneo
+  # misclassifies them as GameSir Nova clones and applies clone quirks
+  # 0x57 -- which includes 16 (Linux button mappings) and 64 (Share button
+  # mappings). Those rewrite the button map, while xpadneo's own deliberate
+  # PID spoof (0x0B13 -> 0x028E, its SDL2 mapping workaround) tells SDL and
+  # Steam to load the Xbox-BT profile. Event stream and profile disagree, and
+  # the pad delivers nothing usable over Bluetooth while working fine over
+  # USB, which binds in-tree xpad and never touches this path.
+  #
+  # 512 is "apply no heuristics" -- the whole classifier, not individual
+  # bits, so a future xpadneo release adding a heuristic bit cannot
+  # reintroduce this. The 0x028E identity is NOT the bug; do not "fix" it.
+  #
+  # MACs live HERE rather than in modules/gamepad-bluetooth/default.nix
+  # because a Bluetooth address is machine-specific, the same category as
+  # the drive UUID above, and that module is in commonModules.
+  custom.gamepadBluetooth.xpadneoQuirks = {
+    "74:C4:12:ED:8F:76" = 512;
+    "78:86:2E:BA:73:6E" = 512;
+  };
+
+  custom.mounts = {
+    enable = true;
+    volumes.data = {
+      uuid = "a82fcfcf-e913-413e-ab4f-4a3b104b2de0";
+      fsType = "btrfs";
+      where = "/mnt/data";
+      swapfile = {
+        enable = true;
+        sizeGB = 32;
+        priority = 10;
+        nodatacow = true;
+      };
+    };
+  };
 }

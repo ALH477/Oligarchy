@@ -394,14 +394,13 @@
       };
 
       # ── AI-stack dedicated swap + container memory accounting ────────────────
-      # See modules/agentic-local-ai.nix for the module that owns these options.
-      # Swap tier ordering: zram (100) > AI-dedicated (50) > generic backup (10).
-      # The AI-only swapfile lives on root ext4 (always mounted), and the
-      # container mem/swap caps prevent Ollama from eating the entire system.
+      # See modules/agentic-local-ai.nix for the module that owns these options
+      # — including the priority reasoning, which lives there only (in
+      # dedicatedSwap.priority's option description) and not duplicated here.
       services.ollamaAgentic.dedicatedSwap = {
         enable = lib.mkDefault false;
         sizeGB = 24;
-        priority = 50;
+        priority = 5;
       };
       services.ollamaAgentic.containerMemoryLimitGB = 18;
 

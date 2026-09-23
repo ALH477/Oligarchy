@@ -381,6 +381,16 @@
         # modules/oligarchy-archive.nix.
         ./modules/oligarchy-archive.nix
 
+        # custom.mounts — UUID/PARTUUID-pinned volumes and the swapfiles that
+        # live on them. A plain path module: it has no package and no source
+        # tree, so there is nothing for a sub-flake to pin. Opt-in, defaults
+        # OFF, and with `volumes = { }` it emits no fileSystems entry, no unit,
+        # no tmpfiles rule and no swapDevices entry, so no ISO mkForce is
+        # needed. Plain `fileSystems` stays correct for anything that is
+        # neither removable nor a swap target — see the banner comment in
+        # modules/mounts.nix for the two things it cannot do.
+        ./modules/mounts.nix
+
         ./modules/secure-boot.nix
         ./modules/agentic-local-ai.nix
         # oligarchy-mcp.nix removed — replaced by mcp-servers.nixosModules.default
@@ -1267,6 +1277,20 @@
         # a widened match there silently pairs keyboards and audio sinks. These
         # stdlib unittest cases are the only gate on that allowlist, and they
         # need neither D-Bus nor KVM.
+        #
+        # What this gate does NOT cover, despite the name: it is a Bluetooth
+        # bonding-POLICY gate, not a gamepad-FUNCTION gate. It never loads
+        # hid_xpadneo, opens an evdev node, reads a HID descriptor, or checks
+        # that a bonded pad delivers input at all — it would pass green with
+        # xpadneo absent from the kernel entirely. The whole post-bond
+        # driver/quirks/input path (see modules/gamepad-bluetooth/default.nix's
+        # header comment on the xpadneo GameSir-Nova misclassification) is
+        # unmeasured here on purpose: a real input assertion needs physical BLE
+        # hardware and cannot run in a VM, so per CLAUDE.md's gate rule this
+        # comment names the gap instead of a gate implying a guarantee it can't
+        # give. `gamepad-bond-policy-tests` would be a more honest name for
+        # this attribute; not renamed here because it's load-bearing in
+        # CLAUDE.md, docs and muscle memory — a rename is a separate call.
         #
         # Run on demand:  nix build .#gamepad-bluetooth-tests
         # ════════════════════════════════════════════════════════════════════

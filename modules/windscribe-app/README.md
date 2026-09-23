@@ -124,10 +124,20 @@ windscribe                 # the GUI
 windscribe-cli login       # the CLI; `windscribe-cli --help` for the rest
 systemctl status windscribe-helper
 journalctl -u windscribe-helper -f
-sudo tail -f /var/log/windscribe/helper_log.txt
+sudo ls -la /var/log/windscribe/      # 0750 root:windscribe -- root to read
+sudo tail -f /var/log/windscribe/helper.log
 ```
 
-Client logs live in `~/.local/share/Windscribe/Windscribe2`.
+The helper's log directory is created by this module's tmpfiles rule, but the
+FILENAME is upstream's and is not pinned here: the helper binary carries both
+`/var/log/windscribe/helper.log` and `/helper_log.txt` as string constants and
+which one it opens has not been established. List the directory rather than
+assuming a name.
+
+Client logs live in `~/.local/share/Windscribe/Windscribe2`. Note `client.log`
+is TRUNCATED on every launch, so a crash-and-relaunch destroys the evidence for
+the run you care about — copy it aside before restarting the client, or read
+the same lines out of the journal, which keeps them per boot.
 
 ## Gates
 
