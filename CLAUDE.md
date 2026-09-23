@@ -116,15 +116,19 @@ All are deliberately NOT in `checks` (they are slow — most need KVM, and tier2
 
 ### Tests
 
-NixOS VM integration tests live in `tests/default.nix` using `pkgs.testers.runNixOSTest`: `strict-egress`, `malware-shield`, `hardening`, `dcf-spa-gate`, `ip-blocklists`. They are exposed as `packages.test-<name>` and run like any other gate:
+NixOS VM integration tests live in `tests/default.nix` using `pkgs.testers.runNixOSTest`: `strict-egress`, `malware-shield`, `hardening`, `dcf-spa-gate`, `ip-blocklists`, `vpn`, `windscribe-app`. They are exposed as `packages.test-<name>` and run like any other gate:
 
 ```bash
 nix build .#test-strict-egress
 ```
 
-**They are packages, not `checks`, deliberately.** `checks.x86_64-linux` holds only the system toplevel, which needs no KVM — that is what lets a runner without `/dev/kvm` still run `nix flake check`. Folding five VM tests into `checks` would silently take that property away.
+**They are packages, not `checks`, deliberately.** `checks.x86_64-linux` holds only the system toplevel, which needs no KVM — that is what lets a runner without `/dev/kvm` still run `nix flake check`. Folding seven VM tests into `checks` would silently take that property away.
 
-The MCP server workspace has its own `cargo test --workspace` (52 unit tests, plus the `no_open_sockets` build gate in `crates/core/tests/`). Run from `modules/mcp-servers/`.
+**A gate must exercise what the subsystem DOES, not the scaffolding around it.** This is the rule every other line in this section is subordinate to, and it is written down because it was learned the expensive way. The `windscribe-app` gate asserted eight things — the `windscribe` group, the `/opt` tree, patched shebangs, the `install-update` refusal, `/etc/windscribe/platform`, helper socket ownership, the libdbus RUNPATH, the XWayland default — and every one of them was green while the client could not establish a connection by any protocol, because three independent defects all sat below the layer being measured. Nothing in that test ran a bundled binary; nothing attempted a connection. A green gate over a dead subsystem is worse than no gate, because it converts "nobody has checked" into "somebody checked and it was fine."
+
+Structural assertions are cheap and worth keeping — they localise a break fast. But each subsystem also needs at least one assertion that fails when the subsystem stops working: run the binary, complete the handshake, substitute the path, load the plugin, refuse the unsigned artifact. Where the real action cannot run in a VM (no network, no hardware), assert the nearest observable proxy and say in a comment which part is still unmeasured — an honest gap beats an implied guarantee. When a gate did not catch something it plausibly should have, fix the gate in the same change as the bug; `.#test-windscribe-app`'s exec-smoke check and the package's own `installCheckPhase` exist because of exactly that rule.
+
+The MCP server workspace has its own `cargo test --workspace` (55 unit tests, plus the `no_open_sockets` build gate in `crates/core/tests/`). Run from `modules/mcp-servers/`.
 
 ### CI
 
@@ -306,6 +310,7 @@ Standalone operator scripts, not wired into any derivation: `dsp-latency-guest.s
 - **Unfree allowed; broken is NOT.** `pkgsConfig` sets `allowUnfree = true` and `permittedInsecurePackages = [ ]`. `allowBroken` was **deliberately removed** — it silently lets known-broken packages into the closure on a production machine. Do not re-add it; override per-package if ever needed.
 - **`nix fmt` is not the project formatter.** The flake's `formatter` is `nixfmt-rfc-style`, but the tree is written in `nixpkgs-fmt`. Format with `nixpkgs-fmt <file.nix>`, and don't blanket-format files you didn't touch.
 - **Pin everything through the flake.** New external dependencies become flake inputs, not ad-hoc fetches — the project explicitly avoids unpinned sources.
+- **A gate must exercise what the subsystem DOES, not the scaffolding around it.** Structural assertions — files in place, units declared, permissions right — localise a break quickly and are worth keeping, but they do not establish that the thing works: the `windscribe-app` gate held eight of them green while the client could not connect by any protocol, because nothing in it ever ran a bundled binary. Every subsystem needs at least one assertion that fails when the subsystem stops working, and where the real action cannot run in a VM, a comment naming what is still unmeasured. See the rule in full under **Tests** above.
 - **Locale has one source, `custom.locale.*`** — `services.xserver.xkb` and Hyprland's `kb_*` both read it, and `console.keyMap` is a ckbcomp derivation compiled from the same values (NOT `console.useXkbConfig`: nixpkgs sets `keyMap` at normal priority under that switch, so a plain `console.keyMap = …` line becomes an eval error). Every sink is `mkDefault`; an assertion refuses `services.xserver.xkb.*` set directly; `.#locale-contract` asserts the three agree on 25 host×language combinations. Override in `~/.config/oligarchy/local.nix` — `--impure` or it silently reverts. A user coming from a stock install runs `oligarchy-adopt` once to write that file from their existing `/etc/locale.conf`/`vconsole.conf`/`localtime`. See `docs/localization-roadmap.md`.
 - **Secrets** use `sops-nix`. `secrets/` is git-ignored except `secrets/.sops.yaml`. Never commit decrypted material, `*.age`, or `secrets/secrets.yaml`.
 - **State version is `25.11`** on `nixos-25.11` (nixpkgs stable). Keep new modules consistent with that. `nixpkgs-unstable` is available via the `unstable` overlay for cherry-picks.
