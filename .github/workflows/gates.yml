@@ -137,6 +137,7 @@ jobs:
           # Two-node: a nginx portal + dnsmasq venue and an NM client.
           - test-captive-portal
           - test-mdns-single-responder
+          - test-network-profiles
 
     steps:
       - uses: actions/checkout@v4

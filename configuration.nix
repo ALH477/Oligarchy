@@ -22,6 +22,8 @@
     ./modules/session-resume.nix
     # Captive portal detection + auto-open login page (hotel/airport Wi-Fi).
     ./modules/captive-portal
+    # Trusted Wi-Fi profiles from Nix, PSKs from sops (custom.network.trustedWifi).
+    ./modules/network-profiles.nix
   ]
   # ── The fresh-user hatch (NOT the maintainer's channel any more) ──────────
   #
@@ -997,7 +999,17 @@
           allowPing = true;
           # 4798x/4800x Sunshine ports removed — the service is disabled above;
           # re-add them alongside services.sunshine if it ever comes back.
-          allowedTCPPorts = [ 22 443 ];
+          #
+          # No 22 and no 443 here. This list is interface-agnostic and the
+          # Wi-Fi interface is the same on the home LAN and in a café, so
+          # anything in it is open to every network the laptop ever joins.
+          # SSH is admitted on tailscale0 only (below); nothing in the base
+          # config listens on 443, and the modules that do (dcf-identity,
+          # demod-talk, ...) open their own ports. LAN-side SSH for a host
+          # that needs it as a recovery path: put `networking.firewall.
+          # allowedTCPPorts = [ 22 ]` in ~/.config/oligarchy/local.nix — it
+          # merges — and turn custom.security.hardening on first.
+          allowedTCPPorts = [ ];
           allowedUDPPorts = [ 5353 ];
           # tailscale0 is NOT a trusted interface: every tailnet peer would
           # bypass the firewall to all ports. SSH is admitted per-interface
@@ -1012,7 +1024,7 @@
         # which trips a NixOS assertion / causes the two to fight over the radio.
       };
 
-      # SSH for local + Tailscale access (LAN already admits :22 in firewall).
+      # SSH over Tailscale (the firewall admits :22 on tailscale0 only).
       # Hardened settings (keys-only, AllowUsers, MaxAuthTries, fail2ban) are
       # owned by modules/security/hardening.nix (custom.security.hardening).
       services.openssh.enable = true;
@@ -1054,6 +1066,15 @@
       # declares only the age key location until a secret sub-option is on.
       # Pre-req: sudo age-keygen -o /var/lib/sops-nix/key.txt (see .sops.yaml).
       custom.secrets.enable = lib.mkDefault false;
+      # Trusted Wi-Fi: declare networks here or in local.nix, PSK names only.
+      # Encrypt modules/secrets/wifi.env (HOME_PSK=...) with sops per
+      # .sops.yaml, then flip custom.secrets.wifi.enable; see
+      # modules/network-profiles.nix.
+      #   custom.network.trustedWifi.home = {
+      #     ssid = "…"; pskVar = "HOME_PSK";
+      #     dns = [ "9.9.9.9" "149.112.112.112" ];
+      #   };
+      custom.secrets.wifi.enable = lib.mkDefault false;
 
       # Security hardening ladder (modules/security/hardening.nix):
       # SSH keys-only + fail2ban now; apparmor/auditd flip on after soak.

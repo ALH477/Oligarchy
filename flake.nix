@@ -2172,11 +2172,12 @@
             '';
 
         # ════════════════════════════════════════════════════════════════════════
-        # Network posture contract — docs/networking-design-spec (Designs C, D).
+        # Network posture contract — docs/networking-design-spec (Designs C–E).
         #
-        # Pure eval of nixosConfigurations.nixos, one evaluation. Every line
-        # here is a thing configuration.nix says in one place and nothing at
-        # runtime complains about when it drifts back:
+        # Pure eval of nixosConfigurations.nixos (plus three cheap overrides
+        # for the trusted-Wi-Fi module). Every line here is a thing
+        # configuration.nix says in one place and nothing at runtime complains
+        # about when it drifts back:
         #   - resolved carries no global "~." routing domain
         #   - NM: connection.mdns = 0 and connection.llmnr = 0 (Avahi owns
         #     .local; resolved must not be a second responder)
@@ -2185,6 +2186,11 @@
         #   - Avahi is still on with nss-mdns (the reason mdns=0 is safe)
         #   - resolved still on, dnssec allow-downgrade, DoT opportunistic
         #     (the combination the captive-portal VM gate was written against)
+        #   - firewall: no 22 and no 443 in the interface-agnostic list; 22 on
+        #     tailscale0 only
+        #   - custom.network.trustedWifi renders `psk=$VAR` (never a literal),
+        #     pins DNS with ignore-auto-dns, refuses a literal-looking pskVar
+        #     and refuses profiles with no secrets source
         #
         # Run on demand:  nix build .#network-posture-contract
         # ════════════════════════════════════════════════════════════════════════
@@ -2194,7 +2200,47 @@
             c = self.nixosConfigurations.nixos.config;
             nm = c.networking.networkmanager;
             cc = nm.connectionConfig;
+            fw = c.networking.firewall;
+
+            # Lists of modules, not `//`: an attrset update would replace the
+            # whole `custom` attribute and silently drop the sample profile.
+            override = ms: (self.nixosConfigurations.nixos.extendModules { modules = ms; }).config;
+            sample = {
+              custom.network.trustedWifi.home = {
+                ssid = "Contract Net";
+                pskVar = "HOME_PSK";
+                dns = [ "9.9.9.9" "149.112.112.112" ];
+                priority = 20;
+              };
+            };
+            # A secrets source that exists in a pure eval: any store path will
+            # do, the profile is only rendered, never substituted, here.
+            source = { custom.network.trustedWifiSecretsFile = pkgs.writeText "wifi-env" "HOME_PSK=unused\n"; };
+            withSecrets = override [ sample source ];
+            rendered = withSecrets.networking.networkmanager.ensureProfiles.profiles.home;
+            noSource = override [ sample ];
+            # pskVar = "hunter2" must die in the option type, which is a throw
+            # tryEval can see once the value is forced.
+            literalPsk = builtins.tryEval (builtins.deepSeq
+              (override [ sample source { custom.network.trustedWifi.home.pskVar = lib'.mkForce "hunter2"; } ])
+                .networking.networkmanager.ensureProfiles.profiles
+              true);
+
             payload = pkgs.writeText "network-posture-contract.json" (builtins.toJSON {
+              # ── stage 3: firewall + profiles ──
+              sshNotGlobal = !(lib'.elem 22 fw.allowedTCPPorts);
+              tlsNotGlobal = !(lib'.elem 443 fw.allowedTCPPorts);
+              sshOnTailscale = lib'.elem 22 (fw.interfaces.tailscale0.allowedTCPPorts or [ ]);
+              profileRendersPskVar = rendered.wifi-security.psk == "$HOME_PSK";
+              profileIsWifiPsk = rendered.wifi-security.key-mgmt == "wpa-psk" && rendered.wifi.ssid == "Contract Net";
+              profilePinsDns = rendered.ipv4.dns == "9.9.9.9;149.112.112.112;" && rendered.ipv4.ignore-auto-dns == true;
+              profilePriority = rendered.connection.autoconnect-priority == 20;
+              profileEnvFileWired = lib'.length withSecrets.networking.networkmanager.ensureProfiles.environmentFiles == 1;
+              noSecretsSourceRefused = lib'.any
+                (a: !a.assertion && lib'.hasInfix "no secrets source" a.message)
+                noSource.assertions;
+              literalPskRefused = !literalPsk.success;
+              # ── stage 2: resolver, mDNS, MAC ──
               networkManagerOn = nm.enable;
               resolvedOn = c.services.resolved.enable;
               noGlobalRoutingDomain = !(lib'.elem "~." c.services.resolved.domains);
@@ -2242,8 +2288,18 @@
               want llmnrOff
               want wifiMacStable
               want ethernetMacPreserve
+              want sshNotGlobal
+              want tlsNotGlobal
+              want sshOnTailscale
+              want profileRendersPskVar
+              want profileIsWifiPsk
+              want profilePinsDns
+              want profilePriority
+              want profileEnvFileWired
+              want noSecretsSourceRefused
+              want literalPskRefused
               [ "$fail" -eq 0 ] || { echo "network-posture-contract: FAILED" >&2; exit 1; }
-              echo "network-posture-contract: 11 checks passed" | tee -a $out/report.txt
+              echo "network-posture-contract: 21 checks passed" | tee -a $out/report.txt
             '';
       };
 

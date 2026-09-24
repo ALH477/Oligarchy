@@ -776,7 +776,70 @@ let
       print("mdns-single-responder: Avahi alone on 5353, resolved off .local, name stable")
     '';
   };
+
+  # ── Trusted Wi-Fi profiles: rendered from Nix, PSK substituted at boot only ─
+  # No Wi-Fi in a VM, and none needed: the assertion is about the keyfile
+  # NetworkManager-ensure-profiles writes — the PSK comes from the env file
+  # at boot, sits in a 0600 runtime file, and the store copy carries only
+  # `$HOME_PSK`. A wired profile on eth1 keeps NM in the nixpkgs test recipe.
+  network-profiles = pkgs.testers.runNixOSTest {
+    name = "network-profiles";
+
+    nodes.machine = { lib, pkgs, ... }: {
+      imports = [ ../modules/network-profiles.nix ];
+      networking.useDHCP = false;
+      networking.interfaces = lib.mkForce { eth1 = { }; };
+      networking.networkmanager = {
+        enable = true;
+        settings.main.no-auto-default = "*";
+        ensureProfiles.profiles.lan = {
+          connection = { id = "lan"; type = "ethernet"; interface-name = "eth1"; autoconnect = true; };
+          ipv4 = { method = "manual"; addresses = "192.168.1.42/24"; };
+          ipv6.method = "disabled";
+        };
+      };
+      # Stands in for the sops-decrypted file; same shape, root-only.
+      environment.etc."wifi-env" = { text = "HOME_PSK=hunter22-not-a-real-psk\n"; mode = "0400"; };
+      custom.network.trustedWifiSecretsFile = "/etc/wifi-env";
+      custom.network.trustedWifi.home = {
+        ssid = "Test Net";
+        pskVar = "HOME_PSK";
+        dns = [ "9.9.9.9" ];
+        priority = 15;
+      };
+    };
+
+    testScript = ''
+      machine.wait_for_unit("NetworkManager-ensure-profiles.service", timeout=120)
+      f = "/run/NetworkManager/system-connections/home.nmconnection"
+
+      with subtest("the profile is written with the substituted PSK"):
+          machine.succeed(f"test -f {f}")
+          machine.succeed(f"grep -qx 'psk=hunter22-not-a-real-psk' {f}")
+          machine.succeed(f"grep -qx 'ssid=Test Net' {f}")
+          machine.succeed(f"grep -qx 'key-mgmt=wpa-psk' {f}")
+          machine.succeed(f"grep -qx 'dns=9.9.9.9;' {f}")
+          machine.succeed(f"grep -qx 'ignore-auto-dns=true' {f}")
+          machine.succeed(f"grep -qx 'autoconnect-priority=15' {f}")
+
+      with subtest("the runtime file is root-only"):
+          machine.succeed(f"test \"$(stat -c %a {f})\" = 600")
+
+      with subtest("NetworkManager loaded it"):
+          machine.wait_until_succeeds("nmcli -t -f NAME,TYPE connection show | grep -qx 'home:802-11-wireless'", timeout=60)
+
+      with subtest("the store copy carries the variable, never the key"):
+          # The template ensure-profiles substitutes from is referenced by its
+          # script; find it through the unit rather than by grepping the store.
+          script = machine.succeed("systemctl cat NetworkManager-ensure-profiles.service | sed -n 's/^ExecStart=//p' | head -n1").strip()
+          tmpl = machine.succeed(f"grep -o '/nix/store/[^ ]*-home' {script} | head -n1").strip()
+          machine.succeed(f"grep -qx 'psk=$HOME_PSK' {tmpl}")
+          machine.fail(f"grep -q 'hunter22' {tmpl}")
+
+      print("network-profiles: keyfile rendered, PSK substituted at boot, store copy holds only $HOME_PSK")
+    '';
+  };
 in
 {
-  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app captive-portal mdns-single-responder;
+  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app captive-portal mdns-single-responder network-profiles;
 }
