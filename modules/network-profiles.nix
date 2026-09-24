@@ -39,8 +39,11 @@ let
       mode = "infrastructure";
     };
     wifi-security = {
-      key-mgmt = "wpa-psk";
+      key-mgmt = p.security;
       psk = "$" + p.pskVar;
+    } // lib.optionalAttrs (p.security == "sae") {
+      # WPA3: management frame protection is mandatory, not optional.
+      pmf = 3;
     };
     ipv4 = { method = "auto"; } // lib.optionalAttrs (p.dns != [ ]) {
       dns = lib.concatMapStrings (d: d + ";") p.dns;
@@ -81,6 +84,16 @@ in
             default = 10;
             description = "connection.autoconnect-priority; higher wins when several are in range.";
           };
+          security = lib.mkOption {
+            type = lib.types.enum [ "wpa-psk" "sae" ];
+            default = "wpa-psk";
+            description = ''
+              `wpa-psk` (WPA2) or `sae` (WPA3-Personal). An evil twin of a
+              WPA2 network can record the 4-way handshake for offline PSK
+              cracking; SAE makes that capture useless. Use `sae` wherever the
+              access point supports it.
+            '';
+          };
         };
       });
       default = { };
@@ -118,6 +131,12 @@ in
         {
           assertion = config.networking.networkmanager.enable;
           message = "custom.network.trustedWifi renders NetworkManager profiles; enable networking.networkmanager.";
+        }
+        {
+          # A store path is world-readable, so a PSK in it is public on the
+          # host and on every cache it is pushed to.
+          assertion = secretsFile == null || !(lib.hasPrefix builtins.storeDir (toString secretsFile));
+          message = "custom.network.trustedWifiSecretsFile must not be a Nix store path — the store is world-readable. Use a sops secret or a root-only file under /run or /var.";
         }
       ];
 

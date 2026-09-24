@@ -1599,7 +1599,7 @@
         captive-portal-tests =
           pkgs.runCommand "captive-portal-tests"
             {
-              nativeBuildInputs = [ pkgs.bash pkgs.shellcheck pkgs.coreutils pkgs.gnugrep pkgs.gnused pkgs.util-linux ];
+              nativeBuildInputs = [ pkgs.bash pkgs.shellcheck pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.gnused pkgs.util-linux ];
               meta = with nixpkgs.lib; {
                 description = "Assert the captive-portal scripts' state machine against a fake nmcli; bash, no KVM";
                 license = licenses.bsd3;
@@ -1613,7 +1613,7 @@
               # The sandbox has no /usr/bin/env; the shebangs must resolve.
               patchShebangs src/bin src/tests
 
-              shellcheck src/bin/*.sh src/tests/run.sh src/tests/fakes/*
+              find src/bin src/tests -type f -print0 | xargs -0 shellcheck
               echo "shellcheck: clean" | tee $out/report.txt
 
               bash src/tests/run.sh 2>&1 | tee -a $out/report.txt
@@ -2086,8 +2086,9 @@
         #     describes and is plain http
         #   - the probe host and login host are on strictEgress.allow.domains,
         #     so enforcing egress can never make every portal read as "limited"
-        #   - the watcher unit exists, restarts always, and is wanted by the
-        #     graphical session; the three CLIs are on PATH
+        #   - the watcher unit exists, restarts always with no start-rate
+        #     limit, and is wanted by the graphical session; the CLIs are on
+        #     PATH; the browser kind is an isolated one; opens are rate-limited
         #   - an https loginUrl is REFUSED by the module's own assertion
         #   - autoOpen = false really removes the unit
         #
@@ -2123,6 +2124,12 @@
               watcherPresent = svc != null;
               watcherRestartAlways = (svc.serviceConfig.Restart or null) == "always";
               watcherInSession = lib'.elem "graphical-session.target" (svc.wantedBy or [ ]);
+              watcherNoStartLimit = (svc.unitConfig.StartLimitIntervalSec or null) == 0;
+              # The audit's headline finding: the portal page never opens in
+              # the everyday profile. kind = command is the VM gate's seam and
+              # a deliberate choice elsewhere; xdg-open is the one that is not.
+              browserIsolated = cp.browser.kind != "xdg-open";
+              rateLimited = cp.minInterval >= 30;
               httpsRefused = lib'.any
                 (a: !a.assertion && lib'.hasInfix "must be plain http://" a.message)
                 withHttps.assertions;
@@ -2164,11 +2171,14 @@
               want watcherPresent
               want watcherRestartAlways
               want watcherInSession
+              want watcherNoStartLimit
+              want browserIsolated
+              want rateLimited
               want httpsRefused
               want autoOpenOffRemovesUnit
               echo "uri: $(jq -r .uri "$j")" >> $out/report.txt
               [ "$fail" -eq 0 ] || { echo "captive-portal-contract: FAILED" >&2; exit 1; }
-              echo "captive-portal-contract: 14 checks passed" | tee -a $out/report.txt
+              echo "captive-portal-contract: 17 checks passed" | tee -a $out/report.txt
             '';
 
         # ════════════════════════════════════════════════════════════════════════
@@ -2189,8 +2199,9 @@
         #   - firewall: no 22 and no 443 in the interface-agnostic list; 22 on
         #     tailscale0 only
         #   - custom.network.trustedWifi renders `psk=$VAR` (never a literal),
-        #     pins DNS with ignore-auto-dns, refuses a literal-looking pskVar
-        #     and refuses profiles with no secrets source
+        #     pins DNS with ignore-auto-dns, refuses a literal-looking pskVar,
+        #     refuses profiles with no secrets source and refuses a secrets
+        #     file that lives in the world-readable store
         #
         # Run on demand:  nix build .#network-posture-contract
         # ════════════════════════════════════════════════════════════════════════
@@ -2213,9 +2224,11 @@
                 priority = 20;
               };
             };
-            # A secrets source that exists in a pure eval: any store path will
-            # do, the profile is only rendered, never substituted, here.
-            source = { custom.network.trustedWifiSecretsFile = pkgs.writeText "wifi-env" "HOME_PSK=unused\n"; };
+            # A runtime path, never a store path: the module refuses those
+            # (asserted below) because the store is world-readable. Nothing is
+            # read at eval; the profile is rendered with `$HOME_PSK`.
+            source = { custom.network.trustedWifiSecretsFile = "/run/secrets/wifi-env"; };
+            storePath = override [ sample { custom.network.trustedWifiSecretsFile = pkgs.writeText "wifi-env" "HOME_PSK=unused\n"; } ];
             withSecrets = override [ sample source ];
             rendered = withSecrets.networking.networkmanager.ensureProfiles.profiles.home;
             noSource = override [ sample ];
@@ -2240,6 +2253,9 @@
                 (a: !a.assertion && lib'.hasInfix "no secrets source" a.message)
                 noSource.assertions;
               literalPskRefused = !literalPsk.success;
+              storePathSecretsRefused = lib'.any
+                (a: !a.assertion && lib'.hasInfix "must not be a Nix store path" a.message)
+                storePath.assertions;
               # ── stage 2: resolver, mDNS, MAC ──
               networkManagerOn = nm.enable;
               resolvedOn = c.services.resolved.enable;
@@ -2298,8 +2314,9 @@
               want profileEnvFileWired
               want noSecretsSourceRefused
               want literalPskRefused
+              want storePathSecretsRefused
               [ "$fail" -eq 0 ] || { echo "network-posture-contract: FAILED" >&2; exit 1; }
-              echo "network-posture-contract: 21 checks passed" | tee -a $out/report.txt
+              echo "network-posture-contract: 22 checks passed" | tee -a $out/report.txt
             '';
       };
 

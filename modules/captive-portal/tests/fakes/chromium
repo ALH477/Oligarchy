@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+echo "chromium $*" >> "$FAKE_BROWSER_CALLS"

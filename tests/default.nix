@@ -630,9 +630,25 @@ let
             probe.host = "portal";
             probe.interval = 30;
             loginUrl = "http://login.portal.test/";
-            # Record instead of open: there is no browser in the VM.
-            opener = "${pkgs.writeShellScript "record-open" ''echo "$@" >> /tmp/opened''}";
+            # Record instead of open: there is no browser in the VM. `command`
+            # is the seam for exactly this; the real default is an isolated
+            # firefox profile, asserted by the contract gate, not here.
+            browser = {
+              kind = "command";
+              command = "${pkgs.writeShellScript "record-open" ''echo "$@" >> /tmp/opened''}";
+            };
             terminalBrowser = pkgs.writeShellScriptBin "record-tui" ''echo "$@" >> /tmp/tui-opened'';
+            # The suite bounces the portal on purpose; do not wait a minute.
+            minInterval = 0;
+          };
+
+          # The watcher and CLIs refuse to run as root (they render attacker
+          # HTML), so the test drives them as a user in the networkmanager
+          # group — the polkit rule NixOS ships for that group covers
+          # `connectivity check`.
+          users.users.tester = {
+            isNormalUser = true;
+            extraGroups = [ "networkmanager" ];
           };
 
           environment.systemPackages = [ pkgs.curl ];
@@ -659,9 +675,17 @@ let
         with subtest("NetworkManager reports PORTAL"):
             client.wait_until_succeeds("nmcli -t -g CONNECTIVITY general | grep -qx portal", timeout=120)
 
+        def as_tester(cmd):
+            return "su - tester -c " + repr(cmd)
+
+        with subtest("captive-login and the launcher refuse to run as root"):
+            client.fail("captive-login")
+            client.fail("captive-portal-open http://login.portal.test/")
+
         with subtest("the watcher opens the login URL exactly once"):
-            client.succeed("rm -f /tmp/opened; setsid -f captive-portal-watch >/tmp/watch.log 2>&1")
-            client.wait_until_succeeds("test -f /tmp/opened", timeout=30)
+            client.succeed("rm -f /tmp/opened; touch /tmp/opened; chown tester /tmp/opened")
+            client.succeed(as_tester("setsid -f captive-portal-watch >/tmp/watch.log 2>&1"))
+            client.wait_until_succeeds("test -s /tmp/opened", timeout=30)
             client.succeed("grep -qx 'http://login.portal.test/' /tmp/opened")
             # Two forced re-probes while still unpaid must not reopen.
             client.succeed("nmcli networking connectivity check | grep -qx portal")
@@ -675,13 +699,14 @@ let
             client.succeed("curl -s -o /dev/null -w '%{http_code}' http://login.portal.test/ | grep -qx 302")
 
         with subtest("captive-login without a display uses the text browser"):
-            client.succeed("rm -f /tmp/tui-opened; captive-login")
+            client.succeed("rm -f /tmp/tui-opened; touch /tmp/tui-opened; chown tester /tmp/tui-opened")
+            client.succeed(as_tester("captive-login"))
             client.succeed("grep -qx 'http://login.portal.test/' /tmp/tui-opened")
 
         with subtest("logging in flips NM to FULL"):
             portal.succeed("touch /var/lib/portal/open")
             client.wait_until_succeeds("nmcli networking connectivity check | grep -qx full", timeout=60)
-            client.succeed("captive-login | grep -q 'Already online'")
+            client.succeed(as_tester("captive-login") + " | grep -q 'Already online'")
             client.succeed("test $(wc -l < /tmp/opened) -eq 1")
 
         with subtest("a new portal episode opens the page again"):
@@ -691,7 +716,8 @@ let
 
         with subtest("nmtui-portal hands off to captive-login on a portal"):
             # No tty here: nmtui exits at once; the hand-off is what matters.
-            client.succeed("rm -f /tmp/tui-opened; timeout 60 nmtui-portal </dev/null >/tmp/nmtui-portal.log 2>&1 || true")
+            client.succeed(": > /tmp/tui-opened")
+            client.succeed(as_tester("timeout 60 nmtui-portal </dev/null >/tmp/nmtui-portal.log 2>&1 || true"))
             client.succeed("grep -qx 'http://login.portal.test/' /tmp/tui-opened")
 
         with subtest("the graphical-session user unit is installed"):
@@ -798,35 +824,64 @@ let
           ipv6.method = "disabled";
         };
       };
-      # Stands in for the sops-decrypted file; same shape, root-only.
-      environment.etc."wifi-env" = { text = "HOME_PSK=hunter22-not-a-real-psk\n"; mode = "0400"; };
-      custom.network.trustedWifiSecretsFile = "/etc/wifi-env";
-      custom.network.trustedWifi.home = {
-        ssid = "Test Net";
-        pskVar = "HOME_PSK";
-        dns = [ "9.9.9.9" ];
-        priority = 15;
+      # Stands in for the sops-decrypted file: generated at boot, root-only,
+      # so the PSK exists nowhere in the store — which is what the last
+      # subtest checks, and what environment.etc.<x>.text would have broken
+      # (its content is a store path).
+      systemd.services.wifi-env-fixture = {
+        wantedBy = [ "multi-user.target" ];
+        before = [ "NetworkManager-ensure-profiles.service" ];
+        requiredBy = [ "NetworkManager-ensure-profiles.service" ];
+        serviceConfig.Type = "oneshot";
+        script = ''
+          umask 077
+          printf 'HOME_PSK=%s\n' "$(head -c 24 /dev/urandom | base64 | tr -d '/+=' )" > /run/wifi-env
+        '';
+      };
+      custom.network.trustedWifiSecretsFile = "/run/wifi-env";
+      custom.network.trustedWifi = {
+        home = {
+          ssid = "Test Net";
+          pskVar = "HOME_PSK";
+          dns = [ "9.9.9.9" ];
+          priority = 15;
+        };
+        office = {
+          ssid = "Test Office";
+          pskVar = "HOME_PSK";
+          security = "sae";
+        };
       };
     };
 
     testScript = ''
       machine.wait_for_unit("NetworkManager-ensure-profiles.service", timeout=120)
       f = "/run/NetworkManager/system-connections/home.nmconnection"
+      o = "/run/NetworkManager/system-connections/office.nmconnection"
+      psk = machine.succeed("sed -n 's/^HOME_PSK=//p' /run/wifi-env").strip()
+      assert len(psk) >= 20, f"fixture PSK too short: {psk!r}"
 
       with subtest("the profile is written with the substituted PSK"):
           machine.succeed(f"test -f {f}")
-          machine.succeed(f"grep -qx 'psk=hunter22-not-a-real-psk' {f}")
+          machine.succeed(f"grep -qx 'psk={psk}' {f}")
           machine.succeed(f"grep -qx 'ssid=Test Net' {f}")
           machine.succeed(f"grep -qx 'key-mgmt=wpa-psk' {f}")
           machine.succeed(f"grep -qx 'dns=9.9.9.9;' {f}")
           machine.succeed(f"grep -qx 'ignore-auto-dns=true' {f}")
           machine.succeed(f"grep -qx 'autoconnect-priority=15' {f}")
 
-      with subtest("the runtime file is root-only"):
-          machine.succeed(f"test \"$(stat -c %a {f})\" = 600")
+      with subtest("a WPA3 profile asks for SAE with PMF required"):
+          machine.succeed(f"grep -qx 'key-mgmt=sae' {o}")
+          machine.succeed(f"grep -qx 'pmf=3' {o}")
+          machine.succeed(f"grep -qx 'psk={psk}' {o}")
 
-      with subtest("NetworkManager loaded it"):
+      with subtest("the runtime files are root-only"):
+          machine.succeed(f"test \"$(stat -c %a {f})\" = 600")
+          machine.succeed(f"test \"$(stat -c %a {o})\" = 600")
+
+      with subtest("NetworkManager loaded them"):
           machine.wait_until_succeeds("nmcli -t -f NAME,TYPE connection show | grep -qx 'home:802-11-wireless'", timeout=60)
+          machine.wait_until_succeeds("nmcli -t -f NAME,TYPE connection show | grep -qx 'office:802-11-wireless'", timeout=60)
 
       with subtest("the store copy carries the variable, never the key"):
           # The template ensure-profiles substitutes from is referenced by its
@@ -834,9 +889,11 @@ let
           script = machine.succeed("systemctl cat NetworkManager-ensure-profiles.service | sed -n 's/^ExecStart=//p' | head -n1").strip()
           tmpl = machine.succeed(f"grep -o '/nix/store/[^ ]*-home' {script} | head -n1").strip()
           machine.succeed(f"grep -qx 'psk=$HOME_PSK' {tmpl}")
-          machine.fail(f"grep -q 'hunter22' {tmpl}")
+          machine.fail(f"grep -qF '{psk}' {tmpl}")
+          # And the PSK is in no store path the unit references at all.
+          machine.fail(f"grep -rqF '{psk}' $(grep -o '/nix/store/[^ ]*' {script} | sort -u)")
 
-      print("network-profiles: keyfile rendered, PSK substituted at boot, store copy holds only $HOME_PSK")
+      print("network-profiles: keyfiles rendered, PSK substituted at boot only, store holds $HOME_PSK")
     '';
   };
 in

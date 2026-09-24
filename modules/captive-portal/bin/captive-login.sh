@@ -6,8 +6,9 @@
 # Environment (see captive-portal-watch.sh for where it comes from):
 #   CAPTIVE_LOGIN_URL          required
 #   CAPTIVE_PROBE_URI          shown in the banner only
-#   CAPTIVE_OPENER             default xdg-open
+#   CAPTIVE_OPENER             default captive-portal-open (isolated profile)
 #   CAPTIVE_TERMINAL_BROWSER   default w3m
+#   CAPTIVE_ALLOW_ROOT         test seam only: skip the root refusal
 #
 # Expected on PATH: nmcli, resolvectl, notify-send, setsid, sed.
 set -euo pipefail
@@ -15,8 +16,14 @@ export LC_ALL=C
 
 : "${CAPTIVE_LOGIN_URL:?CAPTIVE_LOGIN_URL is required}"
 : "${CAPTIVE_PROBE_URI:=<unset>}"
-: "${CAPTIVE_OPENER:=xdg-open}"
+: "${CAPTIVE_OPENER:=captive-portal-open}"
 : "${CAPTIVE_TERMINAL_BROWSER:=w3m}"
+
+# Both paths render attacker-controlled HTML; neither may do it as root.
+if [ "$(id -u)" -eq 0 ] && [ "${CAPTIVE_ALLOW_ROOT:-0}" != 1 ]; then
+  echo "captive-login: refusing to open the portal page as root; run this as your own user (no sudo)." >&2
+  exit 3
+fi
 
 force=0
 case "${1:-}" in

@@ -10,8 +10,11 @@
 #      probe. A portal intercepts it, the body mismatches, NM flips to PORTAL.
 #   2. captive-portal-watch (user service) — follows `nmcli monitor` and, on a
 #      transition into PORTAL, notifies and opens a plain-HTTP page so the
-#      portal's redirect lands in the default browser. Hyprland has no
-#      GNOME-Shell-style portal helper, so without this the state is silent.
+#      portal's redirect lands in a browser. Hyprland has no GNOME-Shell-style
+#      portal helper, so without this the state is silent. The page is
+#      attacker-controlled, so captive-portal-open puts it in a throwaway
+#      browser profile (browser.kind), rate-limited (minInterval), never as
+#      root.
 #
 # Plus `captive-login` on PATH for the manual path (re-check, show DNS state,
 # open the page) — for when the watcher is off or a portal slips past the
@@ -32,7 +35,12 @@ let
   probeUri = "http://${cfg.probe.host}${cfg.probe.path}";
   loginHost = lib.head (lib.splitString "/" (lib.removePrefix "http://" cfg.loginUrl));
 
-  runtimeInputs = with pkgs; [ networkmanager libnotify xdg-utils util-linux coreutils ];
+  runtimeInputs = with pkgs; [ networkmanager libnotify xdg-utils util-linux coreutils findutils ];
+
+  browserBin =
+    if cfg.browser.kind == "firefox" then lib.getExe cfg.browser.package
+    else if cfg.browser.kind == "chromium" then lib.getExe cfg.browser.package
+    else "";
 
   # One wrapper per script: export the configuration, exec the file.
   wrap = name: extraInputs: pkgs.writeShellApplication {
@@ -41,14 +49,20 @@ let
     text = ''
       export CAPTIVE_LOGIN_URL=${lib.escapeShellArg cfg.loginUrl}
       export CAPTIVE_PROBE_URI=${lib.escapeShellArg probeUri}
-      export CAPTIVE_OPENER=${lib.escapeShellArg (if cfg.opener == null then "xdg-open" else cfg.opener)}
       export CAPTIVE_TERMINAL_BROWSER=${lib.escapeShellArg (lib.getExe cfg.terminalBrowser)}
+      export CAPTIVE_MIN_INTERVAL=${toString cfg.minInterval}
+      export CAPTIVE_BROWSER_KIND=${lib.escapeShellArg cfg.browser.kind}
+      export CAPTIVE_BROWSER_BIN=${lib.escapeShellArg browserBin}
+      export CAPTIVE_BROWSER_CMD=${lib.escapeShellArg (if cfg.browser.command == null then "" else cfg.browser.command)}
       exec ${pkgs.bash}/bin/bash ${./bin + "/${name}.sh"} "$@"
     '';
   };
 
-  watcher = wrap "captive-portal-watch" [ ];
-  login = wrap "captive-login" [ pkgs.systemd ];
+  opener = wrap "captive-portal-open" [ ];
+  # The watcher and captive-login reach the launcher by name; its wrapper is
+  # a runtime input of theirs, so CAPTIVE_OPENER's default resolves on PATH.
+  watcher = wrap "captive-portal-watch" [ opener ];
+  login = wrap "captive-login" [ pkgs.systemd opener ];
   nmtuiPortal = wrap "nmtui-portal" [ login ];
 in
 {
@@ -94,14 +108,40 @@ in
       '';
     };
 
-    opener = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      example = lib.literalExpression ''"''${pkgs.firefox}/bin/firefox"'';
+    browser = {
+      kind = lib.mkOption {
+        type = lib.types.enum [ "firefox" "chromium" "command" "xdg-open" ];
+        default = "firefox";
+        description = ''
+          How the login page is opened in a graphical session. The page is
+          attacker-controlled plaintext HTTP, so `firefox` and `chromium`
+          open it in a THROWAWAY profile under $XDG_RUNTIME_DIR (no cookies,
+          sessions, extensions or history of the everyday browser), the way
+          GNOME's portal helper uses a disposable WebKit view. `command` runs
+          `browser.command` with the URL and adds no isolation; `xdg-open` is
+          the everyday default browser, everyday profile — opt in knowingly.
+        '';
+      };
+      package = lib.mkOption {
+        type = lib.types.package;
+        default = if cfg.browser.kind == "chromium" then pkgs.chromium else pkgs.firefox;
+        defaultText = lib.literalExpression "pkgs.firefox, or pkgs.chromium for kind = \"chromium\"";
+        description = "Browser used for kind `firefox` or `chromium` (Brave and Ungoogled Chromium are `chromium`).";
+      };
+      command = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = "Command handed the URL for kind `command`. The VM gate uses a script that records the URL.";
+      };
+    };
+
+    minInterval = lib.mkOption {
+      type = lib.types.ints.unsigned;
+      default = 60;
       description = ''
-        Command handed the login URL in a graphical session. `null` means
-        `xdg-open`, i.e. the user's default browser. The VM gate points this at
-        a script that records the URL instead of opening it.
+        Seconds the watcher waits before opening a second window. A hostile
+        gateway can bounce NetworkManager between full and portal at will;
+        this bounds it to one window per interval (captive-login still works).
       '';
     };
 
@@ -134,6 +174,10 @@ in
           message = "custom.network.captivePortal.loginUrl must be plain http:// — portals cannot redirect HTTPS.";
         }
         {
+          assertion = cfg.browser.kind != "command" || cfg.browser.command != null;
+          message = "custom.network.captivePortal.browser.kind = \"command\" needs browser.command.";
+        }
+        {
           assertion = config.networking.networkmanager.enable;
           message = "custom.network.captivePortal needs networking.networkmanager.enable (the probe is NM's own).";
         }
@@ -148,13 +192,17 @@ in
 
       # The watcher is on PATH for debugging (`captive-portal-watch` in a
       # terminal shows the transitions it sees) and for the VM gate.
-      environment.systemPackages = [ login nmtuiPortal watcher ];
+      environment.systemPackages = [ login nmtuiPortal watcher opener ];
 
       systemd.user.services.captive-portal-watch = lib.mkIf cfg.autoOpen {
         description = "Open the captive portal login page when NetworkManager detects one";
         after = [ "graphical-session.target" ];
         partOf = [ "graphical-session.target" ];
         wantedBy = [ "graphical-session.target" ];
+        # No start-rate limit: a NetworkManager that is down for a while
+        # would otherwise trip the default 5-in-10s burst and leave this unit
+        # failed until the next login, i.e. silently off on the next portal.
+        unitConfig.StartLimitIntervalSec = 0;
         serviceConfig = {
           ExecStart = lib.getExe watcher;
           # nmcli monitor exits when NetworkManager restarts; follow it back up.

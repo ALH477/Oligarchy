@@ -35,8 +35,17 @@ export CAPTIVE_OPENER="$FAKES/fake-open"
 export CAPTIVE_TERMINAL_BROWSER="$FAKES/fake-tui"
 export CAPTIVE_PROBE_TRIES=3
 export CAPTIVE_PROBE_DELAY=0
+# The state-machine checks want every portal to open; the rate limit has
+# its own check below.
+export CAPTIVE_MIN_INTERVAL=0
+# This runner may itself run as root (a dev container); the root refusal is
+# checked explicitly with a fake `id`, not by who runs the suite.
+export CAPTIVE_ALLOW_ROOT=1
+export FAKE_BROWSER_CALLS=$work/browser-calls
+export XDG_RUNTIME_DIR=$work/runtime
+mkdir -p "$XDG_RUNTIME_DIR"
 unset DISPLAY WAYLAND_DISPLAY
-: > "$FAKE_NM_EVENTS" ; : > "$FAKE_NM_CALLS" ; : > "$FAKE_OPENED" ; : > "$FAKE_TUI_OPENED"
+: > "$FAKE_NM_EVENTS" ; : > "$FAKE_NM_CALLS" ; : > "$FAKE_OPENED" ; : > "$FAKE_TUI_OPENED" ; : > "$FAKE_BROWSER_CALLS"
 
 ran=0
 fail=0
@@ -103,6 +112,31 @@ check "watcher: unrelated monitor lines are ignored" \
 
 check "watcher: still running after the event stream" \
   kill -0 "$wpid"
+kill -- -"$wpid" 2>/dev/null || true
+unset wpid
+
+# ── watcher: rate limit ────────────────────────────────────────────────────
+# A hostile gateway bouncing NM between full and portal must not get a new
+# window per bounce.
+: > "$FAKE_OPENED"; : > "$FAKE_NM_EVENTS"
+echo portal > "$FAKE_NM_STATE"
+CAPTIVE_MIN_INTERVAL=3 setsid bash "$BIN/captive-portal-watch.sh" > "$work/watch2.log" 2>&1 &
+wpid=$!
+check "watcher/ratelimit: first portal opens" \
+  wait_lines "$FAKE_OPENED" 1
+event full
+event portal
+event full
+event portal
+check "watcher/ratelimit: full/portal bounces inside the interval do not reopen" \
+  settled_lines "$FAKE_OPENED" 1
+check "watcher/ratelimit: the suppressed open is logged" \
+  grep -q 'not reopening' "$work/watch2.log"
+sleep 3
+event full
+event portal
+check "watcher/ratelimit: a portal after the interval opens again" \
+  wait_lines "$FAKE_OPENED" 2
 kill -- -"$wpid" 2>/dev/null || true
 unset wpid
 
@@ -179,11 +213,65 @@ out=$(FAKE_NMTUI_EXIT=1 bash "$BIN/nmtui-portal.sh")
 check "nmtui-portal: a failing nmtui still probes" \
   grep -qx 'Online.' <<< "$out"
 
+# ── captive-portal-open: isolation ─────────────────────────────────────────
+open_sh() { bash "$BIN/captive-portal-open.sh" "$@"; }
+profile_dir() { sed -n 's/.*--profile \([^ ]*\).*/\1/p' "$FAKE_BROWSER_CALLS" | tail -n 1; }
+
+: > "$FAKE_BROWSER_CALLS"
+CAPTIVE_BROWSER_KIND=firefox CAPTIVE_BROWSER_BIN="$FAKES/firefox" open_sh "$CAPTIVE_LOGIN_URL"
+check "open/firefox: launches firefox with the URL" \
+  grep -q "^firefox .* $CAPTIVE_LOGIN_URL\$" "$FAKE_BROWSER_CALLS"
+check "open/firefox: never hands the URL to the running instance" \
+  grep -q -- '--no-remote --new-instance' "$FAKE_BROWSER_CALLS"
+check "open/firefox: private window" \
+  grep -q -- '--private-window' "$FAKE_BROWSER_CALLS"
+p1=$(profile_dir)
+check "open/firefox: throwaway profile lives under XDG_RUNTIME_DIR" \
+  test "''${p1#"$XDG_RUNTIME_DIR"/captive-portal.}" != "$p1"
+check "open/firefox: profile dir exists and is 0700" \
+  test "$(stat -c %a "$p1")" = 700
+CAPTIVE_BROWSER_KIND=firefox CAPTIVE_BROWSER_BIN="$FAKES/firefox" open_sh "$CAPTIVE_LOGIN_URL"
+p2=$(profile_dir)
+check "open/firefox: every open gets a fresh profile" \
+  test "$p1" != "$p2"
+
+: > "$FAKE_BROWSER_CALLS"
+CAPTIVE_BROWSER_KIND=chromium CAPTIVE_BROWSER_BIN="$FAKES/chromium" open_sh "$CAPTIVE_LOGIN_URL"
+check "open/chromium: incognito in a throwaway user-data-dir" \
+  grep -q -- "--user-data-dir=$XDG_RUNTIME_DIR/captive-portal\.[^ ]* --incognito" "$FAKE_BROWSER_CALLS"
+check "open/chromium: extensions and sync off" \
+  grep -q -- '--disable-extensions --disable-sync' "$FAKE_BROWSER_CALLS"
+
+: > "$FAKE_OPENED"
+CAPTIVE_BROWSER_KIND=command CAPTIVE_BROWSER_CMD="$FAKES/fake-open" open_sh "$CAPTIVE_LOGIN_URL"
+check "open/command: runs the configured command with the URL" \
+  grep -qx "$CAPTIVE_LOGIN_URL" "$FAKE_OPENED"
+check "open/command: leaves no stray profile dir" \
+  test "$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -name 'captive-portal.*' | wc -l)" -eq 3
+
+refuses_https() { ! CAPTIVE_BROWSER_KIND=command CAPTIVE_BROWSER_CMD="$FAKES/fake-open" open_sh "https://portal.example/" 2>/dev/null; }
+check "open: refuses a non-http URL" refuses_https
+refuses_unknown_kind() { ! CAPTIVE_BROWSER_KIND=lynx open_sh "$CAPTIVE_LOGIN_URL" 2>/dev/null; }
+check "open: refuses an unknown browser kind" refuses_unknown_kind
+
+# ── root refusal (fake `id` says 0; CAPTIVE_ALLOW_ROOT unset) ──────────────
+as_root() { env -u CAPTIVE_ALLOW_ROOT PATH="$FAKES/rootid:$PATH" "$@"; }
+open_refuses_root() { ! as_root bash "$BIN/captive-portal-open.sh" "$CAPTIVE_LOGIN_URL" 2>/dev/null; }
+check "open: refuses to run as root" open_refuses_root
+: > "$FAKE_TUI_OPENED"
+echo portal > "$FAKE_NM_STATE"
+login_refuses_root() { ! as_root bash "$BIN/captive-login.sh" 2>/dev/null; }
+check "login: refuses to run as root" login_refuses_root
+check "login: root refusal opened nothing" \
+  test "$(lines "$FAKE_TUI_OPENED")" -eq 0
+login_root_exit3() { as_root bash "$BIN/captive-login.sh" 2>/dev/null; test $? -eq 3; }
+check "login: root refusal exits 3" login_root_exit3
+
 # ── contract ───────────────────────────────────────────────────────────────
 no_url() { ! CAPTIVE_LOGIN_URL='' bash "$BIN/captive-portal-watch.sh" 2>/dev/null; }
 check "watch: refuses to run without CAPTIVE_LOGIN_URL" no_url
 
-expected=29
+expected=49
 echo
 echo "captive-portal-tests: $ran checks run, expected $expected"
 if [ "$ran" -ne "$expected" ]; then
