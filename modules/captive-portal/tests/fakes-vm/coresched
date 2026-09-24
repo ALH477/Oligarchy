@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Fake coresched: the availability probe succeeds unless FAKE_CORESCHED_OK=0.
+echo "coresched $*" >> "$FAKE_LOG"
+[ "${FAKE_CORESCHED_OK:-1}" = 1 ]

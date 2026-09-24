@@ -254,6 +254,22 @@ check "open: refuses a non-http URL" refuses_https
 refuses_unknown_kind() { ! CAPTIVE_BROWSER_KIND=lynx open_sh "$CAPTIVE_LOGIN_URL" 2>/dev/null; }
 check "open: refuses an unknown browser kind" refuses_unknown_kind
 
+# ── captive-portal-open: kind=microvm ──────────────────────────────────────
+: > "$FAKE_BROWSER_CALLS"; : > "$FAKE_NM_CALLS"
+FAKE_SYSTEMCTL_OK=1 CAPTIVE_BROWSER_KIND=microvm CAPTIVE_BROWSER_BIN="$FAKES/firefox" open_sh "$CAPTIVE_LOGIN_URL"
+check "open/microvm: starts the portal VM unit" \
+  grep -qx 'systemctl start captive-vm.service' "$FAKE_NM_CALLS"
+check "open/microvm: a started VM opens no host browser" \
+  test "$(lines "$FAKE_BROWSER_CALLS")" -eq 0
+printf '{"state":"refused","reason":"manifest signature does not verify"}' > "$work/vm-status"
+: > "$FAKE_NM_CALLS"
+FAKE_SYSTEMCTL_OK=0 CAPTIVE_VM_STATUS="$work/vm-status" CAPTIVE_BROWSER_KIND=microvm \
+  CAPTIVE_BROWSER_BIN="$FAKES/firefox" open_sh "$CAPTIVE_LOGIN_URL" 2> "$work/open.err"
+check "open/microvm: a VM that will not start falls back to the isolated profile" \
+  grep -q -- '--no-remote --new-instance --profile' "$FAKE_BROWSER_CALLS"
+check "open/microvm: the fallback says why" \
+  grep -q 'manifest signature does not verify' "$FAKE_NM_CALLS"
+
 # ── root refusal (fake `id` says 0; CAPTIVE_ALLOW_ROOT unset) ──────────────
 as_root() { env -u CAPTIVE_ALLOW_ROOT PATH="$FAKES/rootid:$PATH" "$@"; }
 open_refuses_root() { ! as_root bash "$BIN/captive-portal-open.sh" "$CAPTIVE_LOGIN_URL" 2>/dev/null; }
@@ -271,7 +287,7 @@ check "login: root refusal exits 3" login_root_exit3
 no_url() { ! CAPTIVE_LOGIN_URL='' bash "$BIN/captive-portal-watch.sh" 2>/dev/null; }
 check "watch: refuses to run without CAPTIVE_LOGIN_URL" no_url
 
-expected=49
+expected=53
 echo
 echo "captive-portal-tests: $ran checks run, expected $expected"
 if [ "$ran" -ne "$expected" ]; then

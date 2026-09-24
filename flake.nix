@@ -1599,9 +1599,12 @@
         captive-portal-tests =
           pkgs.runCommand "captive-portal-tests"
             {
-              nativeBuildInputs = [ pkgs.bash pkgs.shellcheck pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.gnused pkgs.util-linux ];
+              nativeBuildInputs = [
+                pkgs.bash pkgs.shellcheck pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.gnused
+                pkgs.util-linux pkgs.jq pkgs.openssh pkgs.python3
+              ];
               meta = with nixpkgs.lib; {
-                description = "Assert the captive-portal scripts' state machine against a fake nmcli; bash, no KVM";
+                description = "Assert the captive-portal scripts and the portal-VM orchestrator against fakes; bash, no KVM";
                 license = licenses.bsd3;
                 platforms = platforms.linux;
               };
@@ -1617,6 +1620,11 @@
               echo "shellcheck: clean" | tee $out/report.txt
 
               bash src/tests/run.sh 2>&1 | tee -a $out/report.txt
+              test "''${PIPESTATUS[0]}" -eq 0
+
+              # The portal-VM orchestrator (Design F): real jq, sha256sum and
+              # ssh-keygen; fakes for everything that needs root or hardware.
+              bash src/tests/vm-run.sh 2>&1 | tee -a $out/report.txt
               test "''${PIPESTATUS[0]}" -eq 0
             '';
 
@@ -1755,7 +1763,12 @@
       # ══════════════════════════════════════════════════════════════════════
       // (
         let
-          vmTests = import ./tests { inherit pkgs; inherit (nixpkgs) lib; };
+          vmTests = import ./tests {
+            inherit pkgs;
+            inherit (nixpkgs) lib;
+            # The portal-VM tests build a guest with microvm.nix's guest module.
+            microvm = oligarchy-plugins.inputs.microvm;
+          };
         in
         nixpkgs.lib.mapAttrs'
           (name: drv: nixpkgs.lib.nameValuePair "test-${name}" drv)
@@ -2102,6 +2115,25 @@
             withHttps = override { custom.network.captivePortal.loginUrl = lib'.mkForce "https://neverssl.com/"; };
             noAuto = override { custom.network.captivePortal.autoOpen = lib'.mkForce false; };
 
+            # Design F, as the shipped config would run it with kind = microvm.
+            withVm = override { custom.network.captivePortal.browser.kind = lib'.mkForce "microvm"; };
+            vmCfg = withVm.custom.network.captivePortal.microvm;
+            g = vmCfg.build.guest.config;
+            gStore = g.fileSystems."/nix/store" or { };
+            vmSvc = withVm.systemd.services.captive-vm or null;
+            viewer = withVm.systemd.services.captive-vm-viewer or null;
+            dspCore = override {
+              custom.network.captivePortal.browser.kind = lib'.mkForce "microvm";
+              custom.network.captivePortal.microvm.cpu = lib'.mkForce 1;
+              boot.kernelParams = [ "isolcpus=0,1" ];
+            };
+            storeKey = override {
+              custom.network.captivePortal.browser.kind = lib'.mkForce "microvm";
+              custom.network.captivePortal.microvm.publicKey = lib'.mkForce "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeFakeFakeFakeFakeFakeFakeFakeFakeFake";
+              custom.network.captivePortal.microvm.signingKeyFile = lib'.mkForce "/nix/store/0000000000000000000000000000000-key";
+            };
+            failedWith = cfg: frag: lib'.any (a: !a.assertion && lib'.hasInfix frag a.message) cfg.assertions;
+
             cp = base.custom.network.captivePortal;
             conn = base.networking.networkmanager.settings.connectivity or { };
             loginHost = lib'.head (lib'.splitString "/" (lib'.removePrefix "http://" cp.loginUrl));
@@ -2134,6 +2166,27 @@
                 (a: !a.assertion && lib'.hasInfix "must be plain http://" a.message)
                 withHttps.assertions;
               autoOpenOffRemovesUnit = !(noAuto.systemd.user.services ? captive-portal-watch);
+
+              # ── Design F: the portal microVM ──
+              # Off by default until its gates are green on the builder.
+              vmOffByDefault = cp.browser.kind != "microvm" && !(base.systemd.services ? captive-vm);
+              vmGuestModuleWired = vmCfg.guestModule != null;
+              vmGuestStoreIsVerity = (gStore.device or "") == "/dev/mapper/nixstore" && (gStore.fsType or "") == "erofs";
+              vmGuestVerityInInitrd = g.boot.initrd.systemd.dmVerity.enable && g.boot.initrd.systemd.services ? captive-verity;
+              vmGuestNoWritableDisk = g.microvm.volumes == [ ] && g.microvm.shares == [ ] && g.microvm.writableStoreOverlay == null;
+              vmGuestNoVsock = g.microvm.vsock.cid == null;
+              vmGuestNoSsh = !g.services.openssh.enable;
+              vmGuestNoNix = !g.nix.enable;
+              vmGuestNoDocker = !(g.virtualisation.docker.enable or false);
+              vmGuestNoLockdownClaim = !(lib'.any (p: lib'.hasPrefix "lockdown=" p) g.boot.kernelParams);
+              vmOrchestratorNotify = (vmSvc.serviceConfig.Type or null) == "notify";
+              vmOrchestratorBounded = !(lib'.elem "CAP_SYS_ADMIN" (vmSvc.serviceConfig.CapabilityBoundingSet or [ "CAP_SYS_ADMIN" ]));
+              vmViewerOffline = (viewer.serviceConfig.PrivateNetwork or false) == true;
+              vmViewerOwnVt = lib'.hasPrefix "/dev/tty" (viewer.serviceConfig.TTYPath or "");
+              vmTapUnmanaged = lib'.elem "interface-name:cp0" withVm.networking.networkmanager.unmanaged;
+              vmPolkitScoped = lib'.hasInfix "captive-vm.service" withVm.security.polkit.extraConfig;
+              vmDspCoreRefused = failedWith dspCore "isolated (isolcpus)";
+              vmStoreKeyRefused = failedWith storeKey "must not be a Nix store path";
             });
           in
           pkgs.runCommand "captive-portal-contract"
@@ -2176,9 +2229,142 @@
               want rateLimited
               want httpsRefused
               want autoOpenOffRemovesUnit
+              for k in vmOffByDefault vmGuestModuleWired vmGuestStoreIsVerity vmGuestVerityInInitrd \
+                vmGuestNoWritableDisk vmGuestNoVsock vmGuestNoSsh vmGuestNoNix vmGuestNoDocker \
+                vmGuestNoLockdownClaim vmOrchestratorNotify vmOrchestratorBounded vmViewerOffline \
+                vmViewerOwnVt vmTapUnmanaged vmPolkitScoped vmDspCoreRefused vmStoreKeyRefused; do
+                want "$k"
+              done
               echo "uri: $(jq -r .uri "$j")" >> $out/report.txt
               [ "$fail" -eq 0 ] || { echo "captive-portal-contract: FAILED" >&2; exit 1; }
-              echo "captive-portal-contract: 17 checks passed" | tee -a $out/report.txt
+              echo "captive-portal-contract: 35 checks passed" | tee -a $out/report.txt
+            '';
+
+        # ════════════════════════════════════════════════════════════════════════
+        # Portal-VM activation reference — Design F, the build half.
+        #
+        # Builds the guest image nixosConfigurations.nixos would boot with
+        # browser.kind = "microvm" (Firefox closure + erofs: minutes, disk, no
+        # KVM) and asserts, against the REAL artifacts:
+        #   - the verity tree verifies the store disk, and re-deriving the tree
+        #     from the disk with the manifest's own recipe gives the same root:
+        #     the reference is reproducible from the image, not just recorded
+        #   - the launcher's baked reference is sha256(manifest.json)
+        #   - kernel/initrd/tree/policy hashes in the manifest match the files
+        #   - the real launcher's `verify` accepts it, and refuses a manifest
+        #     that is one byte off (a copy, via a patched wrapper env)
+        #   - a manifest signature from a throwaway key verifies; a tampered
+        #     copy, another namespace and another key do not
+        #   - the cmdline claims no lockdown (a no-op on this kernel) and does
+        #     not already carry captive.verity=
+        # Tamper detection of dm-verity itself is exercised on a small image
+        # with the same flags, since flipping bytes in a 1 GiB copy buys nothing.
+        #
+        # Determinism across builds: `nix build .#captive-vm-image --rebuild`
+        # rebuilds the manifest and fails if it differs.
+        #
+        # Run on demand:  nix build .#captive-vm-reference
+        # ════════════════════════════════════════════════════════════════════════
+        captive-vm-image =
+          ((self.nixosConfigurations.nixos.extendModules {
+            modules = [{ custom.network.captivePortal.browser.kind = nixpkgs.lib.mkForce "microvm"; }];
+          }).config.custom.network.captivePortal.microvm.build.manifest);
+
+        captive-vm-reference =
+          let
+            build = (self.nixosConfigurations.nixos.extendModules {
+              modules = [{ custom.network.captivePortal.browser.kind = nixpkgs.lib.mkForce "microvm"; }];
+            }).config.custom.network.captivePortal.microvm.build;
+            m = build.manifest;
+          in
+          pkgs.runCommand "captive-vm-reference"
+            {
+              nativeBuildInputs = with pkgs; [ cryptsetup jq openssh coreutils gnused gnugrep erofs-utils ];
+              meta = with nixpkgs.lib; {
+                description = "Assert the portal-VM manifest is reproducible from its image and the launcher enforces it";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              M=${m}/manifest.json
+              fail=0
+              ok() { echo "PASS  $1" | tee -a $out/report.txt; }
+              no() { echo "FAIL  $1" | tee -a $out/report.txt >&2; fail=1; }
+              t() { local n=$1; shift; if "$@"; then ok "$n"; else no "$n"; fi; }
+              f() { local n=$1; shift; if "$@"; then no "$n"; else ok "$n"; fi; }
+              q() { jq -er "$1" "$M"; }
+              s() { sha256sum "$1" | cut -c1-64; }
+
+              root=$(q .store.verity.root)
+              store=$(q .store.path)
+              tree=$(q .store.verity.hashTree)
+              t "verity: the tree verifies the store disk" veritysetup verify "$store" "$tree" "$root"
+              salt=$(s "$store")
+              uuid=$(printf '%s' "$salt" | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12}).*/\1-\2-\3-\4-\5/')
+              veritysetup format --hash=sha256 --data-block-size=4096 --hash-block-size=4096 \
+                --salt="$salt" --uuid="$uuid" "$store" again.img > again.txt
+              t "verity: re-deriving from the disk gives the manifest's root" \
+                test "$(sed -n 's/^Root hash:[[:space:]]*//p' again.txt)" = "$root"
+              t "verity: and a byte-identical tree" cmp -s again.img "$tree"
+
+              ref=$(cat ${m}/reference)
+              t "reference: is sha256(manifest.json)" test "$ref" = "$(s "$M")"
+              t "reference: is the value baked into the launcher" \
+                grep -q "CVM_REFERENCE.*$ref" ${build.launcher}/bin/captive-vm-run
+              t "hashes: kernel" test "$(s "$(q .kernel.path)")" = "$(q .kernel.sha256)"
+              t "hashes: initrd" test "$(s "$(q .initrd.path)")" = "$(q .initrd.sha256)"
+              t "hashes: hash tree" test "$(s "$tree")" = "$(q .store.verity.hashTreeSha256)"
+              t "hashes: egress policy" test "$(s "$(q .policy.nft)")" = "$(q .policy.nftSha256)"
+              f "cmdline: claims no lockdown (a no-op on the stock kernel)" grep -q 'lockdown=' <<< "$(q .cmdline)"
+              f "cmdline: does not carry captive.verity= itself" grep -q 'captive.verity=' <<< "$(q .cmdline)"
+              t "cmdline: boots the guest's own init" grep -q 'init=/nix/store/' <<< "$(q .cmdline)"
+
+              # The real launcher, pointed at a scratch run dir and a stand-in
+              # /dev/kvm (the sandbox has none).
+              mkdir -p dev run
+              ln -s /dev/null dev/kvm
+              t "launcher: verify accepts the built image" \
+                env CVM_RUNDIR=$PWD/run CVM_DEVDIR=$PWD/dev ${build.launcher}/bin/captive-vm-run verify
+              cp "$M" m2.json
+              sed -i 's/reboot=t/reboot=T/' m2.json
+              t "launcher: the tampered copy really differs" test "$(s m2.json)" != "$ref"
+              # Same script, same reference, same env as the wrapper — only the
+              # manifest differs, so a refusal can only be the reference check.
+              f "launcher: refuses a manifest one byte off" \
+                env CVM_RUNDIR=$PWD/run CVM_DEVDIR=$PWD/dev CVM_MANIFEST=$PWD/m2.json \
+                CVM_REFERENCE="$ref" CVM_QEMU=/nonexistent \
+                bash ${./modules/captive-portal/bin/captive-vm-run.sh} verify
+
+              ssh-keygen -q -t ed25519 -N "" -f key
+              ssh-keygen -q -t ed25519 -N "" -f other
+              ssh-keygen -Y sign -q -f key -n oligarchy-captive-vm < "$M" > sig
+              printf 'captive-vm namespaces="oligarchy-captive-vm" %s\n' "$(cut -d' ' -f1,2 key.pub)" > allowed
+              printf 'captive-vm namespaces="oligarchy-captive-vm" %s\n' "$(cut -d' ' -f1,2 other.pub)" > allowed-other
+              v() { ssh-keygen -Y verify -f "$1" -I captive-vm -n "$2" -s sig < "$3" > /dev/null 2>&1; }
+              t "signature: verifies" v allowed oligarchy-captive-vm "$M"
+              f "signature: a tampered manifest does not verify" v allowed oligarchy-captive-vm m2.json
+              f "signature: another namespace does not verify" v allowed other-namespace "$M"
+              f "signature: another key does not verify" v allowed-other oligarchy-captive-vm "$M"
+
+              # dm-verity's own tamper detection, with the manifest's exact flags.
+              mkdir -p tiny/store
+              for i in $(seq 1 64); do head -c $((i * 997)) /dev/urandom > tiny/store/f$i; done
+              mkfs.erofs -T 0 --all-root tiny.erofs tiny/store > /dev/null
+              ts=$(s tiny.erofs)
+              tu=$(printf '%s' "$ts" | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12}).*/\1-\2-\3-\4-\5/')
+              veritysetup format --hash=sha256 --data-block-size=4096 --hash-block-size=4096 \
+                --salt="$ts" --uuid="$tu" tiny.erofs tiny.tree > tiny.txt
+              troot=$(sed -n 's/^Root hash:[[:space:]]*//p' tiny.txt)
+              t "verity/tamper: clean image verifies" veritysetup verify tiny.erofs tiny.tree "$troot"
+              printf '\x55' | dd of=tiny.erofs bs=1 seek=$(( $(stat -c %s tiny.erofs) / 2 + 7 )) conv=notrunc status=none
+              f "verity/tamper: one flipped byte is caught" veritysetup verify tiny.erofs tiny.tree "$troot"
+
+              cp "$M" $out/manifest.json
+              echo "reference: $ref" | tee -a $out/report.txt
+              [ "$fail" -eq 0 ] || { echo "captive-vm-reference: FAILED" >&2; exit 1; }
+              echo "captive-vm-reference: all checks passed" | tee -a $out/report.txt
             '';
 
         # ════════════════════════════════════════════════════════════════════════

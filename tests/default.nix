@@ -1,4 +1,4 @@
-{ lib, pkgs, ... }:
+{ lib, pkgs, microvm ? null, ... }:
 
 let
   # ── Strict egress: standalone inet table, static/dyn set matching ──────────
@@ -896,7 +896,236 @@ let
       print("network-profiles: keyfiles rendered, PSK substituted at boot only, store holds $HOME_PSK")
     '';
   };
+
+  # ── Portal-VM egress policy, empirically (no nested KVM) ────────────────────
+  # modules/captive-portal/vm/policy.nft loaded against network namespaces:
+  # a "guest" behind cp0 and a "venue" behind the uplink. 14 checks, the last
+  # two anti-vacuity (with the table gone the drops must turn into successes).
+  # The NixOS firewall is OFF on this node on purpose: its INPUT chain would
+  # otherwise mask the policy's own input drops and the checks would pass
+  # without the policy doing anything.
+  captive-vm-policy = pkgs.testers.runNixOSTest {
+    name = "captive-vm-policy";
+    nodes.machine = { pkgs, ... }: {
+      networking.firewall.enable = false;
+      environment.systemPackages = with pkgs; [ iproute2 nftables curl python3 ];
+    };
+    testScript = ''
+      machine.wait_for_unit("multi-user.target")
+      out = machine.succeed(
+          "bash ${../modules/captive-portal/tests/policy-netns.sh} ${../modules/captive-portal/vm/policy.nft}"
+      )
+      print(out)
+      assert "policy-test: 14 passed, 0 failed" in out, out
+    '';
+  };
+
+  # ── Portal-VM end to end (NESTED KVM) ────────────────────────────────────────
+  # The venue from captive-portal (nginx + dnsmasq, 302 until "logged in"),
+  # and a client running the real module with browser.kind = "microvm": the
+  # opener starts captive-vm.service through polkit as an unprivileged user,
+  # the orchestrator verifies the signed reference, boots the verity-backed
+  # guest in QEMU as captive-vm, and the guest's Firefox shows the login page
+  # on tty7 through cage + wlvncc — asserted by OCR on the client's screen,
+  # which is the only way to prove the framebuffer path end to end. Then the
+  # venue "logs in", NetworkManager reports full, and everything is discarded.
+  # Finally a garbled signature must refuse the VM and the opener must fall
+  # back, naming the reason.
+  #
+  # Needs /dev/kvm INSIDE the client (the builder's nested virt), and is slow:
+  # software rendering in a nested guest. The OCR timeout reflects that.
+  captive-vm = pkgs.testers.runNixOSTest {
+    name = "captive-vm";
+    enableOCR = true;
+
+    nodes = {
+      portal = { config, ... }: {
+        networking.firewall.allowedTCPPorts = [ 53 80 ];
+        networking.firewall.allowedUDPPorts = [ 53 ];
+        systemd.tmpfiles.rules = [ "d /var/lib/portal 0755 root root -" ];
+        services.nginx = {
+          enable = true;
+          virtualHosts.portal = {
+            default = true;
+            locations."= /check_network_status.txt".extraConfig = ''
+              if (!-f /var/lib/portal/open) { return 302 http://login.portal.test/login; }
+              default_type text/plain;
+              return 200 "NetworkManager is online\n";
+            '';
+            locations."= /login".extraConfig = ''
+              default_type text/html;
+              return 200 "<html><body style='background:#fff'><h1 style='font:bold 96px sans-serif'>PORTAL LOGIN PAGE</h1></body></html>\n";
+            '';
+            locations."/".extraConfig = "return 302 http://login.portal.test/login;";
+          };
+        };
+        services.dnsmasq = {
+          enable = true;
+          resolveLocalQueries = false;
+          settings = {
+            interface = "eth1";
+            bind-interfaces = true;
+            no-resolv = true;
+            address = [ "/login.portal.test/${config.networking.primaryIPAddress}" ];
+          };
+        };
+      };
+
+      client = { pkgs, lib, nodes, ... }:
+        let portalIp = nodes.portal.networking.primaryIPAddress; in
+        {
+          imports = [ ../modules/captive-portal ];
+          virtualisation = {
+            memorySize = 4096;
+            cores = 2;
+            qemu.options = [ "-cpu host" ];
+          };
+
+          networking.useDHCP = false;
+          networking.interfaces = lib.mkForce { eth1 = { }; };
+          networking.networkmanager = {
+            enable = true;
+            dns = "systemd-resolved";
+            settings.main.no-auto-default = "*";
+            ensureProfiles.profiles.venue = {
+              connection = { id = "venue"; type = "ethernet"; interface-name = "eth1"; autoconnect = true; };
+              ipv4 = {
+                method = "manual";
+                addresses = "192.168.1.42/24";
+                gateway = portalIp;
+                dns = portalIp;
+                ignore-auto-dns = true;
+              };
+              ipv6.method = "disabled";
+            };
+          };
+          services.resolved = {
+            enable = true;
+            dnssec = "allow-downgrade";
+            fallbackDns = [ "1.1.1.1" "8.8.8.8" ];
+            dnsovertls = "opportunistic";
+          };
+
+          users.users.tester = {
+            isNormalUser = true;
+            extraGroups = [ "networkmanager" ];
+          };
+
+          # TEST-ONLY key pair, generated for this gate and used nowhere else.
+          # It is in the store, which the module refuses for a real key; the
+          # path below is /etc, a copy with mode 0400, so the check is about
+          # the path the service reads, exactly as for a sops secret.
+          environment.etc."captive-vm-test-key" = {
+            mode = "0400";
+            text = ''
+              -----BEGIN OPENSSH PRIVATE KEY-----
+              b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+              QyNTUxOQAAACB9GhQo2U8e/bENIxNnUuZ2Ndqf+NQ8ma199m11PCvLkgAAAJhxbVtzcW1b
+              cwAAAAtzc2gtZWQyNTUxOQAAACB9GhQo2U8e/bENIxNnUuZ2Ndqf+NQ8ma199m11PCvLkg
+              AAAEApENAgHjAfwgdW/zyyvDx0IQEJhAYZ3IbxFyl6x4TViH0aFCjZTx79sQ0jE2dS5nY1
+              2p/41DyZrX32bXU8K8uSAAAAFGNhcHRpdmUtdm0tdGVzdC1vbmx5AQ==
+              -----END OPENSSH PRIVATE KEY-----
+            '';
+          };
+
+          custom.network.captivePortal = {
+            enable = true;
+            probe.host = "portal";
+            probe.interval = 30;
+            loginUrl = "http://login.portal.test/";
+            browser.kind = "microvm";
+            minInterval = 0;
+            microvm = {
+              guestModule = microvm.nixosModules.microvm;
+              users = [ "tester" ];
+              probeIntervalSec = 5;
+              timeoutSec = 500;
+              framebuffer = { width = 1280; height = 800; };
+              # No GPU in the client: cage on bochs-drm renders on the CPU.
+              viewerEnvironment = { WLR_RENDERER = "pixman"; WLR_NO_HARDWARE_CURSORS = "1"; };
+              debug = true;
+              publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH0aFCjZTx79sQ0jE2dS5nY12p/41DyZrX32bXU8K8uS";
+              signingKeyFile = "/etc/captive-vm-test-key";
+            };
+          };
+
+          environment.systemPackages = [ pkgs.jq pkgs.procps ];
+        };
+    };
+
+    testScript = ''
+      start_all()
+      portal.wait_for_unit("nginx.service", timeout=120)
+      portal.wait_for_unit("dnsmasq.service", timeout=120)
+      client.wait_for_unit("NetworkManager-ensure-profiles.service", timeout=180)
+      client.wait_until_succeeds("nmcli -t -g CONNECTIVITY general | grep -qx portal", timeout=180)
+      client.succeed("test -c /dev/kvm")
+
+      with subtest("the manifest is signed at activation"):
+          client.wait_for_unit("captive-vm-sign.service", timeout=120)
+          client.succeed("test -s /var/lib/captive-portal/manifest.sig")
+          client.succeed("captive-vm-run verify")
+
+      with subtest("an unprivileged user starts the portal VM through the opener"):
+          client.succeed("su - tester -c 'captive-portal-open http://login.portal.test/'")
+          client.wait_for_unit("captive-vm.service", timeout=120)
+          client.wait_for_unit("captive-vm-qemu.service", timeout=60)
+          client.wait_for_unit("captive-vm-viewer.service", timeout=60)
+          client.succeed("test \"$(fgconsole)\" = 7")
+
+      with subtest("the guest mounted its store through dm-verity"):
+          client.wait_until_succeeds(
+              "grep -q 'verity-protected Nix store' /run/captive-vm/ctl/serial.log", timeout=240
+          )
+
+      with subtest("the guest's login page reaches the screen through the VT viewer"):
+          client.wait_for_text("PORTAL LOGIN PAGE", timeout=480)
+
+      with subtest("the venue saw the guest's browser at the HOST's address"):
+          portal.wait_until_succeeds("grep -q Firefox /var/log/nginx/access.log", timeout=60)
+          portal.succeed("grep Firefox /var/log/nginx/access.log | grep -q '^192.168.1.42 '")
+
+      with subtest("QEMU runs as captive-vm, with no privileges and seccomp on"):
+          pid = client.succeed("systemctl show -p MainPID --value captive-vm-qemu.service").strip()
+          status = client.succeed(f"cat /proc/{pid}/status")
+          uid = client.succeed("id -u captive-vm").strip()
+          assert f"Uid:\t{uid}\t" in status, status
+          assert "NoNewPrivs:\t1" in status, status
+          assert "CapEff:\t0000000000000000" in status, status
+          assert "Seccomp:\t2" in status, status
+
+      with subtest("the run's egress table is loaded against the uplink"):
+          client.succeed("nft list table inet captive_vm | grep -q 'oifname \"eth1\"'")
+
+      with subtest("logging in at the venue ends the run and discards everything"):
+          portal.succeed("touch /var/lib/portal/open")
+          client.wait_until_fails("systemctl is-active captive-vm.service", timeout=180)
+          client.fail("ip link show cp0")
+          client.fail("nft list table inet captive_vm")
+          client.fail("systemctl is-active captive-vm-qemu.service")
+          client.fail("pgrep -f qemu-system")
+          client.succeed("test \"$(fgconsole)\" = 1")
+          client.succeed(
+              "tail -n 1 /var/lib/captive-portal/audit.log"
+              " | jq -e '.result == \"full\" and .signature == \"ok\" and .mode == \"framebuffer\"'"
+          )
+          client.succeed("captive-vm-run audit-verify")
+
+      with subtest("a garbled signature refuses the VM, and the opener falls back saying why"):
+          portal.succeed("rm /var/lib/portal/open")
+          client.wait_until_succeeds("nmcli networking connectivity check | grep -qx portal", timeout=120)
+          client.succeed("printf garbage > /var/lib/captive-portal/manifest.sig")
+          client.succeed("su - tester -c 'captive-portal-open http://login.portal.test/ 2>/tmp/open.err || true'")
+          client.succeed("grep -q 'signature does not verify' /tmp/open.err")
+          client.succeed("jq -e '.state == \"refused\"' /run/captive-portal/vm-status")
+          client.succeed("tail -n 1 /var/lib/captive-portal/audit.log | jq -e '.result == \"refused\"'")
+          client.fail("ip link show cp0")
+
+      print("captive-vm: signed reference -> verity guest -> VT viewer -> login -> discard verified")
+    '';
+  };
 in
 {
-  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app captive-portal mdns-single-responder network-profiles;
+  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app captive-portal mdns-single-responder network-profiles captive-vm-policy;
 }
+// lib.optionalAttrs (microvm != null) { inherit captive-vm; }

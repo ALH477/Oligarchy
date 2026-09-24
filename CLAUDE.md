@@ -96,9 +96,11 @@ nix build .#session-survives-switch # no unit but greetd may vhangup tty1 after 
 nix build .#hypr-session-tests      # hypr-session restore --dry-run matches fixtures; bash+jq, no KVM
 nix build .#locale-contract         # 5 hosts x 5 languages; xkb == Hyprland kb_layout == console; eval-only, minutes. Lives in legacyPackages, so `nix flake check` never pays its 25 evals
 nix build .#locale-adopt-fixtures   # oligarchy-adopt turns fixture /etc trees into the expected custom.locale.*; no KVM
-nix build .#captive-portal-tests    # the captive-portal scripts against a fake nmcli: open once per PORTAL episode, re-arm, TTY fallback, nmtui hand-off; bash, no KVM
-nix build .#captive-portal-contract # the module is wired into nixos: probe URI, egress allowlist, watcher unit, https refused; eval-only, 3 evals, lives in legacyPackages
+nix build .#captive-portal-tests    # captive-portal scripts (53 checks) + the portal-VM orchestrator (107 checks: every refusal, both display modes' QEMU argv and sandbox, full/timeout/exit/link-change/SIGTERM/GPU-fallback lifecycles, audit chain); fakes for root/hardware, real jq/sha256sum/ssh-keygen; bash, no KVM
+nix build .#captive-portal-contract # the module is wired into nixos (probe URI, egress allowlist, watcher unit, https refused) and the portal VM is sound as shipped (verity store, no writable disk/vsock/ssh/nix/docker in the guest, bounded orchestrator, offline viewer on its own VT, DSP core and store-path key refused); eval-only, 6 evals, lives in legacyPackages
 nix build .#network-posture-contract # configuration.nix's LAN posture: no ~. routing domain, Avahi alone on mDNS, LLMNR off, stable Wi-Fi MAC, no SSH/443 outside tailscale0, trustedWifi renders $VAR not a PSK; eval-only, lives in legacyPackages
+nix build .#captive-vm-reference     # portal-VM image: verity root re-derived from the disk, baked reference == sha256(manifest), real launcher verify, signature and tamper checks; no KVM, builds the guest (minutes). Lives in legacyPackages
+nix build .#captive-vm-image --rebuild # the manifest must be bit-identical when rebuilt (verity salt/UUID are derived, not random)
 nix build .#plugins-wx-enforcement  # boot a real kernel; assert the plugin tier/jit W^X split holds
 nix build .#plugins-policy-refusal  # assert plugin policy refuses at install time, not at load time
 nix build .#plugins-signed-install  # assert an unprivileged user can install a signed plugin and only a signed one
@@ -119,7 +121,7 @@ All are deliberately NOT in `checks` (they are slow — most need KVM, and tier2
 
 ### Tests
 
-NixOS VM integration tests live in `tests/default.nix` using `pkgs.testers.runNixOSTest`: `strict-egress`, `malware-shield`, `hardening`, `dcf-spa-gate`, `ip-blocklists`, `vpn`, `windscribe-app`, `captive-portal` (two nodes: an nginx+dnsmasq venue and an NM client; asserts the probe really flips to PORTAL and back). `mdns-single-responder` (NM host + Avahi peer; asserts resolved stays off UDP 5353 and the host keeps its `.local` name). `network-profiles` (asserts `custom.network.trustedWifi` writes a 0600 keyfile with the PSK substituted from the env file at boot, and the store template carries only `$VAR`). They are exposed as `packages.test-<name>` and run like any other gate:
+NixOS VM integration tests live in `tests/default.nix` using `pkgs.testers.runNixOSTest`: `strict-egress`, `malware-shield`, `hardening`, `dcf-spa-gate`, `ip-blocklists`, `vpn`, `windscribe-app`, `captive-portal` (two nodes: an nginx+dnsmasq venue and an NM client; asserts the probe really flips to PORTAL and back). `mdns-single-responder` (NM host + Avahi peer; asserts resolved stays off UDP 5353 and the host keeps its `.local` name). `network-profiles` (asserts `custom.network.trustedWifi` writes a 0600 keyfile with the PSK substituted from the env file at boot, and the store template carries only `$VAR`), `captive-vm-policy` (the portal VM's egress table against network namespaces, 14 checks incl. anti-vacuity) and `captive-vm` (NESTED KVM: the signed, verity-backed portal guest end to end, login page asserted by OCR on the VT viewer, discard and audit chain checked, bad signature refused). They are exposed as `packages.test-<name>` and run like any other gate:
 
 ```bash
 nix build .#test-strict-egress

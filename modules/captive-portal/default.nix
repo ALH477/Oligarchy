@@ -35,7 +35,7 @@ let
   probeUri = "http://${cfg.probe.host}${cfg.probe.path}";
   loginHost = lib.head (lib.splitString "/" (lib.removePrefix "http://" cfg.loginUrl));
 
-  runtimeInputs = with pkgs; [ networkmanager libnotify xdg-utils util-linux coreutils findutils ];
+  runtimeInputs = with pkgs; [ networkmanager libnotify xdg-utils util-linux coreutils findutils jq systemd ];
 
   browserBin =
     if cfg.browser.kind == "firefox" then lib.getExe cfg.browser.package
@@ -54,6 +54,8 @@ let
       export CAPTIVE_BROWSER_KIND=${lib.escapeShellArg cfg.browser.kind}
       export CAPTIVE_BROWSER_BIN=${lib.escapeShellArg browserBin}
       export CAPTIVE_BROWSER_CMD=${lib.escapeShellArg (if cfg.browser.command == null then "" else cfg.browser.command)}
+      export CAPTIVE_VM_FALLBACK=firefox
+      export CAPTIVE_VM_STATUS=/run/captive-portal/vm-status
       exec ${pkgs.bash}/bin/bash ${./bin + "/${name}.sh"} "$@"
     '';
   };
@@ -66,6 +68,10 @@ let
   nmtuiPortal = wrap "nmtui-portal" [ login ];
 in
 {
+  # Design F: the portal login in a disposable, verified microVM
+  # (browser.kind = "microvm"). Everything for it lives in vm/.
+  imports = [ ./vm/host.nix ];
+
   options.custom.network.captivePortal = {
     enable = lib.mkEnableOption "captive portal detection and auto-open login page" // {
       default = true;
@@ -110,16 +116,20 @@ in
 
     browser = {
       kind = lib.mkOption {
-        type = lib.types.enum [ "firefox" "chromium" "command" "xdg-open" ];
+        type = lib.types.enum [ "microvm" "firefox" "chromium" "command" "xdg-open" ];
         default = "firefox";
         description = ''
           How the login page is opened in a graphical session. The page is
           attacker-controlled plaintext HTTP, so `firefox` and `chromium`
           open it in a THROWAWAY profile under $XDG_RUNTIME_DIR (no cookies,
           sessions, extensions or history of the everyday browser), the way
-          GNOME's portal helper uses a disposable WebKit view. `command` runs
-          `browser.command` with the URL and adds no isolation; `xdg-open` is
-          the everyday default browser, everyday profile — opt in knowingly.
+          GNOME's portal helper uses a disposable WebKit view. `microvm`
+          boots a disposable, verified VM with the login page on its own VT
+          (or a passed-through GPU's monitor) and falls back to `firefox` if
+          it cannot start; see custom.network.captivePortal.microvm and
+          vm/host.nix. `command` runs `browser.command` with the URL and adds
+          no isolation; `xdg-open` is the everyday default browser, everyday
+          profile — opt in knowingly.
         '';
       };
       package = lib.mkOption {

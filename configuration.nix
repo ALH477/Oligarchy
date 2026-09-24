@@ -1066,6 +1066,17 @@
       # declares only the age key location until a secret sub-option is on.
       # Pre-req: sudo age-keygen -o /var/lib/sops-nix/key.txt (see .sops.yaml).
       custom.secrets.enable = lib.mkDefault false;
+      # Portal logins in a disposable, verified microVM (Design F): available,
+      # off until its gates are green on the builder. Flip browser.kind to
+      # "microvm" in local.nix to use it; see modules/captive-portal/vm/.
+      custom.network.captivePortal.microvm = {
+        guestModule = inputs.oligarchy-plugins.inputs.microvm.nixosModules.microvm;
+        provenance = {
+          nixpkgs = inputs.nixpkgs.narHash or "unknown";
+          microvm = inputs.oligarchy-plugins.inputs.microvm.narHash or "unknown";
+        };
+      };
+
       # Trusted Wi-Fi: declare networks here or in local.nix, PSK names only.
       # Encrypt modules/secrets/wifi.env (HOME_PSK=...) with sops per
       # .sops.yaml, then flip custom.secrets.wifi.enable; see

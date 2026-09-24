@@ -10,7 +10,9 @@
 # a throwaway browser profile under $XDG_RUNTIME_DIR (0700, gone at logout).
 #
 # Environment (exported by the Nix wrapper; the no-KVM gate sets fakes):
-#   CAPTIVE_BROWSER_KIND   firefox | chromium | command | xdg-open
+#   CAPTIVE_BROWSER_KIND   microvm | firefox | chromium | command | xdg-open
+#   CAPTIVE_VM_FALLBACK    kind used when the portal VM cannot start (firefox)
+#   CAPTIVE_VM_STATUS      the VM launcher's status file, for the reason
 #   CAPTIVE_BROWSER_BIN    the browser binary for firefox/chromium kinds
 #   CAPTIVE_BROWSER_CMD    the command for kind=command (no isolation added)
 #   CAPTIVE_ALLOW_ROOT     test seam only: skip the root refusal
@@ -34,6 +36,24 @@ case "$url" in
     exit 2
     ;;
 esac
+
+# kind=microvm: the page is not opened here at all. The portal VM boots with
+# the login URL baked into its verified image, and owns its own VT (or the
+# passed-through GPU's monitor). This only asks systemd to start it — the
+# polkit rule in the module lets exactly this user start exactly that unit —
+# and falls back to the isolated profile below if it will not come up,
+# saying why. Nothing is passed to the VM: no URL, no clipboard, no file.
+if [ "$CAPTIVE_BROWSER_KIND" = microvm ]; then
+  if systemctl start "${CAPTIVE_VM_UNIT:-captive-vm.service}" 2>/dev/null; then
+    exit 0
+  fi
+  why=$(jq -r '.reason // empty' "${CAPTIVE_VM_STATUS:-/run/captive-portal/vm-status}" 2>/dev/null || true)
+  notify-send -u critical -a NetworkManager -i network-wireless \
+    "Portal VM unavailable" "${why:-it did not start} — using an isolated browser profile instead." \
+    2>/dev/null || true
+  echo "captive-portal-open: portal VM unavailable (${why:-did not start}); falling back" >&2
+  CAPTIVE_BROWSER_KIND=${CAPTIVE_VM_FALLBACK:-firefox}
+fi
 
 # Fresh, private profile dir per open. Older ones from this session are
 # swept when they are an hour old so a still-open window keeps its dir.
