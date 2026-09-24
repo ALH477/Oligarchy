@@ -20,6 +20,8 @@
     ./modules/terminus-dev.nix
     ./modules/gamepad-bluetooth
     ./modules/session-resume.nix
+    # Captive portal detection + auto-open login page (hotel/airport Wi-Fi).
+    ./modules/captive-portal
   ]
   # ── The fresh-user hatch (NOT the maintainer's channel any more) ──────────
   #
@@ -953,7 +955,7 @@
       };
 
       # ──────────────────────────────────────────────────────────────────────────
-      # Networking (unchanged)
+      # Networking — captive portal handling lives in modules/captive-portal/
       # ──────────────────────────────────────────────────────────────────────────
       networking = {
         # hostName is set per-host in flake.nix — sharing "nixos" across every
