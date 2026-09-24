@@ -702,7 +702,81 @@ let
         print("captive-portal: probe -> PORTAL -> open once -> login -> FULL -> re-arm verified")
       '';
   };
+
+  # ── mDNS: Avahi is the only responder on 5353; resolved stays off .local ────
+  # configuration.nix runs Avahi (nss-mdns, publishing) AND systemd-resolved.
+  # resolved answers mDNS for <host>.local on every link NetworkManager marks
+  # connection.mdns=2, which makes two responders claim one name and Avahi
+  # rename the host <host>-2.local. The fix is connection.mdns=0 (and llmnr=0)
+  # in configuration.nix; this holds it at the socket level, which is where it
+  # is silent when it regresses. Same NM-on-eth1 recipe as captive-portal.
+  mdns-single-responder = pkgs.testers.runNixOSTest {
+    name = "mdns-single-responder";
+
+    nodes = {
+      host = { lib, ... }: {
+        networking.useDHCP = false;
+        networking.interfaces = lib.mkForce { eth1 = { }; };
+        networking.networkmanager = {
+          enable = true;
+          dns = "systemd-resolved";
+          settings.main.no-auto-default = "*";
+          # The three lines under test, as configuration.nix sets them.
+          connectionConfig = {
+            "connection.mdns" = 0;
+            "connection.llmnr" = 0;
+            "ipv6.ip6-privacy" = 2;
+          };
+          ensureProfiles.profiles.lan = {
+            connection = { id = "lan"; type = "ethernet"; interface-name = "eth1"; autoconnect = true; };
+            ipv4 = { method = "manual"; addresses = "192.168.1.42/24"; };
+            ipv6.method = "disabled";
+          };
+        };
+        services.resolved.enable = true;
+        services.avahi = {
+          enable = true;
+          nssmdns4 = true;
+          openFirewall = true;
+          publish = { enable = true; addresses = true; };
+        };
+        environment.systemPackages = [ pkgs.iproute2 ];
+      };
+
+      peer = { pkgs, ... }: {
+        services.avahi = { enable = true; nssmdns4 = true; openFirewall = true; };
+      };
+    };
+
+    testScript = ''
+      start_all()
+      host.wait_for_unit("NetworkManager-ensure-profiles.service", timeout=120)
+      host.wait_until_succeeds("ip addr show dev eth1 | grep -q '192.168.1.42'", timeout=120)
+      host.wait_for_unit("avahi-daemon.service", timeout=120)
+      host.wait_for_unit("systemd-resolved.service", timeout=120)
+      peer.wait_for_unit("avahi-daemon.service", timeout=120)
+
+      with subtest("NetworkManager left mDNS and LLMNR off on the link"):
+          host.wait_until_succeeds("resolvectl mdns eth1 | grep -qi ': no'", timeout=60)
+          host.succeed("resolvectl llmnr eth1 | grep -qi ': no'")
+
+      with subtest("only Avahi is bound to UDP 5353"):
+          host.succeed("ss -ulnp | grep ':5353 ' | grep -q avahi")
+          host.fail("ss -ulnp | grep ':5353 ' | grep -q resolve")
+
+      with subtest("the host keeps its own .local name"):
+          host.wait_until_succeeds("avahi-resolve-host-name host.local | grep -q '192.168.1.42'", timeout=60)
+          host.fail("journalctl -u avahi-daemon | grep -qi 'name conflict'")
+          host.fail("journalctl -u avahi-daemon | grep -q 'host-2.local'")
+
+      with subtest("a LAN peer resolves the host via Avahi"):
+          peer.wait_until_succeeds("avahi-resolve-host-name host.local | grep -q '192.168.1.42'", timeout=60)
+          peer.wait_until_succeeds("getent hosts host.local | grep -q '192.168.1.42'", timeout=60)
+
+      print("mdns-single-responder: Avahi alone on 5353, resolved off .local, name stable")
+    '';
+  };
 in
 {
-  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app captive-portal;
+  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app captive-portal mdns-single-responder;
 }

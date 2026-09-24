@@ -136,6 +136,7 @@ jobs:
           - test-ip-blocklists
           # Two-node: a nginx portal + dnsmasq venue and an NM client.
           - test-captive-portal
+          - test-mdns-single-responder
 
     steps:
       - uses: actions/checkout@v4

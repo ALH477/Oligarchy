@@ -967,11 +967,26 @@
             backend = "wpa_supplicant";
             powersave = false;
             scanRandMacAddress = true;
+            # One random MAC per SSID, persistent across reconnects: a public
+            # network never sees the hardware address, and a captive portal
+            # still recognises the machine after a reconnect ("random" would
+            # re-prompt on every association). Ethernet stays "preserve"
+            # below — the wired LAN is only ever home/office and DHCP
+            # reservations key on the real address.
+            macAddress = "stable";
           };
           dns = "systemd-resolved";
           connectionConfig = {
-            "connection.mdns" = 2;
-            "connection.llmnr" = 2;
+            # Avahi owns mDNS here (printers, .local peers, nss-mdns below).
+            # resolved's responder on the same UDP 5353 answers the same
+            # <host>.local and trips Avahi's conflict detection into renaming
+            # this host <host>-2.local. 0 = resolved neither answers nor
+            # resolves .local on any link; nss-mdns does the lookups.
+            # LLMNR has no consumer in this stack and is a spoofable name
+            # protocol on shared LANs: off. .#network-posture-contract and
+            # .#test-mdns-single-responder hold both.
+            "connection.mdns" = 0;
+            "connection.llmnr" = 0;
             "ipv6.ip6-privacy" = 2;
           };
           ethernet.macAddress = "preserve";
@@ -1204,7 +1219,13 @@
       services.resolved = {
         enable = true;
         dnssec = "allow-downgrade";
-        domains = [ "~." ];
+        # No `domains = [ "~." ]`. A global routing domain only steers
+        # queries to the global DNS= servers, and none are configured, so
+        # resolved never routed anything by it: link resolvers always won
+        # (which is also why captive portals resolve — .#test-captive-portal
+        # asserts that under exactly these settings). It read as intent to
+        # pin DNS globally; that intent belongs on trusted profiles
+        # (ipv4.dns + ignore-auto-dns), where it does not break portals.
         fallbackDns = [ "1.1.1.1" "8.8.8.8" "2606:4700:4700::1111" "2001:4860:4860::8888" ];
         dnsovertls = "opportunistic";
       };

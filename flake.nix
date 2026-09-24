@@ -2170,6 +2170,81 @@
               [ "$fail" -eq 0 ] || { echo "captive-portal-contract: FAILED" >&2; exit 1; }
               echo "captive-portal-contract: 14 checks passed" | tee -a $out/report.txt
             '';
+
+        # ════════════════════════════════════════════════════════════════════════
+        # Network posture contract — docs/networking-design-spec (Designs C, D).
+        #
+        # Pure eval of nixosConfigurations.nixos, one evaluation. Every line
+        # here is a thing configuration.nix says in one place and nothing at
+        # runtime complains about when it drifts back:
+        #   - resolved carries no global "~." routing domain
+        #   - NM: connection.mdns = 0 and connection.llmnr = 0 (Avahi owns
+        #     .local; resolved must not be a second responder)
+        #   - NM: wifi.cloned-mac-address = stable (the real MAC never goes
+        #     out on a public SSID) while ethernet stays preserve
+        #   - Avahi is still on with nss-mdns (the reason mdns=0 is safe)
+        #   - resolved still on, dnssec allow-downgrade, DoT opportunistic
+        #     (the combination the captive-portal VM gate was written against)
+        #
+        # Run on demand:  nix build .#network-posture-contract
+        # ════════════════════════════════════════════════════════════════════════
+        network-posture-contract =
+          let
+            lib' = nixpkgs.lib;
+            c = self.nixosConfigurations.nixos.config;
+            nm = c.networking.networkmanager;
+            cc = nm.connectionConfig;
+            payload = pkgs.writeText "network-posture-contract.json" (builtins.toJSON {
+              networkManagerOn = nm.enable;
+              resolvedOn = c.services.resolved.enable;
+              noGlobalRoutingDomain = !(lib'.elem "~." c.services.resolved.domains);
+              dnssecAllowDowngrade = c.services.resolved.dnssec == "allow-downgrade";
+              dotOpportunistic = c.services.resolved.dnsovertls == "opportunistic";
+              mdnsOff = (cc."connection.mdns" or null) == 0;
+              llmnrOff = (cc."connection.llmnr" or null) == 0;
+              wifiMacStable = (cc."wifi.cloned-mac-address" or null) == "stable";
+              ethernetMacPreserve = (cc."ethernet.cloned-mac-address" or null) == "preserve";
+              avahiOn = c.services.avahi.enable && c.services.avahi.nssmdns4;
+              nmUsesResolved = nm.dns == "systemd-resolved";
+            });
+          in
+          pkgs.runCommand "network-posture-contract"
+            {
+              nativeBuildInputs = [ pkgs.jq ];
+              meta = with nixpkgs.lib; {
+                description = "Assert the LAN posture in configuration.nix: no ~. routing domain, Avahi alone on mDNS, LLMNR off, stable Wi-Fi MAC";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              j=${payload}
+              cp "$j" $out/contract.json
+              fail=0
+              want() {
+                if [ "$(jq -r ".$1" "$j")" = true ]; then
+                  echo "PASS  $1" | tee -a $out/report.txt
+                else
+                  echo "FAIL  $1 = $(jq -c ".$1" "$j")" | tee -a $out/report.txt >&2
+                  fail=1
+                fi
+              }
+              # Anti-vacuity: the posture is about NM + resolved + Avahi all on.
+              want networkManagerOn
+              want resolvedOn
+              want avahiOn
+              want nmUsesResolved
+              want noGlobalRoutingDomain
+              want dnssecAllowDowngrade
+              want dotOpportunistic
+              want mdnsOff
+              want llmnrOff
+              want wifiMacStable
+              want ethernetMacPreserve
+              [ "$fail" -eq 0 ] || { echo "network-posture-contract: FAILED" >&2; exit 1; }
+              echo "network-posture-contract: 11 checks passed" | tee -a $out/report.txt
+            '';
       };
 
       # ════════════════════════════════════════════════════════════════════════
