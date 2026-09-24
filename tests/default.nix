@@ -1128,4 +1128,4 @@ in
 {
   inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app captive-portal mdns-single-responder network-profiles captive-vm-policy;
 }
-// lib.optionalAttrs (microvm != null) { inherit captive-vm; }
+  // lib.optionalAttrs (microvm != null) { inherit captive-vm; }

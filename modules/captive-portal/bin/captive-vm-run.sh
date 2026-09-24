@@ -31,7 +31,11 @@
 #   CVM_MANIFEST, CVM_REFERENCE   manifest path and its expected sha256
 #   CVM_PUBKEY, CVM_SIG           "ssh-ed25519 AAAA…" or empty; signature file
 #   CVM_QEMU, CVM_CORESCHED, CVM_DNSMASQ
-#   CVM_USER, CVM_VIEW_GROUP      captive-vm, captive-view
+#   CVM_USER, CVM_GROUP           captive-vm, captive-vm (the VM user's own
+#                                 group; a separate seam because the no-KVM
+#                                 gate runs as a user whose name is NOT also
+#                                 a group name, which `-g $CVM_USER` refused)
+#   CVM_VIEW_GROUP                captive-view
 #   CVM_RUNDIR, CVM_STATEDIR, CVM_STATUS
 #   CVM_TAP, CVM_GUEST_MAC        cp0, 02:ca:97:00:00:02
 #   CVM_FB_WIDTH, CVM_FB_HEIGHT
@@ -48,6 +52,7 @@ export LC_ALL=C
 : "${CVM_PUBKEY:=}" "${CVM_SIG:=/var/lib/captive-portal/manifest.sig}"
 : "${CVM_CORESCHED:=}" "${CVM_DNSMASQ:=dnsmasq}"
 : "${CVM_USER:=captive-vm}" "${CVM_VIEW_GROUP:=captive-view}"
+: "${CVM_GROUP:=$CVM_USER}"
 : "${CVM_RUNDIR:=/run/captive-vm}" "${CVM_STATEDIR:=/var/lib/captive-portal}"
 : "${CVM_STATUS:=/run/captive-portal/vm-status}"
 : "${CVM_TAP:=cp0}" "${CVM_GUEST_MAC:=02:ca:97:00:00:02}"
@@ -233,7 +238,7 @@ net_up() {
   esac
   connection=$(nmcli -t -g GENERAL.CONNECTION device show "$uplink" 2>/dev/null || true)
 
-  ip tuntap add dev "$CVM_TAP" mode tap user "$CVM_USER" group "$CVM_USER"
+  ip tuntap add dev "$CVM_TAP" mode tap user "$CVM_USER" group "$CVM_GROUP"
   tap_made=1
   ip addr add "$HOST_IP/30" dev "$CVM_TAP"
   ip link set "$CVM_TAP" up
@@ -321,7 +326,7 @@ qemu_argv() { # fills the global array QARGS for $mode
 
 unit_props() { # fills UPROPS for $mode
   UPROPS=(
-    -p "User=$CVM_USER" -p "Group=$CVM_USER" -p UMask=0007
+    -p "User=$CVM_USER" -p "Group=$CVM_GROUP" -p UMask=0007
     -p NoNewPrivileges=yes -p CapabilityBoundingSet= -p AmbientCapabilities=
     -p ProtectSystem=strict -p ProtectHome=yes -p PrivateTmp=yes -p PrivateIPC=yes
     -p ProtectKernelTunables=yes -p ProtectKernelModules=yes -p ProtectKernelLogs=yes
@@ -346,7 +351,7 @@ smt_active() { [ "$(cat "$CVM_SYSFS/devices/system/cpu/smt/active" 2>/dev/null |
 
 vmm_up() {
   install -d -m 2750 -o "$CVM_USER" -g "$CVM_VIEW_GROUP" "$CVM_RUNDIR/vnc"
-  install -d -m 0700 -o "$CVM_USER" -g "$CVM_USER" "$CVM_RUNDIR/ctl"
+  install -d -m 0700 -o "$CVM_USER" -g "$CVM_GROUP" "$CVM_RUNDIR/ctl"
   if [ "$mode" = gpu ]; then
     vfio_owner=$(stat -c %u "$CVM_DEVDIR/vfio/$vfio_group")
     chown "$CVM_USER" "$CVM_DEVDIR/vfio/$vfio_group"

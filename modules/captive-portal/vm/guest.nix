@@ -216,6 +216,13 @@ in
 
   # ── the kiosk ────────────────────────────────────────────────────────────
   users.mutableUsers = false;
+  # Both accounts are locked ("!" is an invalid hash, not an empty password),
+  # which is the point: this guest is discarded after one portal login and
+  # nothing should ever be able to log into it. NixOS's users-groups assertion
+  # reads that state as "you are about to lock yourself out" and fails the
+  # build, so the intent has to be stated explicitly — without this line the
+  # whole portal-VM config refuses to evaluate.
+  users.allowNoPasswordLogin = true;
   users.users.root.hashedPassword = "!";
   users.users.portal = {
     isNormalUser = true;

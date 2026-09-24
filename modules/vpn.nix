@@ -314,11 +314,20 @@ in
           Make systemd-resolved actually prefer the tunnel's resolver.
 
           This is not redundant with the DNS= line in the Windscribe config.
-          This host sets services.resolved.domains = [ "~." ] globally, which
-          makes the global resolvers a candidate for every name; wg-quick's
-          resolvconf call sets link DNS but no routing domain, so the global
-          servers keep winning and the tunnel resolver is never consulted. The
-          ExecStartPost below sets `~.` on the link itself to break that tie.
+          wg-quick's resolvconf call sets link DNS but NO routing domain, so
+          the tunnel's resolver is only ever consulted for names that already
+          route to that link — which, on a laptop that is simultaneously on
+          Wi-Fi, is none of them: the uplink's own resolver keeps answering.
+          The ExecStartPost below sets `~.` on the tunnel link, which makes it
+          a candidate for every name and outranks the uplink.
+
+          (This used to be described as breaking a tie against a GLOBAL
+          services.resolved.domains = [ "~." ]. That global routing domain was
+          removed in the networking-posture work — it steered nothing, because
+          a global routing domain only routes to global DNS= servers and none
+          were ever set. The `~.` on the LINK is, and always was, the part
+          that does the work; .#network-posture-contract asserts the global
+          one stays gone.)
 
           Traffic still goes through the tunnel either way (AllowedIPs is
           0.0.0.0/0), so this is about WHICH resolver sees your queries, not

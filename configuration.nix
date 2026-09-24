@@ -1028,6 +1028,15 @@
       # Hardened settings (keys-only, AllowUsers, MaxAuthTries, fail2ban) are
       # owned by modules/security/hardening.nix (custom.security.hardening).
       services.openssh.enable = true;
+      # openFirewall defaults to TRUE in nixpkgs, and it appends to the GLOBAL
+      # networking.firewall.allowedTCPPorts — so leaving it alone puts :22 back
+      # on every interface the laptop ever joins, silently undoing the
+      # per-interface list above. Emptying allowedTCPPorts is necessary but not
+      # sufficient; this line is the other half. The tailscale0 entry in the
+      # firewall block is what actually admits SSH.
+      # `nix build .#network-posture-contract` (check `sshNotGlobal`) is what
+      # caught this: the port was global again with the literal 22 removed.
+      services.openssh.openFirewall = false;
 
 
       # Malware Shield (modules/security/malware-shield.nix) — monitor mode:

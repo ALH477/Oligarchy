@@ -27,12 +27,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Resolved BEFORE the fakes go on PATH: fakes-vm/install has to reach the
+# real coreutils one to actually create the directories.
+FAKE_REAL_INSTALL=$(command -v install)
+export FAKE_REAL_INSTALL
 export PATH="$FAKES:$PATH"
 export FAKE_DIR=$work/fake FAKE_LOG=$work/fake/log
 export FAKE_ROUTE=$work/route.json FAKE_ROUTE2=$work/route2.json
 export CVM_RUNDIR=$work/run CVM_STATEDIR=$work/state CVM_STATUS=$work/status/vm-status
-export CVM_USER CVM_VIEW_GROUP
+export CVM_USER CVM_GROUP CVM_VIEW_GROUP
 CVM_USER=$(id -un)
+# The orchestrator's `install -o USER -g GROUP` is real, not faked, so both
+# names must exist on whatever host runs this gate. A login user's name is
+# usually NOT also a group name (here: asher's primary group is `users`), so
+# the VM user's own group has to come from id -gn rather than from CVM_USER.
+CVM_GROUP=$(id -gn)
 CVM_VIEW_GROUP=$(id -gn)
 export CVM_QEMU=/fake/bin/qemu-system-x86_64 CVM_CORESCHED=$FAKES/coresched CVM_DNSMASQ=$FAKES/dnsmasq
 export CVM_SYSFS=$work/sys CVM_DEVDIR=$work/dev CVM_PROCSYS=$work/procsys
@@ -46,11 +55,25 @@ check() {
   local name=$1
   shift
   ran=$((ran + 1))
-  if "$@"; then echo "PASS  $name"; else echo "FAIL  $name" >&2; fail=1; fi
+  if "$@"; then
+    echo "PASS  $name"
+  else
+    echo "FAIL  $name" >&2
+    # The orchestrator's own stderr is the only thing that says WHY it
+    # refused, and it goes to $work/err (orch() above). Without this a
+    # failure here is just a name, which is what made the CVM_GROUP break
+    # take a local re-run to diagnose instead of being readable in CI.
+    [ -s "$work/err" ] && sed 's/^/        | /' "$work/err" >&2
+    fail=1
+  fi
 }
 has() { grep -qF -- "$1" "$2"; }
 hasx() { grep -qxF -- "$1" "$2"; }
-hasnt() { ! grep -qF -- "$1" "$2"; }
+# A negative assertion over a file that does not exist inspected NOTHING and
+# must fail, not pass: when the orchestrator broke before writing
+# systemd-run.argv at all, the core-scheduling check below went green on a
+# missing file while every other check in its group failed.
+hasnt() { [ -e "$2" ] && ! grep -qF -- "$1" "$2"; }
 last_audit() { tail -n 1 "$CVM_STATEDIR/audit.log" | jq -r "$1"; }
 
 # ── host fixture ───────────────────────────────────────────────────────────
@@ -264,12 +287,16 @@ L=$FAKE_LOG
 check "run/fb: result full in the audit log" test "$(last_audit .result)" = full
 check "run/fb: audit carries the reference" test "$(last_audit .reference)" = "$CVM_REFERENCE"
 check "run/fb: audit carries the uplink's connection name, escaped" test "$(last_audit .connection)" = 'Venue "Guest" Wi-Fi'
-check "run/fb: tap created for the VM user only" hasx "ip tuntap add dev cp0 mode tap user $CVM_USER group $CVM_USER" "$L"
+check "run/fb: tap created for the VM user only" hasx "ip tuntap add dev cp0 mode tap user $CVM_USER group $CVM_GROUP" "$L"
 check "run/fb: egress policy loaded with the uplink substituted" has 'oifname "wlp1s0" ip saddr 10.207.0.2 tcp dport { 80, 443 } accept' "$FAKE_DIR/nft-loaded"
 check "run/fb: no placeholder left in the loaded policy" hasnt "@UPLINK@" "$FAKE_DIR/nft-loaded"
 check "run/fb: DNS forwarder on the tap address only" has "--listen-address=10.207.0.1" "$L"
 check "run/fb: forwarder answers from resolved's stub" has "--server=127.0.0.53" "$L"
 check "run/fb: VMM started under core scheduling only when SMT is on (it is off here)" hasnt "coresched new -- /fake" "$FAKE_DIR/systemd-run.argv"
+check "run/fb: the VNC socket dir is setgid to the viewer group" \
+  hasx "install -d -m 2750 -o $CVM_USER -g $CVM_VIEW_GROUP $CVM_RUNDIR/vnc" "$L"
+check "run/fb: the control dir is private to the VM user" \
+  hasx "install -d -m 0700 -o $CVM_USER -g $CVM_GROUP $CVM_RUNDIR/ctl" "$L"
 check "run/fb: viewer started" hasx "systemctl start captive-vm-viewer.service" "$L"
 check "run/fb: switched to the VM's VT" hasx "chvt 7" "$L"
 check "run/fb: told systemd it is ready" has "systemd-notify --ready" "$L"
@@ -299,7 +326,7 @@ touch "$FAKE_DIR/stale-tap" "$FAKE_DIR/stale-table"
 export FAKE_NM_FULL_AFTER=1
 check "run/stale: a tap and table left by a killed run are cleared first" orch run
 check "run/stale: the stale tap was deleted before the new one was made" \
-  before "ip link del cp0" "ip tuntap add dev cp0 mode tap user $CVM_USER group $CVM_USER"
+  before "ip link del cp0" "ip tuntap add dev cp0 mode tap user $CVM_USER group $CVM_GROUP"
 check "run/stale: the stale table was deleted before the policy loaded" \
   before "nft delete table inet captive_vm" "nft -f -"
 
@@ -382,7 +409,7 @@ sed -i '3s/"result":"[a-z-]*"/"result":"full"/' "$CVM_STATEDIR/audit.log"
 tamper() { ! orch audit-verify; }
 check "audit: rewriting a past result breaks the chain" tamper
 
-expected=107
+expected=109
 echo
 echo "captive-vm-run tests: $ran checks run, expected $expected"
 if [ "$ran" -ne "$expected" ]; then
