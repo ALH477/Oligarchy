@@ -96,6 +96,8 @@ nix build .#session-survives-switch # no unit but greetd may vhangup tty1 after 
 nix build .#hypr-session-tests      # hypr-session restore --dry-run matches fixtures; bash+jq, no KVM
 nix build .#locale-contract         # 5 hosts x 5 languages; xkb == Hyprland kb_layout == console; eval-only, minutes. Lives in legacyPackages, so `nix flake check` never pays its 25 evals
 nix build .#locale-adopt-fixtures   # oligarchy-adopt turns fixture /etc trees into the expected custom.locale.*; no KVM
+nix build .#captive-portal-tests    # the captive-portal scripts against a fake nmcli: open once per PORTAL episode, re-arm, TTY fallback, nmtui hand-off; bash, no KVM
+nix build .#captive-portal-contract # the module is wired into nixos: probe URI, egress allowlist, watcher unit, https refused; eval-only, 3 evals, lives in legacyPackages
 nix build .#plugins-wx-enforcement  # boot a real kernel; assert the plugin tier/jit W^X split holds
 nix build .#plugins-policy-refusal  # assert plugin policy refuses at install time, not at load time
 nix build .#plugins-signed-install  # assert an unprivileged user can install a signed plugin and only a signed one
@@ -116,7 +118,7 @@ All are deliberately NOT in `checks` (they are slow — most need KVM, and tier2
 
 ### Tests
 
-NixOS VM integration tests live in `tests/default.nix` using `pkgs.testers.runNixOSTest`: `strict-egress`, `malware-shield`, `hardening`, `dcf-spa-gate`, `ip-blocklists`, `vpn`, `windscribe-app`. They are exposed as `packages.test-<name>` and run like any other gate:
+NixOS VM integration tests live in `tests/default.nix` using `pkgs.testers.runNixOSTest`: `strict-egress`, `malware-shield`, `hardening`, `dcf-spa-gate`, `ip-blocklists`, `vpn`, `windscribe-app`, `captive-portal` (two nodes: an nginx+dnsmasq venue and an NM client; asserts the probe really flips to PORTAL and back). They are exposed as `packages.test-<name>` and run like any other gate:
 
 ```bash
 nix build .#test-strict-egress

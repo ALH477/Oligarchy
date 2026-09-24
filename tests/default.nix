@@ -530,7 +530,179 @@ let
     '';
   };
 
+  # ── Captive portal: NM probe flips to PORTAL, watcher opens once, login paths ─
+  # Two nodes on one VLAN. `portal` plays the venue: nginx 302s everything to
+  # /login until a flag file "logs you in", dnsmasq is the resolver a portal
+  # network would hand out. `client` runs the real module with the same
+  # resolver settings configuration.nix ships, and NM manages eth1 the way
+  # nixpkgs' own NetworkManager test does (no auto profiles, one declared
+  # profile). No wifi: the portal state machine is identical on ethernet, and
+  # the connectivity probe needs a default route on the device, hence the
+  # gateway pointing at the portal node.
+  #
+  # The scripts' state machine is covered by the no-KVM gate
+  # (.#captive-portal-tests); this test is for what only a booted NM can prove:
+  # the probe really flips to PORTAL against a real 302, `connectivity check`
+  # really returns full once the body matches, and the DNS/route setup a
+  # portal implies actually resolves the login host.
+  captive-portal = pkgs.testers.runNixOSTest {
+    name = "captive-portal";
+
+    nodes = {
+      portal = { config, ... }: {
+        networking.firewall.allowedTCPPorts = [ 53 80 ];
+        networking.firewall.allowedUDPPorts = [ 53 ];
+        systemd.tmpfiles.rules = [ "d /var/lib/portal 0755 root root -" ];
+        services.nginx = {
+          enable = true;
+          virtualHosts.portal = {
+            default = true;
+            locations."= /check_network_status.txt".extraConfig = ''
+              if (!-f /var/lib/portal/open) { return 302 http://portal/login; }
+              default_type text/plain;
+              return 200 "NetworkManager is online\n";
+            '';
+            locations."= /login".extraConfig = ''
+              default_type text/html;
+              return 200 "<html><body><h1>Captive portal test login</h1></body></html>\n";
+            '';
+            locations."/".extraConfig = "return 302 http://portal/login;";
+          };
+        };
+        services.dnsmasq = {
+          enable = true;
+          resolveLocalQueries = false;
+          settings = {
+            interface = "eth1";
+            bind-interfaces = true;
+            no-resolv = true;
+            address = [ "/login.portal.test/${config.networking.primaryIPAddress}" ];
+          };
+        };
+      };
+
+      client = { pkgs, lib, nodes, ... }:
+        let portalIp = nodes.portal.networking.primaryIPAddress; in
+        {
+          imports = [ ../modules/captive-portal ];
+
+          # nixpkgs' NetworkManager test recipe: only NM touches eth1, and NM
+          # creates no auto profiles, so the one below is the only connection.
+          networking.useDHCP = false;
+          networking.interfaces = lib.mkForce { eth1 = { }; };
+          networking.networkmanager = {
+            enable = true;
+            dns = "systemd-resolved";
+            settings.main.no-auto-default = "*";
+            ensureProfiles.profiles.venue = {
+              connection = {
+                id = "venue";
+                type = "ethernet";
+                interface-name = "eth1";
+                autoconnect = true;
+              };
+              ipv4 = {
+                method = "manual";
+                addresses = "192.168.1.42/24";
+                # NM only runs the connectivity probe on a device that has a
+                # default route, exactly like a real venue's DHCP lease.
+                gateway = portalIp;
+                dns = portalIp;
+                ignore-auto-dns = true;
+              };
+              ipv6.method = "disabled";
+            };
+          };
+
+          # configuration.nix's resolver settings, verbatim. Scenario 9 of the
+          # design spec: a portal-local name must resolve through the LINK's
+          # resolver under them, fallbackDns (unreachable here) notwithstanding.
+          services.resolved = {
+            enable = true;
+            dnssec = "allow-downgrade";
+            domains = [ "~." ];
+            fallbackDns = [ "1.1.1.1" "8.8.8.8" ];
+            dnsovertls = "opportunistic";
+          };
+
+          custom.network.captivePortal = {
+            enable = true;
+            probe.host = "portal";
+            probe.interval = 30;
+            loginUrl = "http://login.portal.test/";
+            # Record instead of open: there is no browser in the VM.
+            opener = "${pkgs.writeShellScript "record-open" ''echo "$@" >> /tmp/opened''}";
+            terminalBrowser = pkgs.writeShellScriptBin "record-tui" ''echo "$@" >> /tmp/tui-opened'';
+          };
+
+          environment.systemPackages = [ pkgs.curl ];
+        };
+    };
+
+    testScript = { nodes, ... }:
+      let portalIp = nodes.portal.networking.primaryIPAddress; in
+      ''
+        start_all()
+        portal.wait_for_unit("nginx.service", timeout=120)
+        portal.wait_for_unit("dnsmasq.service", timeout=120)
+        client.wait_for_unit("NetworkManager.service", timeout=120)
+        client.wait_for_unit("NetworkManager-ensure-profiles.service", timeout=120)
+        client.wait_until_succeeds("ip addr show dev eth1 | grep -q '192.168.1.42'", timeout=120)
+
+        with subtest("NetworkManager.conf carries the probe"):
+            client.succeed("grep -q '^uri=http://portal/check_network_status.txt$' /etc/NetworkManager/NetworkManager.conf")
+            client.succeed("grep -q '^response=NetworkManager is online$' /etc/NetworkManager/NetworkManager.conf")
+
+        with subtest("the venue intercepts plain HTTP"):
+            client.wait_until_succeeds("curl -s -o /dev/null -w '%{http_code}' http://portal/check_network_status.txt | grep -qx 302", timeout=60)
+
+        with subtest("NetworkManager reports PORTAL"):
+            client.wait_until_succeeds("nmcli -t -g CONNECTIVITY general | grep -qx portal", timeout=120)
+
+        with subtest("the watcher opens the login URL exactly once"):
+            client.succeed("rm -f /tmp/opened; setsid -f captive-portal-watch >/tmp/watch.log 2>&1")
+            client.wait_until_succeeds("test -f /tmp/opened", timeout=30)
+            client.succeed("grep -qx 'http://login.portal.test/' /tmp/opened")
+            # Two forced re-probes while still unpaid must not reopen.
+            client.succeed("nmcli networking connectivity check | grep -qx portal")
+            client.succeed("nmcli networking connectivity check | grep -qx portal")
+            client.sleep(3)
+            client.succeed("test $(wc -l < /tmp/opened) -eq 1")
+
+        with subtest("the portal-local login host resolves through the link resolver"):
+            client.wait_until_succeeds("resolvectl dns eth1 | grep -q '${portalIp}'", timeout=60)
+            client.wait_until_succeeds("resolvectl query login.portal.test | grep -q '${portalIp}'", timeout=60)
+            client.succeed("curl -s -o /dev/null -w '%{http_code}' http://login.portal.test/ | grep -qx 302")
+
+        with subtest("captive-login without a display uses the text browser"):
+            client.succeed("rm -f /tmp/tui-opened; captive-login")
+            client.succeed("grep -qx 'http://login.portal.test/' /tmp/tui-opened")
+
+        with subtest("logging in flips NM to FULL"):
+            portal.succeed("touch /var/lib/portal/open")
+            client.wait_until_succeeds("nmcli networking connectivity check | grep -qx full", timeout=60)
+            client.succeed("captive-login | grep -q 'Already online'")
+            client.succeed("test $(wc -l < /tmp/opened) -eq 1")
+
+        with subtest("a new portal episode opens the page again"):
+            portal.succeed("rm /var/lib/portal/open")
+            client.wait_until_succeeds("nmcli networking connectivity check | grep -qx portal", timeout=60)
+            client.wait_until_succeeds("test $(wc -l < /tmp/opened) -eq 2", timeout=30)
+
+        with subtest("nmtui-portal hands off to captive-login on a portal"):
+            # No tty here: nmtui exits at once; the hand-off is what matters.
+            client.succeed("rm -f /tmp/tui-opened; timeout 60 nmtui-portal </dev/null >/tmp/nmtui-portal.log 2>&1 || true")
+            client.succeed("grep -qx 'http://login.portal.test/' /tmp/tui-opened")
+
+        with subtest("the graphical-session user unit is installed"):
+            client.succeed("test -f /etc/systemd/user/captive-portal-watch.service")
+            client.succeed("grep -q '^Restart=always' /etc/systemd/user/captive-portal-watch.service")
+            client.succeed("grep -q 'graphical-session.target' /etc/systemd/user/captive-portal-watch.service")
+
+        print("captive-portal: probe -> PORTAL -> open once -> login -> FULL -> re-arm verified")
+      '';
+  };
 in
 {
-  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app;
+  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app captive-portal;
 }

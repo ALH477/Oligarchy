@@ -134,6 +134,8 @@ jobs:
           - test-hardening
           - test-dcf-spa-gate
           - test-ip-blocklists
+          # Two-node: a nginx portal + dnsmasq venue and an NM client.
+          - test-captive-portal
 
     steps:
       - uses: actions/checkout@v4

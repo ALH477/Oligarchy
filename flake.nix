@@ -1584,6 +1584,43 @@
             '';
 
         # ════════════════════════════════════════════════════════════════════
+        # Captive portal scripts — modules/captive-portal/tests/run.sh.
+        #
+        # The watcher, captive-login and nmtui-portal are plain bash files
+        # configured through CAPTIVE_* env vars precisely so this gate can run
+        # the SAME files against a fake nmcli: the open-once-per-episode state
+        # machine, the re-arm on full/none, the display-vs-TTY split and the
+        # nmtui hand-off are all asserted here without a VM. What only a
+        # booted NetworkManager can prove (that the probe actually flips to
+        # PORTAL) lives in tests/default.nix as .#test-captive-portal.
+        #
+        # Run on demand:  nix build .#captive-portal-tests
+        # ════════════════════════════════════════════════════════════════════
+        captive-portal-tests =
+          pkgs.runCommand "captive-portal-tests"
+            {
+              nativeBuildInputs = [ pkgs.bash pkgs.shellcheck pkgs.coreutils pkgs.gnugrep pkgs.gnused pkgs.util-linux ];
+              meta = with nixpkgs.lib; {
+                description = "Assert the captive-portal scripts' state machine against a fake nmcli; bash, no KVM";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              cp -r ${./modules/captive-portal} src
+              chmod -R u+w src
+              # The sandbox has no /usr/bin/env; the shebangs must resolve.
+              patchShebangs src/bin src/tests
+
+              shellcheck src/bin/*.sh src/tests/run.sh src/tests/fakes/*
+              echo "shellcheck: clean" | tee $out/report.txt
+
+              bash src/tests/run.sh 2>&1 | tee -a $out/report.txt
+              test "''${PIPESTATUS[0]}" -eq 0
+            '';
+
+        # ════════════════════════════════════════════════════════════════════
         # oligarchy-adopt fixtures — docs/localization-roadmap.md §8.
         #
         # The adoption tool reads the /etc a stock install left behind and
@@ -2032,6 +2069,106 @@
 
               [ "$fail" -eq 0 ] || exit 1
               echo "inspected $total combination(s); mirror checked on $mirrors of them" >> $out/report.txt
+            '';
+
+        # ════════════════════════════════════════════════════════════════════════
+        # Captive portal contract — the things that are silent when they break.
+        #
+        # Same shape as locale-contract: pure eval of the real host config, no
+        # KVM, no closure. Three evaluations (base, https loginUrl, autoOpen
+        # off), so it sits in legacyPackages beside locale-contract and never
+        # lands on `nix flake check`'s critical path.
+        #
+        # What it asserts on nixosConfigurations.nixos:
+        #   - the module is ENABLED there (a gate that inspected a disabled
+        #     module inspected nothing)
+        #   - NetworkManager's connectivity URI is exactly the probe the option
+        #     describes and is plain http
+        #   - the probe host and login host are on strictEgress.allow.domains,
+        #     so enforcing egress can never make every portal read as "limited"
+        #   - the watcher unit exists, restarts always, and is wanted by the
+        #     graphical session; the three CLIs are on PATH
+        #   - an https loginUrl is REFUSED by the module's own assertion
+        #   - autoOpen = false really removes the unit
+        #
+        # Run on demand:  nix build .#captive-portal-contract
+        # ════════════════════════════════════════════════════════════════════════
+        captive-portal-contract =
+          let
+            lib' = nixpkgs.lib;
+            base = self.nixosConfigurations.nixos.config;
+            override = m: (self.nixosConfigurations.nixos.extendModules { modules = [ m ]; }).config;
+            withHttps = override { custom.network.captivePortal.loginUrl = lib'.mkForce "https://neverssl.com/"; };
+            noAuto = override { custom.network.captivePortal.autoOpen = lib'.mkForce false; };
+
+            cp = base.custom.network.captivePortal;
+            conn = base.networking.networkmanager.settings.connectivity or { };
+            loginHost = lib'.head (lib'.splitString "/" (lib'.removePrefix "http://" cp.loginUrl));
+            egress = base.networking.firewall.strictEgress.allow.domains;
+            pkgNames = map (p: p.name or "") base.environment.systemPackages;
+            onPath = n: lib'.elem n pkgNames;
+            svc = base.systemd.user.services.captive-portal-watch or null;
+
+            payload = pkgs.writeText "captive-portal-contract.json" (builtins.toJSON {
+              enabled = cp.enable;
+              uri = conn.uri or null;
+              uriIsProbe = (conn.uri or "") == "http://${cp.probe.host}${cp.probe.path}";
+              uriPlainHttp = lib'.hasPrefix "http://" (conn.uri or "");
+              probeEnabled = conn.enabled or false;
+              responseSet = (conn.response or "") != "";
+              loginPlainHttp = lib'.hasPrefix "http://" cp.loginUrl;
+              egressHasProbeHost = lib'.elem cp.probe.host egress;
+              egressHasLoginHost = lib'.elem loginHost egress;
+              cliOnPath = onPath "captive-login" && onPath "nmtui-portal" && onPath "captive-portal-watch";
+              watcherPresent = svc != null;
+              watcherRestartAlways = (svc.serviceConfig.Restart or null) == "always";
+              watcherInSession = lib'.elem "graphical-session.target" (svc.wantedBy or [ ]);
+              httpsRefused = lib'.any
+                (a: !a.assertion && lib'.hasInfix "must be plain http://" a.message)
+                withHttps.assertions;
+              autoOpenOffRemovesUnit = !(noAuto.systemd.user.services ? captive-portal-watch);
+            });
+          in
+          pkgs.runCommand "captive-portal-contract"
+            {
+              nativeBuildInputs = [ pkgs.jq ];
+              meta = with nixpkgs.lib; {
+                description = "Assert the captive-portal module is wired into nixos: probe URI, egress allowlist, watcher unit, https refusal";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              j=${payload}
+              cp "$j" $out/contract.json
+              fail=0
+              want() { # want <field> — must be true
+                if [ "$(jq -r ".$1" "$j")" = true ]; then
+                  echo "PASS  $1" | tee -a $out/report.txt
+                else
+                  echo "FAIL  $1 = $(jq -c ".$1" "$j")" | tee -a $out/report.txt >&2
+                  fail=1
+                fi
+              }
+              # Anti-vacuity first: everything below is about an enabled module.
+              want enabled
+              want uriIsProbe
+              want uriPlainHttp
+              want probeEnabled
+              want responseSet
+              want loginPlainHttp
+              want egressHasProbeHost
+              want egressHasLoginHost
+              want cliOnPath
+              want watcherPresent
+              want watcherRestartAlways
+              want watcherInSession
+              want httpsRefused
+              want autoOpenOffRemovesUnit
+              echo "uri: $(jq -r .uri "$j")" >> $out/report.txt
+              [ "$fail" -eq 0 ] || { echo "captive-portal-contract: FAILED" >&2; exit 1; }
+              echo "captive-portal-contract: 14 checks passed" | tee -a $out/report.txt
             '';
       };
 

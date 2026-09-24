@@ -20,7 +20,8 @@ trap cleanup EXIT
 # nmtui-portal execs `captive-login` by name, as the Nix wrapper puts it on
 # PATH; here that name resolves to the real script under test.
 mkdir -p "$work/bin"
-printf '#!/usr/bin/env bash\nexec bash %q "$@"\n' "$BIN/captive-login.sh" > "$work/bin/captive-login"
+# $BASH, not /usr/bin/env: the Nix sandbox has no /usr/bin.
+printf '#!%s\nexec %q %q "$@"\n' "$BASH" "$BASH" "$BIN/captive-login.sh" > "$work/bin/captive-login"
 chmod +x "$work/bin/captive-login"
 export PATH="$FAKES:$work/bin:$PATH"
 export FAKE_NM_STATE=$work/state

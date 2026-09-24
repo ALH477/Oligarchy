@@ -185,3 +185,9 @@ jobs:
       # remote transport.
       - name: nix build .#mcp-self-audit
         run: nix build --no-update-lock-file --print-build-logs .#mcp-self-audit
+
+      # Also small: bash + shellcheck against a fake nmcli, no VM. It guards
+      # the captive-portal scripts' open-once state machine, which is the
+      # difference between one login tab and a new one every five minutes.
+      - name: nix build .#captive-portal-tests
+        run: nix build --no-update-lock-file --print-build-logs .#captive-portal-tests
