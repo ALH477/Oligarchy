@@ -83,7 +83,7 @@ The Oligarchy endures.
 
 **DeMoD IP Blocker still active · DCF tray auto-starts · DSP now optional but unstoppable when armed**
 
-![Oligarchy + ArchibaldOS-DSP](/assets/wallpaper.jpg)
+![Oligarchy + ArchibaldOS-DSP](./assets/wallpaper.jpg)
 
 [ISO download](https://archive.org/details/oligarchy) · [Live demo (YouTube)](https://youtube.com/@demodllc) ·
 
@@ -255,7 +255,13 @@ This isn’t just a system — it’s a conquest machine engineered to dominate 
 
 ### Security controls (the real table)
 
+<!-- truth:claim
+id: hardening-runbook
+kind: file_exists
+path: docs/security-hardening.md
+-->
 Every control is a declarative NixOS option, default-off unless noted. See [`docs/security-hardening.md`](docs/security-hardening.md) for the rollout runbook.
+<!-- truth:end -->
 
 | Control | Module / option | Default | Notes |
 |---|---|---|---|
@@ -292,6 +298,15 @@ Every control is a declarative NixOS option, default-off unless noted. See [`doc
    ```bash
    nix build .#iso
    ```
+
+   <!-- truth:claim
+   id: docs-gate
+   kind: file_contains
+   path: .truthgate.toml
+   pattern: command_mode = "off"
+   -->
+   The documentation is gated too: `nix build .#truthgate-docs` verifies every hidden claim in this README, `AGENTS.md` and `docs/architecture.md` against the tree, with command claims disabled in `.truthgate.toml` so no Markdown can execute anything.
+   <!-- truth:end -->
 
 4. **Flash & Install**:
    - Flash `result/iso/nixos-*.iso` to USB.
@@ -408,7 +423,14 @@ Fork, improve, test, PR. Keep it Framework-compliant and flake-pure.
 
 ## License — The Tyranny You May Legally Clone
 
-BSD 3-Clause License (full text unchanged from original).
+<!-- truth:claim
+id: license-file
+kind: file_contains
+path: LICENSE
+pattern: Redistribution and use in source and binary forms
+-->
+BSD 3-Clause License (full text in `LICENSE`, unchanged from original).
+<!-- truth:end -->
 
 The throne's filthiest secret: the most despotic distro ever compiled is **BSD 3-Clause**. Fork the empire. Sell it. Rename it `Democracy` and ship it. Strip every DeMoD glyph and swear you forged it yourself — the license *permits regicide*. We just bet you can't out-optimize us after the coup. An oligarchy you can `git clone` is the only honest kind.
 

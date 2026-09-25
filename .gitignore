@@ -47,3 +47,6 @@ HyprController-bundle.zip
 # MCP audit logs (runtime state, accidentally created with literal ~ path)
 ~/.local/
 audit.log
+
+# Truthgate last-run receipt (runtime output of `truthgate verify --receipt`)
+.truthgate/receipt.json

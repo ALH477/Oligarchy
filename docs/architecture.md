@@ -85,12 +85,19 @@ reader at the wrong place to start.
 
 ## 2. Flake composition
 
+<!-- truth:claim
+id: six-hosts
+kind: file_contains
+path: flake.nix
+pattern: nixosConfigurations.builder
+-->
 `flake.nix` defines six NixOS configurations — the primary laptop
 (`nixosConfigurations.nixos`), the maintainer's own machine
 (`nixos-asher`, a committed `extendModules` layer on top of `nixos`, see
 below), three more laptops (`nixos-fw13`, `nixos-intel`, `nixos-optimus`)
 and one headless CI build server (`builder`, §5d) — plus the installer ISO
 (`packages.x86_64-linux.iso`).
+<!-- truth:end -->
 
 ### Input layers (order matters)
 
@@ -119,6 +126,11 @@ coprocessor when available.
 
 ### `nixosConfigurations.nixos-asher`
 
+<!-- truth:claim
+id: asher-layer
+kind: dir_exists
+path: hosts/asher/
+-->
 A fourth layer on top of the three above, not a parallel host definition:
 `nixos.extendModules { modules = [ ./hosts/asher ]; }`. `hosts/asher/`
 carries `default.nix` (the toggles migrated off
@@ -133,6 +145,7 @@ is the one host that resolves with no `builtins.pathExists` guard involved
 at all. `custom.localOverrides.expected = false` on this host (and on
 `builder`) suppresses the pure-eval advisory described in §5, since neither
 reads the out-of-repo files that advisory exists to catch.
+<!-- truth:end -->
 
 ### Output shape
 
@@ -148,6 +161,7 @@ reads the out-of-repo files that advisory exists to catch.
 | `packages.x86_64-linux.default` | alias to `iso` |
 | `packages.x86_64-linux.malwareScan` | build gate — YARA-scan the system closure |
 | `packages.x86_64-linux.mcp-self-audit` | build gate — verify MCP workspace stays socket-free outside `ports-sec` |
+| `packages.x86_64-linux.truthgate-docs` | build gate — every `truth:claim` in `AGENTS.md`, this file and `README.md` still matches the tree (policy: `.truthgate.toml`) |
 | `packages.x86_64-linux.plugins-*` | five build gates for the plugin runtime — see §5b |
 | `packages.x86_64-linux.p2p-*` | nine build gates for the P2P substituter — see §5c |
 | `packages.x86_64-linux.test-*` | the five `tests/default.nix` VM suites — packages, NOT checks, so `nix flake check` stays KVM-free |
@@ -180,7 +194,7 @@ on the upstream Calamares-Plasma6 installer. Every always-on production
 service is force-disabled with `lib.mkForce` so the ISO stays lightweight
 and installable:
 
-```
+```text truth:ignore
 ollamaAgentic, dcfCommunityNode, dcfIdentity, dcf-tray,
 strictEgress, cpuSecurity, hardening, malwareShield, secrets, mcpServers
 ```
@@ -251,7 +265,7 @@ input.
 
 ### 5a. Boot → login ordering
 
-```
+```text truth:ignore
 sysinit.target
   └─ framework-based-banner.service      (Framework hardware only; before= the next two)
 multi-user.target
@@ -370,7 +384,7 @@ The resolver chain, in order — the first two are verified in full *before*
 a byte is sent, so a corrupt artifact yields a 404 rather than a partial
 response:
 
-```
+```text truth:ignore
 1. local cache      <stateDir>/nar/<narhash>.nar   verified in full, then served
 2. local Nix store  nix-store --dump               verified in full, then served
 3. upstream HTTP    decompress + verify + tee      streamed with one-chunk lookahead
@@ -541,7 +555,7 @@ source of truth.
 
 Layout split:
 
-```
+```text truth:ignore
 home/
 ├── apps/      — KDE/Qt/GTK theming
 ├── hyprland/  — Hyprland config
@@ -674,6 +688,11 @@ the short form:
 | storage | `oligarchy-storage-mcp` | `disk_usage`, `directory_sizes`, `largest_files`, `nix_gc_roots`, `nix_closure_size`, `nix_generations`, `gc_pressure` — no binary on its allowlist can delete |
 | ports-sec | `oligarchy-ports-sec-mcp` | `listening_ports`, `egress_coverage`, `local_api_scan`, `nmap_self_scan`, `mcp_self_audit`, `tls_cert_check` |
 
+<!-- truth:claim
+id: runner-allowlist
+kind: file_exists
+path: modules/mcp-servers/crates/core/src/allowlist.rs
+-->
 Each aspect server reaches a CLI only through `runner::run(ASPECT, prog, …)`,
 which refuses and audit-logs any `prog` outside that aspect's list in
 `modules/mcp-servers/crates/core/src/allowlist.rs`. That check is at
@@ -681,6 +700,7 @@ which refuses and audit-logs any `prog` outside that aspect's list in
 `nix build .#mcp-self-audit`) source-scan every crate for socket and
 HTTP-client patterns; they do *not* verify `Command::new` literals against the
 lists, so a crate bypassing `runner::run` would slip past them.
+<!-- truth:end -->
 
 ### `ports-sec` — the dedicated auditor
 
@@ -820,9 +840,19 @@ MCP `node_config` tool reads the host copy.
 
 ## 13. Conventions
 
-- **Unfree + broken allowed.** `pkgsConfig` sets `allowUnfree = true` and
-  `allowBroken = true`; builds may pull proprietary firmware/drivers
-  (NVIDIA, etc.).
+<!-- truth:claim
+id: pkgs-config
+kind: file_contains
+path: flake.nix
+pattern: allowUnfree = true
+-->
+**Unfree allowed, broken not.** `pkgsConfig` in `flake.nix` sets
+`allowUnfree = true`, so builds may pull proprietary firmware/drivers
+(NVIDIA, etc.). `allowBroken` was removed on purpose (AGENTS.md rule 11):
+a known-broken package is overridden individually, never waved through
+tree-wide.
+<!-- truth:end -->
+
 - **Pin everything through the flake.** New external dependencies become
   flake inputs, not ad-hoc fetches — the project explicitly avoids
   unpinned sources.
@@ -856,9 +886,19 @@ MCP `node_config` tool reads the host copy.
 | `docs/vpn-windscribe.md` | Windscribe setup, the Discord/Steam egress story, and the DNS tie-break |
 | `README.md` | the in-character satire (technical tables near the bottom are the source of truth) |
 
+<!-- truth:claim
+id: docs-count
+kind: glob_count
+glob: docs/*.md
+min: 13
+-->
+`docs/` holds thirteen Markdown files. The docs gate counts them, so deleting
+one fails the build until this table and this sentence are updated with it.
+<!-- truth:end -->
+
 ## 15. Build & verification
 
-```bash
+```bash truth:ignore
 # full evaluation + build (the actual build gate) — fresh-clone-minimal config
 nix build .#nixosConfigurations.nixos.config.system.build.toplevel
 
@@ -873,6 +913,9 @@ nix build .#malwareScan
 
 # MCP source audit (fails if any crate opens a socket outside ports-sec, or escapes its allowlist)
 nix build .#mcp-self-audit
+
+# docs drift gate (every truth:claim in AGENTS.md, docs/architecture.md, README.md holds; no KVM)
+nix build .#truthgate-docs
 
 # plugin runtime gates — all need KVM, tier2 needs *nested* KVM
 nix build .#plugins-wx-enforcement   # the two W^X mirrors agree, on a booted kernel

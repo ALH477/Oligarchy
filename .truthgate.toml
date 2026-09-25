@@ -1,0 +1,41 @@
+# Truthgate policy — bind the load-bearing docs to the tree.
+# Gate: nix build .#truthgate-docs   (also runs in .github/workflows/eval.yml)
+# Re-pin after editing this file: truthgate lock
+#
+# command claims are OFF: nothing in a Markdown file may execute here. Every
+# claim is a file / directory / string / heading / glob check. Path-token
+# coverage is off as well — these docs are dense prose about a large tree and
+# the useful facts are bound explicitly, not inferred from every path-like word.
+
+[policy]
+fail_on = "error"
+command_mode = "off"
+require_lock = true
+lock_path = ".truthgate.lock"
+coverage = "off"
+require_entailment = true
+ignore_requires_reason = true
+strict_ignore = true
+receipt_path = ".truthgate/receipt.json"
+
+# The agent contract. Every fence is `truth:ignore` (commands are documentation
+# here) and the facts agents act on — W^X mirrors, the MCP allowlist, hosts,
+# the SPA gate — are bound in "Bound facts".
+[[docs]]
+path = "AGENTS.md"
+required_headings = ["Commands (repo root)", "Hard rules", "Bound facts"]
+require_bound_fences = true
+
+# The straight technical reference (AGENTS.md: "Satire in README.md is not
+# documentation. Map: docs/architecture.md").
+[[docs]]
+path = "docs/architecture.md"
+required_headings = ["2. Flake composition", "9. MCP servers — the agent surface", "13. Conventions", "15. Build & verification"]
+require_bound_fences = true
+
+# In-character satire. Fences stay unbound (they are prose, not evidence);
+# only the real paths near the bottom are claimed.
+[[docs]]
+path = "README.md"
+required_headings = ["Building – Forge Your Empire", "Maintenance"]
+require_bound_fences = false

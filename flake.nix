@@ -213,6 +213,17 @@
       url = "github:Yara-Rules/rules";
       flake = false;
     };
+
+    # Truthgate — claim-verified Markdown (github:ALH477/truthgate). AGENTS.md,
+    # docs/architecture.md and README.md carry hidden `truth:claim` blocks that
+    # bind a sentence to a file, directory or string in this tree; the
+    # `truthgate-docs` package fails when the tree stops matching the sentence.
+    # Policy in .truthgate.toml, pinned by .truthgate.lock. Pure stdlib Python,
+    # so following our nixpkgs costs nothing and avoids a second closure.
+    truthgate = {
+      url = "github:ALH477/truthgate";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -246,6 +257,7 @@
     , mcp-servers
     , hydramesh
     , yara-rules
+    , truthgate
     , # archibaldos,
       ...
     } @ inputs:
@@ -845,6 +857,30 @@
       # Installation ISO & Tests
       # ════════════════════════════════════════════════════════════════════════
       packages.${system} = {
+        # Docs drift gate — Truthgate. Verifies every `truth:claim` in
+        # AGENTS.md, docs/architecture.md and README.md against this source
+        # tree: documented files exist, documented strings are still in the
+        # files they are attributed to, required headings survive. No KVM, no
+        # network, seconds. The eval lane runs it on every push; locally:
+        #   nix build .#truthgate-docs
+        # `command` claims are disabled by policy (command_mode = "off"), so
+        # nothing in the docs can execute anything here — it is a pure read of
+        # the tree.
+        #
+        # Reads `$src` in place rather than copying it first: the tracked tree
+        # is ~114 MB (assets/ is most of it) and `verify` opens files read-only
+        # — only `--receipt` would write, and we do not pass it. The upstream
+        # README's copy-then-verify recipe is for trees that need to be
+        # writable; this one does not.
+        truthgate-docs = pkgs.runCommand "truthgate-docs"
+          {
+            nativeBuildInputs = [ truthgate.packages.${system}.truthgate ];
+            src = self;
+          } ''
+          truthgate --root "$src" verify --fail
+          touch "$out"
+        '';
+
         # ISO installer
         # Pass `system`, NOT `pkgs`: handing nixosGenerate an externally-built
         # pkgs sets nixpkgs.pkgs, which collides with the `{ nixpkgs.config = … }`
@@ -2668,6 +2704,7 @@
             nil # Nix LSP
             nixpkgs-fmt
             nixfmt-rfc-style
+            truthgate.packages.${system}.truthgate # docs claim gate (`truthgate verify --fail`)
             nix-tree # Explore Nix store
             nix-diff # Compare Nix derivations
             nvd # NixOS version diff
@@ -2708,6 +2745,7 @@
             echo "║     --flake .#nixos                - fast eval smoke test      ║"
             echo "║   nix build .#iso                  - build installer ISO       ║"
             echo "║   nix build .#malwareScan          - YARA-scan the closure     ║"
+            echo "║   nix build .#truthgate-docs       - docs drift gate           ║"
             echo "║   nix fmt                          - format Nix sources        ║"
             echo "║   nvd diff /run/current-system ./result - diff closures        ║"
             echo "║   oligarchy-security status        - live security posture     ║"

@@ -188,6 +188,15 @@ jobs:
       - name: nix build .#mcp-self-audit
         run: nix build --no-update-lock-file --print-build-logs .#mcp-self-audit
 
+      # Docs drift gate. AGENTS.md, docs/architecture.md and README.md carry
+      # hidden `truth:claim` blocks binding sentences to files and strings in
+      # this tree (github:ALH477/truthgate, following our nixpkgs). This fails
+      # the moment a documented module, host layer or gate stops existing
+      # where the docs say it does. Pure read of the tree — command claims are
+      # off by policy — so it is safe on a hosted runner and takes seconds.
+      - name: nix build .#truthgate-docs
+        run: nix build --no-update-lock-file --print-build-logs .#truthgate-docs
+
       # Also small: bash + shellcheck against a fake nmcli, no VM. It guards
       # the captive-portal scripts' open-once state machine, which is the
       # difference between one login tab and a new one every five minutes.
