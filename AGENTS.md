@@ -1,16 +1,23 @@
 # AGENTS.md
 
+<!-- truth:claim
+id: map
+kind: file_exists
+path: docs/architecture.md
+-->
 NixOS distribution flake for Framework 16 AMD 7040. The build artifact is an OS (`nixosConfigurations.nixos`), not an app. Satire in `README.md` is not documentation. Map: `docs/architecture.md`. Outputs: `flake.nix`.
+<!-- truth:end -->
 
 ## Commands (repo root)
 
-```bash
+```bash truth:ignore
 nix develop
 nixpkgs-fmt <file.nix>          # subflakes; root formatter is nixfmt-rfc-style (`nix fmt`)
 nix build .#nixosConfigurations.nixos.config.system.build.toplevel
 sudo nixos-rebuild switch --flake .#nixos --impure
 nix build .#iso
 nix flake check                 # builds toplevel only; slow gates are packages
+nix build .#truthgate-docs      # docs drift gate: the truth:claim blocks in this file, docs/architecture.md, README.md
 ```
 
 `--impure` is required when `~/.config/oligarchy/{local,state}.nix` exists. Pure eval silently uses fresh-clone defaults (steam, DSP, persona, etc.) instead of erroring.
@@ -50,11 +57,17 @@ Comments next to the code are load-bearing. A 400-line module is often 300 lines
 
 ## Adding an MCP aspect
 
+<!-- truth:claim
+id: mcp-aspect-lists
+kind: file_exists
+path: modules/mcp-servers/nixos-module.nix
+-->
 Seven lists must agree (miss one → silent `exec failed`): `crates/core/src/allowlist.rs` (`ASPECTS` + `list_for`), `crates/umbrella/src/main.rs` (`is_known_aspect` + usage), `modules/mcp-servers/flake.nix` `aspectNames`, `modules/mcp-servers/nixos-module.nix` `aspectNames`, repo-root `.mcp.json`, `modules/mcp-servers/README.md`, `docs/architecture.md` §9. Copy `crates/hydramesh` or `crates/storage`. Tools must work **unprivileged**. Allowlist no deleting binaries.
+<!-- truth:end -->
 
 ## Gates (not in `nix flake check`; need KVM except mcp-self-audit)
 
-```bash
+```bash truth:ignore
 nix build .#mcp-self-audit
 nix build .#malwareScan
 nix build .#plugins-wx-enforcement .#plugins-policy-refusal .#plugins-signed-install .#plugins-tier1-runtime
@@ -65,6 +78,98 @@ nix build .#p2p-local-signing .#p2p-peer-scope .#p2p-selftest
 cd modules/mcp-servers && cargo test --workspace
 ```
 
+<!-- truth:claim
+id: tests-not-output
+kind: file_exists
+path: tests/default.nix
+-->
 `tests/default.nix` is **not** a flake output. Eval directly if needed: `nix-build tests/default.nix -A strict-egress`.
+<!-- truth:end -->
 
-Hosts: `nixos` (primary), `nixos-fw13` / `nixos-intel` / `nixos-optimus` (UUID stubs, unverified). User is `custom.user.name` (default `asher`).
+<!-- truth:claim
+id: hosts
+kind: file_contains
+path: flake.nix
+pattern: nixosConfigurations.nixos-optimus
+-->
+Hosts in `flake.nix`: `nixos` (primary), `nixos-asher` (committed `hosts/asher/` layer), `nixos-fw13` / `nixos-intel` / `nixos-optimus` (UUID stubs, unverified), `builder`. User is `custom.user.name` (default `asher`).
+<!-- truth:end -->
+
+## Bound facts
+
+Machine-checked by `nix build .#truthgate-docs`. When one of these fails, the code moved; fix the sentence, do not delete the claim.
+
+<!-- truth:claim
+id: wx-manifest
+kind: file_contains
+path: modules/oligarchy-plugins/host/src/manifest.rs
+pattern: wx_enforced
+-->
+Rule 3, host side: `Manifest::wx_enforced()` lives in `modules/oligarchy-plugins/host/src/manifest.rs`.
+<!-- truth:end -->
+
+<!-- truth:claim
+id: wx-nix
+kind: file_contains
+path: modules/oligarchy-plugins/modules/plugins.nix
+pattern: wxEnforced
+-->
+Rule 3, Nix side: its mirror `wxEnforced` lives in `modules/oligarchy-plugins/modules/plugins.nix`.
+<!-- truth:end -->
+
+<!-- truth:claim
+id: mcp-allowlist
+kind: file_exists
+path: modules/mcp-servers/crates/core/src/allowlist.rs
+-->
+Rule 5: the per-aspect CLI allowlist is `modules/mcp-servers/crates/core/src/allowlist.rs`.
+<!-- truth:end -->
+
+<!-- truth:claim
+id: mcp-json
+kind: file_exists
+path: .mcp.json
+-->
+Rules 5 and 6 police the repo-root `.mcp.json`.
+<!-- truth:end -->
+
+<!-- truth:claim
+id: hypr-assert
+kind: file_exists
+path: home/hyprland/default.nix
+-->
+Rule 7's assertion is in `home/hyprland/default.nix`.
+<!-- truth:end -->
+
+<!-- truth:claim
+id: spa-gate
+kind: file_exists
+path: modules/security/dcf-spa-gate.nix
+-->
+Rule 8's replacement for HydraMesh's SPA module is `modules/security/dcf-spa-gate.nix`.
+<!-- truth:end -->
+
+<!-- truth:claim
+id: hydramesh-module
+kind: file_exists
+path: modules/hydramesh.nix
+-->
+Rule 12: the HydraMesh bind ports are declared in `modules/hydramesh.nix`.
+<!-- truth:end -->
+
+<!-- truth:claim
+id: dcf-node-module
+kind: file_exists
+path: modules/dcf-community-node.nix
+-->
+Rule 12: and must match `modules/dcf-community-node.nix`.
+<!-- truth:end -->
+
+<!-- truth:claim
+id: eval-runs-gate
+kind: file_contains
+path: .github/workflows/eval.yml
+pattern: truthgate-docs
+-->
+The docs gate itself runs in the eval lane: `.github/workflows/eval.yml` builds `truthgate-docs` on every push and pull request.
+<!-- truth:end -->
