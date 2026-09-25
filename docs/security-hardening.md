@@ -145,12 +145,42 @@ Ships enabled at `level = "monitor"` (log + notify only). Verify:
 
 ```bash
 oligarchy-security scan quick
-printf '%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > /tmp/eicar.txt
-malware-shield-yara /tmp        # should log an EICAR event
-oligarchy-security events
-systemctl list-timers | grep malware
+# The test string is written as two adjacent quoted halves on purpose: the
+# yara rule matches the contiguous marker, and this doc lives inside scanned
+# paths on every checkout, so a whole literal here would flag itself.
+printf '%s' 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TE''ST-FILE!$H+H*' > /tmp/eicar.txt
+malware-shield-yara /tmp        # should log an EICAR event (and, under level=enforce, exit nonzero)
+oligarchy-security events       # no sudo needed from a wheel account
+systemctl list-timers | grep -E 'malware|clamdscan'
 systemctl status clamav-daemon clamav-freshclam
 ```
+
+What the log holds and how to read it:
+
+- `/var/lib/malware-shield/events.log` is `0640 root:wheel`; the quarantine
+  directory stays `0700 root`. `oligarchy-security status` counts the log's
+  lines when it can read it and says `unreadable (not in wheel)` when it
+  cannot — it never prints `0` for a file it could not open.
+- `[clamav] <path> sig=<Name>` lines come from the nightly `clamdscan`, which
+  runs through `malware-shield-clamdscan`: exit 1 (detections) is dispatched
+  line by line; exit 2 with a clean summary (unscannable sockets and vanished
+  temp files, which used to mark the unit failed every single night) is
+  logged as a warning and succeeds; exit 2 with **no** per-file error count
+  (clamd not answering still prints a summary, but never a `Total errors:`
+  line) stays a failed unit.
+- `[aide] filesystem Added entries: A, Removed entries: R, Changed entries: C;
+  first: …` fires only when the baseline drifted with **no** system-generation
+  change. After a `nixos-rebuild switch` the check logs `aide rebaselined
+  after switch to <gen>` to the journal and raises nothing.
+- `[lynis]` / `[unhide]` lines come from the daily rootkit sweep; `LOGG-2138`
+  (klogd absent) is skipped because journald owns the kernel log here.
+- The yara sweep is one `yara --scan-list` invocation per target with
+  `yara.threads` (default 2) and skips files over `yara.maxFileSize`
+  (default `256M`; Steam assets and VM images are what a per-file loop spent
+  three hours and 267 GB of reads on). `yara.excludePaths` defaults to Claude
+  Code transcripts plus `*/modules/security/yara-rules/*` — any checkout's
+  rule files match their own marker strings. Both are places to hide, same as
+  any exclusion; keep the list short.
 
 Full-closure scan at build time:
 
@@ -167,7 +197,8 @@ custom.malwareShield.level = "quarantine";   # or "enforce"
 
 Quarantine lives at `/var/lib/malware-shield/quarantine` (restore manually as
 root). `rootkit` uses lynis + unhide (rkhunter/chkrootkit aren't in nixpkgs
-25.11). AIDE watches `/etc /boot /root /run/current-system` — never `/nix/store`.
+25.11), daily. AIDE watches `/etc /boot /root /run/current-system` — never
+`/nix/store`.
 
 ---
 
@@ -329,9 +360,9 @@ behind it, and a dead daemon is a transfer failure Nix routes around.
 ## Tests
 
 ```bash
-nix build -f tests/default.nix strict-egress
-nix build -f tests/default.nix malware-shield
-nix build -f tests/default.nix hardening
+nix build .#test-strict-egress
+nix build .#test-malware-shield
+nix build .#test-hardening
 ```
 
 (These VM tests are intentionally not in `nix flake check`, which already builds

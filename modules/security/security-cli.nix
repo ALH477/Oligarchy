@@ -74,7 +74,21 @@ let
         fi
       else echo "off"; fi
     }
-    q_events() { [ -f /var/lib/malware-shield/events.log ] && wc -l < /var/lib/malware-shield/events.log || echo 0; }
+    # The events log is 0640 root:wheel (malware-shield.nix tmpfiles), so an
+    # admin reads it without sudo. A caller who cannot must be told so: the
+    # old `[ -f ] || echo 0` printed a clean "0 events" for anyone outside
+    # wheel, on a day the journal carried seven detections. "0" is reserved
+    # for a machine where the shield has never run.
+    q_events() {
+      local f=/var/lib/malware-shield/events.log
+      if [ -r "$f" ]; then
+        wc -l < "$f"
+      elif [ -d /var/lib/malware-shield ] && [ ! -r /var/lib/malware-shield ]; then
+        echo "unreadable (not in wheel)"
+      else
+        echo 0
+      fi
+    }
     q_vpn() {
       ${if !vpnEnabled then ''echo "off"'' else ''
       if ip link show ${vpnIface} >/dev/null 2>&1; then
@@ -113,7 +127,7 @@ let
         --arg clamd "$clamd" --arg apparmor "$apparmor" --arg auditd "$auditd" \
         --arg usbguard "$usbguard" --arg docker_rootless "$docker_rootless" \
         --arg blocklist "$blocklist" --arg vpn "$vpn" \
-        --argjson events "''${events:-0}" --arg ts "$(date -Is)" \
+        --arg events "''${events:-0}" --arg ts "$(date -Is)" \
         '{ts:$ts, ssh_password_auth:$ssh_pw, fail2ban:$fail2ban, egress:$egress,
           clamav:$clamd, apparmor:$apparmor, auditd:$auditd, usbguard:$usbguard,
           docker_rootless:$docker_rootless, malware_events:$events,
@@ -174,7 +188,17 @@ let
       esac
     }
 
-    cmd_events() { sudo tail -n "''${2:-20}" /var/lib/malware-shield/events.log 2>/dev/null || echo "no events"; }
+    # $1, not $2: the dispatcher below already shifted the verb off, so
+    # `oligarchy-security events 50` used to tail the default 20 every time.
+    # sudo only when the caller cannot read the log (wheel can).
+    cmd_events() {
+      local f=/var/lib/malware-shield/events.log n="''${1:-20}"
+      if [ -r "$f" ]; then
+        tail -n "$n" "$f"
+      else
+        sudo tail -n "$n" "$f" 2>/dev/null || echo "no events"
+      fi
+    }
 
     cmd_usb() {
       case "''${1:-}" in
