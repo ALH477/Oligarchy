@@ -617,6 +617,16 @@ let
           # configuration.nix's resolver settings, verbatim. Scenario 9 of the
           # design spec: a portal-local name must resolve through the LINK's
           # resolver under them, fallbackDns (unreachable here) notwithstanding.
+          # NetworkManager-ensure-profiles is a oneshot with no RemainAfterExit:
+          # once it has written the keyfiles it is `inactive`, and the test
+          # driver's wait_for_unit reads "inactive with no pending jobs" as a
+          # failure. Four nodes in this file wait on it, and all four went red
+          # the first time the nightly sweep ever ran them (2026-09-25).
+          # Keeping the unit's exit state observable is a test-side concern
+          # only: the module under test is unchanged, and a unit that failed
+          # now shows as `failed` rather than as the same `inactive`.
+          systemd.services.NetworkManager-ensure-profiles.serviceConfig.RemainAfterExit = true;
+
           services.resolved = {
             enable = true;
             dnssec = "allow-downgrade";
@@ -759,6 +769,8 @@ let
             ipv6.method = "disabled";
           };
         };
+        # See the captive-portal client node for why this line exists.
+        systemd.services.NetworkManager-ensure-profiles.serviceConfig.RemainAfterExit = true;
         services.resolved.enable = true;
         services.avahi = {
           enable = true;
@@ -813,6 +825,8 @@ let
 
     nodes.machine = { lib, pkgs, ... }: {
       imports = [ ../modules/network-profiles.nix ];
+      # See the captive-portal client node for why this line exists.
+      systemd.services.NetworkManager-ensure-profiles.serviceConfig.RemainAfterExit = true;
       networking.useDHCP = false;
       networking.interfaces = lib.mkForce { eth1 = { }; };
       networking.networkmanager = {
@@ -1002,6 +1016,9 @@ let
               ipv6.method = "disabled";
             };
           };
+          # See the captive-portal client node for why this line exists.
+          systemd.services.NetworkManager-ensure-profiles.serviceConfig.RemainAfterExit = true;
+
           services.resolved = {
             enable = true;
             dnssec = "allow-downgrade";
