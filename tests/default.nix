@@ -901,6 +901,8 @@ let
   # modules/captive-portal/vm/policy.nft loaded against network namespaces:
   # a "guest" behind cp0 and a "venue" behind the uplink. 14 checks, the last
   # two anti-vacuity (with the table gone the drops must turn into successes).
+  # The count is guarded in-script too (policy-netns.sh's `expected`), so the
+  # grep below is a second opinion, not the only one.
   # The NixOS firewall is OFF on this node on purpose: its INPUT chain would
   # otherwise mask the policy's own input drops and the checks would pass
   # without the policy doing anything.
@@ -917,6 +919,7 @@ let
       )
       print(out)
       assert "policy-test: 14 passed, 0 failed" in out, out
+      assert "policy-test: OK" in out, out
     '';
   };
 
