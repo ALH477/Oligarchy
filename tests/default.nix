@@ -40,49 +40,178 @@ let
     '';
   };
 
-  # ── Malware Shield: YARA path detects the EICAR string, quarantine moves ───
+  # ── Malware Shield: every scanner exercised, enforce level, the CLI too ─────
+  # One node, level = enforce, so each scanner is asserted BOTH ways: a real
+  # detection must fail the scanner's exit status (the rc-in-a-pipeline-subshell
+  # bug made that impossible for yara, and aide/rootkit always exited 0), and
+  # a clean-but-noisy run must NOT (clamdscan's exit 2 on an unscannable socket
+  # had marked the unit failed on every run since August). clamd runs offline
+  # against a one-line custom .hdb carrying the EICAR md5, which is all clamd
+  # needs to start — freshclam is forced off. What stays unmeasured: the yara
+  # size cap is asserted as "the big file was skipped", not as the memory it
+  # saves; lynis' own findings vary by VM, so only the log hygiene is asserted.
   malware-shield = pkgs.testers.runNixOSTest {
     name = "malware-shield";
 
-    nodes.machine = { config, pkgs, ... }: {
-      imports = [ ../modules/security/malware-shield.nix ];
+    nodes.machine = { config, pkgs, lib, ... }: {
+      imports = [
+        ../modules/security/malware-shield.nix
+        # Standalone-safe: it reads custom.vpn.* and strictEgress.enable with
+        # `or` defaults, and custom.securityCli.enable defaults to true.
+        ../modules/security/security-cli.nix
+      ];
+      virtualisation.memorySize = 2048;
+      # python3: the test binds a unix socket in the scanned tree to reproduce
+      # the "unscannable file" that used to fail every clamdscan run.
+      environment.systemPackages = [ pkgs.python3 ];
+
       custom.malwareShield = {
         enable = true;
-        level = "quarantine";
-        clamav.enable = false; # DBs can't download in the sandbox
-        rootkit.enable = false; # lynis is slow/noisy in a VM
-        aide.enable = false;
-        yara.enable = true;
-        # Set explicitly because this node imports malware-shield.nix ALONE,
-        # and `notifyUser` defaults to `config.custom.user.name` — an option
-        # declared in modules/user.nix, which is not imported here. Without
-        # this the node dies with a bare "attribute 'user' missing", naming
-        # neither the option nor the module that would have supplied it.
-        #
-        # Setting the value rather than importing modules/user.nix keeps the
-        # node light, which is the same call the hardening test makes just
-        # below (apparmor/auditd off for the same reason).
+        level = "enforce";
+        clamav.enable = true;
+        rootkit.enable = true;
+        aide = {
+          enable = true;
+          # A two-file directory of our own, so --init is instant and the
+          # only drift is the one the test plants.
+          paths = [ "/etc/aide-test" ];
+        };
+        yara = {
+          enable = true;
+          # Small on purpose: the 2 MiB fixture below must be skipped.
+          maxFileSize = "1M";
+        };
+        # Set explicitly because this node imports malware-shield.nix without
+        # modules/user.nix, where `config.custom.user.name` (the default) is
+        # declared; without it eval dies with a bare "attribute 'user' missing".
         notifyUser = "root";
       };
+
+      # Offline clamd: no freshclam, a custom hash database instead of
+      # main.cvd. clamd loads any supported format it finds in
+      # DatabaseDirectory, and refuses to start only when there is NONE.
+      # 44d88612… is md5 of the 68-byte EICAR file.
+      services.clamav.updater.enable = lib.mkForce false;
+      services.clamav.scanner.scanDirectories = lib.mkForce [ "/tmp/clamtest" ];
+      systemd.tmpfiles.rules = [
+        "d /var/lib/clamav 0755 clamav clamav -"
+        "f /var/lib/clamav/eicar.hdb 0644 clamav clamav - 44d88612fea8a8f36de82e1278abb02f:68:Eicar-Test-Signature"
+        "d /etc/aide-test 0755 root root -"
+        "f /etc/aide-test/seed 0644 root root - seed"
+      ];
+
+      # wheel vs not: the events log is 0640 root:wheel, and the CLI must say
+      # "unreadable" rather than "0" to whoever cannot open it.
+      users.users.adm1 = { isNormalUser = true; extraGroups = [ "wheel" ]; };
+      users.users.plain = { isNormalUser = true; };
     };
 
     testScript = ''
+      import re
+
       machine.wait_for_unit("multi-user.target", timeout=120)
+      machine.wait_for_unit("clamav-daemon.service", timeout=120)
 
-      # Plant the EICAR test string where the yara sweep looks.
-      machine.succeed(
-          r"printf '%s' "
-          r"'X5O!P%@AP[4\\PZX54(P^)7CC)7}}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' "
-          r"> /tmp/eicar.com"
+      # The EICAR string, assembled from two adjacent literals split inside
+      # eicar.yar's `$eicar` string so this source file no longer carries the
+      # marker contiguously — it used to be its own false positive in every
+      # worktree the yara sweep walked. Single backslash and brace: the file
+      # must be the exact 68 bytes for clamd's md5 signature, not just carry
+      # yara's substring (the old fixture had both doubled).
+      eicar = (
+          r"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TE"
+          r"ST-FILE!$H+H*"
       )
+      plant = f"printf '%s' '{eicar}' > "
 
-      # Run the sweep; quarantine level moves the file aside.
-      machine.succeed("malware-shield-yara /tmp")
-      machine.fail("test -f /tmp/eicar.com")
+      def events():
+          return int(machine.succeed("wc -l < /var/lib/malware-shield/events.log").strip())
+
+      # ── permissions: wheel-readable log, root-only quarantine ──────────────
+      st = machine.succeed("stat -c %a:%U:%G /var/lib/malware-shield/events.log").strip()
+      assert st == "640:root:wheel", f"events.log must be 640 root:wheel (tmpfiles), got {st}"
+      st = machine.succeed("stat -c %a:%U:%G /var/lib/malware-shield/quarantine").strip()
+      assert st == "700:root:root", f"quarantine must stay 700 root:root, got {st}"
+
+      # ── yara ───────────────────────────────────────────────────────────────
+      # 1. A detection under enforce: nonzero exit AND quarantined AND logged.
+      #    The nonzero exit is the fix — rc used to be set in a pipeline
+      #    subshell and the script always exited 0.
+      machine.succeed("mkdir -p /tmp/y1 && " + plant + "/tmp/y1/eicar.com")
+      machine.fail("malware-shield-yara /tmp/y1")
+      machine.fail("test -f /tmp/y1/eicar.com")
       machine.succeed("ls /var/lib/malware-shield/quarantine/ | grep -qi eicar")
-      machine.succeed("grep -qi eicar /var/lib/malware-shield/events.log")
+      machine.succeed("grep -q '\\[yara\\] /tmp/y1/eicar.com' /var/lib/malware-shield/events.log")
+      # 2. The default exclusion glob: a checkout's own rules dir is skipped.
+      machine.succeed("mkdir -p /tmp/y2/x/modules/security/yara-rules && "
+                      + plant + "/tmp/y2/x/modules/security/yara-rules/t.txt")
+      machine.succeed("malware-shield-yara /tmp/y2")
+      machine.succeed("test -f /tmp/y2/x/modules/security/yara-rules/t.txt")
+      # 3. The size cap: 2 MiB + EICAR is above maxFileSize = 1M and skipped.
+      #    Only the skip is measured here, not the memory/IO it saves.
+      machine.succeed("mkdir -p /tmp/y3 && head -c 2097152 /dev/zero > /tmp/y3/big.bin && "
+                      + plant.replace(">", ">>") + "/tmp/y3/big.bin")
+      machine.succeed("malware-shield-yara /tmp/y3")
+      machine.succeed("test -f /tmp/y3/big.bin")
 
-      print("malware-shield: EICAR detected and quarantined")
+      # ── clamdscan wrapper ──────────────────────────────────────────────────
+      es = machine.succeed("systemctl show clamdscan.service -p ExecStart").strip()
+      assert "malware-shield-clamdscan" in es, f"clamdscan must run the wrapper: {es}"
+      p = machine.succeed("systemctl show clamdscan.timer -p Persistent").strip()
+      assert p == "Persistent=yes", f"clamdscan.timer must be Persistent (upstream is not): {p}"
+      # 1. Infected + an unscannable socket: detection wins, event dispatched.
+      machine.succeed("mkdir -p /tmp/clamtest && " + plant + "/tmp/clamtest/eicar.com")
+      machine.succeed("python3 -c 'import socket; socket.socket(socket.AF_UNIX).bind(\"/tmp/clamtest/s\")'")
+      machine.fail("malware-shield-clamdscan")
+      machine.succeed("grep -q '\\[clamav\\] .*Eicar-Test-Signature' /var/lib/malware-shield/events.log")
+      # 2. Only the socket left: exit 2 from clamdscan is NOT a failed scan.
+      machine.succeed("rm -f /tmp/clamtest/eicar.com")
+      machine.succeed("malware-shield-clamdscan")
+      machine.succeed("journalctl -t malware-shield --no-pager | grep -q unscannable")
+      # 3. No daemon: that IS a failed scan, and it must say so with exit 2.
+      machine.succeed("systemctl stop clamav-daemon.service clamav-daemon.socket")
+      status, _ = machine.execute("malware-shield-clamdscan")
+      assert status == 2, f"clamdscan wrapper must exit 2 with clamd down, got {status}"
+      machine.succeed("systemctl start clamav-daemon.socket clamav-daemon.service")
+
+      # ── aide: generation-aware ─────────────────────────────────────────────
+      machine.succeed("malware-shield-aide")  # first run: baseline + generation
+      machine.succeed("test -s /var/lib/malware-shield/aide.generation")
+      gen = machine.succeed("cat /var/lib/malware-shield/aide.generation").strip()
+      cur = machine.succeed("readlink -f /run/current-system").strip()
+      assert gen == cur, f"aide.generation must record the running system: {gen} != {cur}"
+      # 1. Drift with no generation change: an event with detail, and enforce.
+      machine.succeed("touch /etc/aide-test/drift")
+      machine.fail("malware-shield-aide")
+      tail = machine.succeed("tail -n 1 /var/lib/malware-shield/events.log")
+      assert "[aide]" in tail and "Added entries: 1" in tail and "/etc/aide-test/drift" in tail, tail
+      # 2. A generation change: rebaseline silently, no event, exit 0.
+      before = events()
+      machine.succeed("echo bogus > /var/lib/malware-shield/aide.generation && touch /etc/aide-test/drift2")
+      out = machine.succeed("malware-shield-aide 2>&1")
+      assert "rebaselined" in out, f"aide must rebaseline after a switch, got: {out}"
+      assert events() == before, "a rebaseline after a switch must not be an event"
+      gen = machine.succeed("cat /var/lib/malware-shield/aide.generation").strip()
+      assert gen == cur, "aide.generation must be re-recorded after the rebaseline"
+
+      # ── CLI ────────────────────────────────────────────────────────────────
+      one = machine.succeed("su adm1 -c 'oligarchy-security status --oneline'")
+      assert re.search(r"events:[0-9]+", one), f"wheel must see the real count without sudo: {one}"
+      one = machine.succeed("su plain -c 'oligarchy-security status --oneline'")
+      assert "events:unreadable" in one, f"a non-wheel user must be told, not shown 0: {one}"
+      n = machine.succeed("su adm1 -c 'oligarchy-security events 1' | wc -l").strip()
+      assert n == "1", f"`events 1` must honour its argument (used to tail 20), got {n} lines"
+
+      # ── rootkit: log hygiene only (lynis' findings vary by VM) ────────────
+      # Last, because a genuine lynis warning under enforce is a legitimate
+      # event and would move the counts asserted above.
+      status, out = machine.execute("timeout 600 malware-shield-rootkit 2>/tmp/rootkit.err")
+      assert status != 124, "rootkit sweep timed out"
+      machine.fail("grep -q 'stray' /tmp/rootkit.err")
+      machine.fail("grep -q 'Warnings (' /var/lib/malware-shield/events.log")
+      machine.fail("grep -q 'LOGG-2138' /var/lib/malware-shield/events.log")
+
+      print("malware-shield: yara/clamdscan/aide/rootkit/CLI asserted under enforce")
     '';
   };
 

@@ -1040,35 +1040,23 @@
 
 
       # Malware Shield (modules/security/malware-shield.nix) — monitor mode:
-      # log + notify only. Review /var/lib/malware-shield/events.log for false
-      # positives, then raise level to "quarantine". onAccess stays off (DSP
-      # latency). Closure is scanned at build via `nix build .#malwareScan`.
+      # log + notify only. Review /var/lib/malware-shield/events.log (0640
+      # root:wheel, so `oligarchy-security events` needs no sudo from an
+      # admin account) for false positives, then raise level to "quarantine".
+      # onAccess stays off (DSP latency). Closure is scanned at build via
+      # `nix build .#malwareScan`. yara.excludePaths is left at the module
+      # default: it already skips Claude Code transcripts and any checkout's
+      # modules/security/yara-rules/, and the two other fixtures that used to
+      # need a per-host entry here (the EICAR string in tests/default.nix and
+      # docs/security-hardening.md) are now split so no rule string is
+      # contiguous in them.
       custom.malwareShield = {
         enable = lib.mkDefault false;
         level = "monitor";
         clamav = { enable = true; onAccess = false; };
         rootkit.enable = true;
         aide.enable = true;
-        yara = {
-          enable = true;
-          # Setting excludePaths here replaces the module's default outright,
-          # so both original entries are repeated below — dropping them would
-          # silently re-enable the .claude/projects false positives the
-          # default was written to prevent.
-          excludePaths = [
-            "/home/*/.claude/projects"
-            "/home/*/.claude/file-history"
-            # This repo's own EICAR pipeline-test fixture and the doc that
-            # demonstrates it (modules/security/yara-rules/eicar.yar,
-            # docs/security-hardening.md) both contain the literal EICAR
-            # test string by design — the same structural false positive as
-            # the two paths above, just from a second source the default
-            # list didn't anticipate: a checkout of this repo living under a
-            # scanned path.
-            "/home/*/Documents/oligarchy2/Oligarchy/modules/security/yara-rules"
-            "/home/*/Documents/oligarchy2/Oligarchy/docs/security-hardening.md"
-          ];
-        };
+        yara.enable = true;
       };
 
       # sops-nix wiring (modules/secrets.nix). Safe with zero consumers:
