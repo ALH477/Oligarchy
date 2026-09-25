@@ -206,6 +206,18 @@
     # nixos-25.11. Forcing a follow breaks its Faust/SBCL builds.
     hydramesh.url = "github:ALH477/HydraMesh";
 
+    # nnnvim — the maintainer's Neovim configuration, packaged (custom.nnnvim.*).
+    #
+    # Consumed as a real flake (packages + nixosModules). Deliberately NOT
+    # `follows`-ing our nixpkgs, same reasoning as hydramesh above: nnnvim needs
+    # neovim 0.12 for `vim.pack`, `vim._core.ui2`, `:restart` and the
+    # runtime-bundled `nvim.undotree`, and nixos-25.11 ships 0.11.7 and has no
+    # `vimPlugins.eldritch-nvim` attribute at all. Our `nixpkgs-unstable` pin is
+    # no help either — it is on 0.11.6. Forcing a follow fails eval outright.
+    # The nixosModule resolves the package from nnnvim's OWN nixpkgs, so this
+    # costs one extra nixpkgs eval and nothing else.
+    nnnvim.url = "github:ALH477/nnnvim";
+
     # Community YARA ruleset — pinned so the Malware Shield build gate
     # (packages.malwareScan) scans the closure with deterministic, offline
     # rules. We consume .yar files only, no flake outputs.
@@ -256,6 +268,7 @@
     , demod-voice
     , mcp-servers
     , hydramesh
+    , nnnvim
     , yara-rules
     , truthgate
     , # archibaldos,
@@ -285,6 +298,7 @@
         # Uncomment when archibaldos is available:
         # inherit archibaldos;
         inherit vm-manager dsp-ctl oligarchy-forge mcp-servers hydramesh;
+        inherit nnnvim;
         inherit demod-talk oligarchy-vault reliquary;
       };
 
@@ -448,6 +462,11 @@
 
         # DeMoD Voice - Local TTS and Voice Cloning
         ./modules/demod-voice/nixos-module.nix
+
+        # nnnvim — Neovim 0.12 + the maintainer's config, Nix-pinned
+        # (custom.nnnvim.*). Defaults off, so with enable = false it adds no
+        # package and no session variable and the ISO needs no mkForce for it.
+        nnnvim.nixosModules.default
 
         # NOT imported: the DSP VM this file used to gesture at is already
         # built, in full, by `vm-manager.nixosModules.dsp-vm` (option
@@ -955,6 +974,11 @@
               # (hydramesh-lisp) and Faust/GCC (hydramodem) builds have no place in
               # the installer image. Drop this mkForce if the ISO must ship them.
               custom.hydramesh.enable = lib.mkForce false;
+              # nnnvim itself stays — editing a config during an install is the
+              # point of having an editor on the installer. Its language servers
+              # do not: clang-tools, gopls and friends are ~2.1 GiB of closure
+              # that nothing on a live ISO will ever attach to a buffer.
+              custom.nnnvim.withLsp = lib.mkForce false;
               # Rule 9 says the ISO stays light *by default*, not merely when a
               # module's `enable` default happens to be false. Personal apps
               # (android-mirror udev rules, adbusers, scrcpy) ride a

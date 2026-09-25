@@ -1684,6 +1684,27 @@
       };
 
       # ──────────────────────────────────────────────────────────────────────────
+      # Editor
+      # ──────────────────────────────────────────────────────────────────────────
+      # nnnvim (custom.nnnvim, declared by the nnnvim flake's nixosModule) is
+      # Neovim 0.12 plus the maintainer's config, with every plugin and language
+      # server pinned by Nix. On distro-wide rather than in hosts/asher because
+      # `EDITOR = "nvim"` is already set for every host — home/home.nix,
+      # home/home-minimal.nix, `core.editor` in home/apps/default.nix, the
+      # Hyprland notes scratchpad and the IceWM menu entry all name `nvim`, and
+      # until now nothing put an `nvim` on PATH. Those were dangling references,
+      # not a feature request.
+      #
+      # `vim` stays in systemPackages below, deliberately: it is the fallback for
+      # the case where this config or one of its plugins fails to evaluate.
+      custom.nnnvim = {
+        enable = true;
+        # Also export EDITOR=nvim at the system level, which home-manager's
+        # sessionVariables do not cover (root shells, sudo -e, systemd units).
+        defaultEditor = true;
+      };
+
+      # ──────────────────────────────────────────────────────────────────────────
       # System Packages (removed legacy audio tools)
       # ──────────────────────────────────────────────────────────────────────────
       environment.systemPackages = with pkgs; [
