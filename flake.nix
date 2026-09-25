@@ -1808,7 +1808,7 @@
       // (
         let
           vmTests = import ./tests {
-            inherit pkgs;
+            inherit pkgs hydramesh;
             inherit (nixpkgs) lib;
             # The portal-VM tests build a guest with microvm.nix's guest module.
             microvm = oligarchy-plugins.inputs.microvm;

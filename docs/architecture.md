@@ -756,6 +756,7 @@ not a service mesh. Do not add HTTP between these processes.
       oligarchy-plugin@  -- instances, not the supervisor
       oligarchy-p2pd     -- loopback HTTP 127.0.0.1:5111 (Nix substituter)
       dcf-mesh-agent     -- UDP 7801 (off)
+      minecraft-dcf-sidecar -- console FIFO + Bedrock ws 19134 on the tunnel (off)
       dcf-hypr-agent     -- UDP 7100 → hypr sockets + oligarchy-ctl (off)
       docker-dcf-sdk     -- 0.0.0.0:7777/50051/8888 (off, image unpinned)
       docker-dcf-id      -- :4000 (off, image unpinned)
@@ -883,6 +884,7 @@ tree-wide.
 | `docs/security-hardening.md` | security rollout runbook (presets, soak steps) |
 | `docs/secure-boot-enrollment.md` | secure-boot enrollment procedure |
 | `docs/dcf-mesh-agent.md` | DCF mesh agent design |
+| `docs/dcf-minecraft.md` | DCF-Minecraft on the Paper server (plugin, datapack, sidecar, Bedrock `/connect`) |
 | `docs/vpn-windscribe.md` | Windscribe setup, the Discord/Steam egress story, and the DNS tie-break |
 | `README.md` | the in-character satire (technical tables near the bottom are the source of truth) |
 
@@ -892,8 +894,10 @@ kind: glob_count
 glob: docs/*.md
 min: 13
 -->
-`docs/` holds thirteen Markdown files. The docs gate counts them, so deleting
-one fails the build until this table and this sentence are updated with it.
+`docs/` holds **at least** thirteen Markdown files, which is what the gate
+checks: a floor, not an exact count, so adding a document never fails the
+build and deleting one below the floor does. Raise the floor when you add a
+doc that this table should never lose.
 <!-- truth:end -->
 
 ## 15. Build & verification

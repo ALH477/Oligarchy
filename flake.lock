@@ -218,6 +218,27 @@
       },
       "parent": []
     },
+    "exsecutor": {
+      "inputs": {
+        "nixpkgs": [
+          "hydramesh",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790305834,
+        "narHash": "sha256-zTvYdhALpZra77Zq2J/EawC3Gn4tFr9SzPWEa0dxf6c=",
+        "owner": "ALH477",
+        "repo": "exsecutor",
+        "rev": "d35b7d23e40a5348a32055f695021d6776c591c5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ALH477",
+        "repo": "exsecutor",
+        "type": "github"
+      }
+    },
     "flake-compat": {
       "flake": false,
       "locked": {
@@ -638,6 +659,7 @@
     "hydramesh": {
       "inputs": {
         "demod-quanta-src": "demod-quanta-src",
+        "exsecutor": "exsecutor",
         "flake-utils": "flake-utils_7",
         "janus-c-src": "janus-c-src",
         "nixpkgs": "nixpkgs_12",
@@ -645,11 +667,11 @@
         "rust-overlay": "rust-overlay_3"
       },
       "locked": {
-        "lastModified": 1785021547,
-        "narHash": "sha256-0iXtlIJL7l7p/Q6j04/rGrUUf9Dk+r1ay6hQSZWek18=",
+        "lastModified": 1790317640,
+        "narHash": "sha256-26+7N1BZBXJ1mBlbmRptHrNxGKeEOzv03mhbJELKRmA=",
         "owner": "ALH477",
         "repo": "HydraMesh",
-        "rev": "b6a2900a6e09841293a46c7d4622be867f0d8482",
+        "rev": "99baf3f49e0f8eba2eeb6a66d77ef607de313869",
         "type": "github"
       },
       "original": {
