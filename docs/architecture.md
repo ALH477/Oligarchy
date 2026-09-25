@@ -892,8 +892,10 @@ kind: glob_count
 glob: docs/*.md
 min: 13
 -->
-`docs/` holds thirteen Markdown files. The docs gate counts them, so deleting
-one fails the build until this table and this sentence are updated with it.
+`docs/` holds **at least** thirteen Markdown files, which is what the gate
+checks: a floor, not an exact count, so adding a document never fails the
+build and deleting one below the floor does. Raise the floor when you add a
+doc that this table should never lose.
 <!-- truth:end -->
 
 ## 15. Build & verification
