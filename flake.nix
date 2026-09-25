@@ -1600,8 +1600,16 @@
           pkgs.runCommand "captive-portal-tests"
             {
               nativeBuildInputs = [
-                pkgs.bash pkgs.shellcheck pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.gnused
-                pkgs.util-linux pkgs.jq pkgs.openssh pkgs.python3
+                pkgs.bash
+                pkgs.shellcheck
+                pkgs.coreutils
+                pkgs.findutils
+                pkgs.gnugrep
+                pkgs.gnused
+                pkgs.util-linux
+                pkgs.jq
+                pkgs.openssh
+                pkgs.python3
               ];
               meta = with nixpkgs.lib; {
                 description = "Assert the captive-portal scripts and the portal-VM orchestrator against fakes; bash, no KVM";
@@ -2289,9 +2297,11 @@
         # Run on demand:  nix build .#captive-vm-reference
         # ════════════════════════════════════════════════════════════════════════
         captive-vm-image =
-          ((self.nixosConfigurations.nixos.extendModules {
-            modules = [{ custom.network.captivePortal.browser.kind = nixpkgs.lib.mkForce "microvm"; }];
-          }).config.custom.network.captivePortal.microvm.build.manifest);
+          (
+            (self.nixosConfigurations.nixos.extendModules {
+              modules = [{ custom.network.captivePortal.browser.kind = nixpkgs.lib.mkForce "microvm"; }];
+            }).config.custom.network.captivePortal.microvm.build.manifest
+          );
 
         captive-vm-reference =
           let
@@ -2450,8 +2460,7 @@
             # pskVar = "hunter2" must die in the option type, which is a throw
             # tryEval can see once the value is forced.
             literalPsk = builtins.tryEval (builtins.deepSeq
-              (override [ sample source { custom.network.trustedWifi.home.pskVar = lib'.mkForce "hunter2"; } ])
-                .networking.networkmanager.ensureProfiles.profiles
+              (override [ sample source { custom.network.trustedWifi.home.pskVar = lib'.mkForce "hunter2"; } ]).networking.networkmanager.ensureProfiles.profiles
               true);
 
             payload = pkgs.writeText "network-posture-contract.json" (builtins.toJSON {
