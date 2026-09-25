@@ -61,7 +61,11 @@ in
       hm.dcf-rust
       # D-LISP SDK -> `hydramesh`. Read-only verbs: status, list-peers,
       # metrics, version, help, agent-list, agent-backends.
-      hm.hydramesh-lisp
+      # HydraMesh was renamed Punctim upstream (2026-09-14): the Lisp SDK package is now
+      # `punctim-lisp` and its CLI `punctim`. The MCP `hydramesh` aspect and the allowlist
+      # still call the binary `hydramesh`, so a thin wrapper keeps that name.
+      hm.punctim-lisp
+      (pkgs.writeShellScriptBin "hydramesh" ''exec ${hm.punctim-lisp}/bin/punctim "$@"'')
     ]
     ++ optionals cfg.withModemTools [
       # Library only (libhydramodem.so, headers, .pc) — installs no binaries.
