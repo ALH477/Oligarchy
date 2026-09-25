@@ -1,4 +1,4 @@
-{ lib, pkgs, microvm ? null, ... }:
+{ lib, pkgs, microvm ? null, hydramesh ? null, ... }:
 
 let
   # ── Strict egress: standalone inet table, static/dyn set matching ──────────
@@ -1314,8 +1314,82 @@ let
       print("captive-vm: signed reference -> verity guest -> VT viewer -> login -> discard verified")
     '';
   };
+
+  # ── Minecraft server: module wiring, with DCF on ───────────────────────────
+  # Referenced by flake.nix, dev-run.nix and the module README as the VM gate.
+  # Paper is STUBBED (an offline VM cannot run Paperclip); the crossplay jars,
+  # the DCF plugin jar and the datapack are the real store paths. Proves:
+  # preStart runs as `minecraft` inside upstream's sandbox, jars materialise as
+  # store symlinks, the datapack lands under <level-name>/datapacks, the
+  # rendered DCF config carries the peers, the sidecar unit comes up on the
+  # console FIFO, and the Bedrock /connect port is admitted on the tunnel
+  # interface and nowhere else.
+  minecraft-server = pkgs.testers.runNixOSTest {
+    name = "minecraft-server";
+    node.specialArgs = { inherit hydramesh; };
+
+    nodes.machine = { config, pkgs, lib, ... }: {
+      imports = [ ../modules/minecraft-server.nix ];
+      # A declared-but-idle WireGuard interface is the membership boundary the
+      # module insists on; no peers, nothing leaves the VM.
+      networking.wireguard.interfaces.wg0 = {
+        ips = [ "10.99.0.1/24" ];
+        listenPort = 51820;
+        privateKey = "WLLTrzRcVBjyA6BfjA8JMR2GX8j2pGyDKDbdDJlkomo=";
+      };
+      networking.nftables.enable = true;
+      services.oligarchyMinecraft = {
+        enable = true;
+        eula = true;
+        interface = "wg0";
+        mcVersion = "26.2";
+        acknowledgeTailnetReach = true;
+        package = pkgs.writeShellScriptBin "minecraft-server" "exec sleep infinity";
+        dcf = {
+          enable = true;
+          bridge = "plugin";
+          peers = [{ host = "127.0.0.1"; port = 7801; dialect = "bare"; }];
+          bedrockWs.enable = true;
+        };
+      };
+    };
+
+    testScript = ''
+      machine.wait_for_unit("minecraft-server.service", timeout=180)
+
+      with subtest("jars are store symlinks under fixed names"):
+          for jar in ["Geyser-Spigot.jar", "floodgate-spigot.jar", "dcf-minecraft-paper.jar"]:
+              machine.succeed(f"readlink /var/lib/minecraft/plugins/{jar} | grep -q '^/nix/store/'")
+              machine.succeed(f"test -e /var/lib/minecraft/plugins/{jar}")
+
+      with subtest("the DCF datapack and rendered config are in place"):
+          machine.succeed("test -f /var/lib/minecraft/world/datapacks/dcf/pack.mcmeta")
+          machine.succeed("test -f /var/lib/minecraft/world/datapacks/dcf/data/dcf/function/rx_commit.mcfunction")
+          machine.succeed("grep -q '127.0.0.1:7801/bare' /var/lib/minecraft/plugins/DcfMinecraft/config.yml")
+          machine.succeed("grep -q '^mode: datapack' /var/lib/minecraft/plugins/DcfMinecraft/config.yml")
+          machine.succeed("test ! -L /var/lib/minecraft/plugins/DcfMinecraft/config.yml")
+
+      with subtest("crossplay facts survived rendering"):
+          machine.succeed("grep -q '^online-mode=true' /var/lib/minecraft/server.properties")
+          machine.succeed("grep -q '^enforce-secure-profile=false' /var/lib/minecraft/server.properties")
+          machine.succeed("test -p \"$(systemctl show minecraft-server.socket -p Listen --value | sed 's/ (FIFO)$//')\"")
+
+      with subtest("the sidecar listens for Bedrock /connect"):
+          machine.wait_for_unit("minecraft-dcf-sidecar.service", timeout=120)
+          machine.wait_until_succeeds("ss -ltn | grep -q ':19134 '", timeout=60)
+
+      with subtest("ports are admitted on wg0 only"):
+          rules = machine.succeed("nft list ruleset")
+          assert '25565' in rules and '19134' in rules and '19132' in rules, rules
+          for line in rules.splitlines():
+              if ("25565" in line or "19134" in line or "19132" in line) and "accept" in line:
+                  assert 'iifname "wg0"' in line, f"port rule not scoped to wg0: {line}"
+
+      print("minecraft-server: wiring, DCF plugin/datapack/sidecar, tunnel-scoped ports verified")
+    '';
+  };
 in
 {
-  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app captive-portal mdns-single-responder network-profiles captive-vm-policy;
+  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app captive-portal mdns-single-responder network-profiles captive-vm-policy minecraft-server;
 }
   // lib.optionalAttrs (microvm != null) { inherit captive-vm; }
