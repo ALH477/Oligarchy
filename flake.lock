@@ -667,16 +667,15 @@
         "rust-overlay": "rust-overlay_3"
       },
       "locked": {
-        "lastModified": 1790316138,
-        "narHash": "sha256-6gKqzzHfzYsePAJSlHZHFkaRRwoDP0CwnNt5ej5eDQo=",
+        "lastModified": 1790317640,
+        "narHash": "sha256-26+7N1BZBXJ1mBlbmRptHrNxGKeEOzv03mhbJELKRmA=",
         "owner": "ALH477",
         "repo": "HydraMesh",
-        "rev": "aa9e810f62e6c9f2f8ef882ac5eaf0897036901d",
+        "rev": "99baf3f49e0f8eba2eeb6a66d77ef607de313869",
         "type": "github"
       },
       "original": {
         "owner": "ALH477",
-        "ref": "feat/dcf-minecraft",
         "repo": "HydraMesh",
         "type": "github"
       }

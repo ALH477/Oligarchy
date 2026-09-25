@@ -204,7 +204,7 @@
     # our nixpkgs: HydraMesh pins nixpkgs-faust to nixos-24.05 for the Faust
     # 2.72.14 ABI and tracks nixos-unstable for the rest, while we are on
     # nixos-25.11. Forcing a follow breaks its Faust/SBCL builds.
-    hydramesh.url = "github:ALH477/HydraMesh/feat/dcf-minecraft"; # TEMP: until Punctim PR #32 merges, then back to main + re-lock
+    hydramesh.url = "github:ALH477/HydraMesh";
 
     # Community YARA ruleset — pinned so the Malware Shield build gate
     # (packages.malwareScan) scans the closure with deterministic, offline
