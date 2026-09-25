@@ -2482,6 +2482,12 @@
               dotOpportunistic = c.services.resolved.dnsovertls == "opportunistic";
               mdnsOff = (cc."connection.mdns" or null) == 0;
               llmnrOff = (cc."connection.llmnr" or null) == 0;
+              # NM's per-connection value is a floor; resolved's global is the
+              # ceiling, and it opens the 5353/5355 sockets for every link NM
+              # does not manage. .#test-mdns-single-responder found resolved on
+              # 5353 with the two lines above green.
+              resolvedMdnsGlobalOff = lib'.hasInfix "MulticastDNS=no" c.services.resolved.extraConfig;
+              resolvedLlmnrOff = c.services.resolved.llmnr == "false";
               wifiMacStable = (cc."wifi.cloned-mac-address" or null) == "stable";
               ethernetMacPreserve = (cc."ethernet.cloned-mac-address" or null) == "preserve";
               avahiOn = c.services.avahi.enable && c.services.avahi.nssmdns4;
@@ -2520,6 +2526,8 @@
               want dotOpportunistic
               want mdnsOff
               want llmnrOff
+              want resolvedMdnsGlobalOff
+              want resolvedLlmnrOff
               want wifiMacStable
               want ethernetMacPreserve
               want sshNotGlobal
@@ -2535,7 +2543,7 @@
               want storePathSecretsRefused
               want wifiSopsMissingFileRefused
               [ "$fail" -eq 0 ] || { echo "network-posture-contract: FAILED" >&2; exit 1; }
-              echo "network-posture-contract: 23 checks passed" | tee -a $out/report.txt
+              echo "network-posture-contract: 25 checks passed" | tee -a $out/report.txt
             '';
       };
 

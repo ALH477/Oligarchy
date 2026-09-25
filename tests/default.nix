@@ -633,6 +633,8 @@ let
             domains = [ "~." ];
             fallbackDns = [ "1.1.1.1" "8.8.8.8" ];
             dnsovertls = "opportunistic";
+            llmnr = "false";
+            extraConfig = "MulticastDNS=no";
           };
 
           custom.network.captivePortal = {
@@ -685,8 +687,14 @@ let
         with subtest("NetworkManager reports PORTAL"):
             client.wait_until_succeeds("nmcli -t -g CONNECTIVITY general | grep -qx portal", timeout=120)
 
+        # The test driver's backdoor shell exports DISPLAY=:0.0, and shadow's
+        # `su -` clears the environment EXCEPT TERM, COLORTERM, DISPLAY and
+        # XAUTHORITY — so without this, captive-login saw a display, took the
+        # graphical branch and recorded to /tmp/opened, and the text-browser
+        # subtest below read an empty /tmp/tui-opened. Every as_tester caller
+        # here wants the headless path.
         def as_tester(cmd):
-            return "su - tester -c " + repr(cmd)
+            return "su - tester -c " + repr("unset DISPLAY WAYLAND_DISPLAY; " + cmd)
 
         with subtest("captive-login and the launcher refuse to run as root"):
             client.fail("captive-login")
@@ -726,7 +734,10 @@ let
 
         with subtest("nmtui-portal hands off to captive-login on a portal"):
             # No tty here: nmtui exits at once; the hand-off is what matters.
-            client.succeed(": > /tmp/tui-opened")
+            # Same reset idiom as the two above, not `: >`: the recorder ran as
+            # tester and owns the file now, and fs.protected_regular refuses
+            # root an O_CREAT open of someone else's file in sticky /tmp.
+            client.succeed("rm -f /tmp/tui-opened; touch /tmp/tui-opened; chown tester /tmp/tui-opened")
             client.succeed(as_tester("timeout 60 nmtui-portal </dev/null >/tmp/nmtui-portal.log 2>&1 || true"))
             client.succeed("grep -qx 'http://login.portal.test/' /tmp/tui-opened")
 
@@ -771,7 +782,15 @@ let
         };
         # See the captive-portal client node for why this line exists.
         systemd.services.NetworkManager-ensure-profiles.serviceConfig.RemainAfterExit = true;
-        services.resolved.enable = true;
+        # As configuration.nix sets them: the global ceilings, without which
+        # the per-link "no" below leaves resolved's 5353/5355 sockets open
+        # for every link NM does not manage (eth0 here; docker0/cp0 on the
+        # laptop). The first sweep run found resolved on 5353 for that reason.
+        services.resolved = {
+          enable = true;
+          llmnr = "false";
+          extraConfig = "MulticastDNS=no";
+        };
         services.avahi = {
           enable = true;
           nssmdns4 = true;
@@ -798,9 +817,14 @@ let
           host.wait_until_succeeds("resolvectl mdns eth1 | grep -qi ': no'", timeout=60)
           host.succeed("resolvectl llmnr eth1 | grep -qi ': no'")
 
-      with subtest("only Avahi is bound to UDP 5353"):
+      with subtest("resolved's global ceilings are off, not only the NM link"):
+          host.succeed("resolvectl mdns | grep -qi 'Global: no'")
+          host.succeed("resolvectl llmnr | grep -qi 'Global: no'")
+
+      with subtest("only Avahi is bound to UDP 5353, nobody to 5355"):
           host.succeed("ss -ulnp | grep ':5353 ' | grep -q avahi")
           host.fail("ss -ulnp | grep ':5353 ' | grep -q resolve")
+          host.fail("ss -ulnp | grep -q ':5355 '")
 
       with subtest("the host keeps its own .local name"):
           host.wait_until_succeeds("avahi-resolve-host-name host.local | grep -q '192.168.1.42'", timeout=60)
@@ -1024,6 +1048,8 @@ let
             dnssec = "allow-downgrade";
             fallbackDns = [ "1.1.1.1" "8.8.8.8" ];
             dnsovertls = "opportunistic";
+            llmnr = "false";
+            extraConfig = "MulticastDNS=no";
           };
 
           users.users.tester = {
@@ -1069,7 +1095,10 @@ let
             };
           };
 
-          environment.systemPackages = [ pkgs.jq pkgs.procps ];
+          # nftables: the testScript itself runs `nft list table inet captive_vm`
+          # to prove the egress policy loaded; bare `nft` is not otherwise on
+          # the node PATH ("nft: command not found" on the first sweep run).
+          environment.systemPackages = [ pkgs.jq pkgs.procps pkgs.nftables ];
         };
     };
 
@@ -1093,9 +1122,21 @@ let
           client.wait_for_unit("captive-vm-viewer.service", timeout=60)
           client.succeed("test \"$(fgconsole)\" = 7")
 
-      with subtest("the guest mounted its store through dm-verity"):
+      with subtest("the run set up the guest's dm-verity store"):
+          # Host-side and deterministic. The orchestrator puts captive.verity=
+          # <root hash> on the guest cmdline only after re-deriving that hash
+          # from the store disk and checking it against the signed manifest
+          # (captive-vm-run.sh; the .#captive-vm-reference gate proves the
+          # derivation). Scraping the guest's OWN console for the mount is not
+          # reliable: this guest has no vsock or ssh by design, its one console
+          # (ttyS0, debug-only) is shared by systemd's status printer and a
+          # login getty, and a service's readiness line is lost among them —
+          # 240 s of polling saw nothing while the guest sat healthy at its
+          # login prompt. That the guest actually BOOTED FROM the verity store
+          # is proven live by the OCR subtest below: firefox lives in that
+          # store and cannot paint the login page unless it mounted.
           client.wait_until_succeeds(
-              "grep -q 'verity-protected Nix store' /run/captive-vm/ctl/serial.log", timeout=240
+              "journalctl --no-pager | grep -oE 'captive[.]verity=[0-9a-f]{64}'", timeout=120
           )
 
       with subtest("the guest's login page reaches the screen through the VT viewer"):

@@ -1276,6 +1276,18 @@
         # (ipv4.dns + ignore-auto-dns), where it does not break portals.
         fallbackDns = [ "1.1.1.1" "8.8.8.8" "2606:4700:4700::1111" "2001:4860:4860::8888" ];
         dnsovertls = "opportunistic";
+        # resolved's GLOBAL MulticastDNS=/LLMNR= are the ceiling; NM's
+        # connection.mdns=0 / llmnr=0 above only lower the links NM manages.
+        # NixOS never emits MulticastDNS=, so systemd's compiled default (yes)
+        # applied, and resolved kept a UDP 5353 listener open for every link
+        # NM does not own — docker0, virbr0, the portal VM's cp0 — beside
+        # Avahi's. Two responders for one name is exactly what
+        # .#test-mdns-single-responder exists to catch, and it did, on the
+        # sweep's first run (2026-09-25). Avahi is the only responder wanted.
+        # There is no settings.MulticastDNS option in 25.11; extraConfig is
+        # the seam. .#network-posture-contract asserts both stay off.
+        llmnr = "false";
+        extraConfig = "MulticastDNS=no";
       };
 
       systemd.services.systemd-networkd-wait-online.enable = lib.mkForce false;

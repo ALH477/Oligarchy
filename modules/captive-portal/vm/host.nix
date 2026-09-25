@@ -184,7 +184,7 @@ in
     debug = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Guest serial console to /run/captive-vm/ctl/serial.log. Guest-controlled bytes on the host; test use only.";
+      description = "Guest serial console to /run/captive-vm/ctl/serial.log, kept after the run and copied to /var/lib/captive-portal/debug/serial.log at discard. Guest-controlled bytes on the host; test use only.";
     };
     gpu = {
       functions = lib.mkOption {
@@ -309,6 +309,11 @@ in
           TimeoutStopSec = 30;
           RuntimeDirectory = "captive-vm";
           RuntimeDirectoryMode = "0755";
+          # Under debug the orchestrator keeps ctl/serial.log, but systemd
+          # removes the whole RuntimeDirectory on stop regardless — so a
+          # debugging run that died young left nothing to read. Preserve it
+          # only then; a normal run has no serial log and keeps the default.
+          RuntimeDirectoryPreserve = if vm.debug then "yes" else "no";
           StateDirectory = "captive-portal";
           StateDirectoryMode = "0700";
           NoNewPrivileges = true;
@@ -342,7 +347,18 @@ in
           XKB_DEFAULT_VARIANT = keyboardVariant;
         } // vm.viewerEnvironment;
         serviceConfig = {
-          ExecStart = "${pkgs.cage}/bin/cage -d -- ${pkgs.wlvncc}/bin/wlvncc -d ${runDir}/vnc/vnc.sock";
+          # XDG_RUNTIME_DIR is forced to a directory this unit owns. PAM hands
+          # cage /run/user/<uid>, and ProtectHome=true below makes /run/user
+          # inaccessible along with /home and /root (systemd.exec(5)), so
+          # cage tried wayland-0.lock … wayland-32.lock under a path that did
+          # not exist in its namespace, gave up with "Unable to open Wayland
+          # socket" and dumped core — on the first sweep run of
+          # .#test-captive-vm. env(1) rather than Environment=: the PAM
+          # environment is merged last and would win. wlvncc inherits the
+          # variable from cage and finds the socket the same way.
+          ExecStart = "${pkgs.coreutils}/bin/env XDG_RUNTIME_DIR=/run/captive-vm-viewer ${pkgs.cage}/bin/cage -d -- ${pkgs.wlvncc}/bin/wlvncc -d ${runDir}/vnc/vnc.sock";
+          RuntimeDirectory = "captive-vm-viewer";
+          RuntimeDirectoryMode = "0700";
           User = "captive-view";
           Group = "captive-view";
           PAMName = "captive-view";
