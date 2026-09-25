@@ -84,13 +84,20 @@ let
   # this). The renderer choice is the only thing decided at run time.
   kiosk = pkgs.writeShellScript "portal-kiosk" ''
     set -eu
-    for d in /sys/class/drm/card[0-9]*/device/driver; do
-      [ -e "$d" ] || continue
-      # virtio-gpu here is 2D only (no virgl, nothing of the host's GPU is
-      # exposed): render on the CPU. A passed-through GPU keeps GL.
-      if [ "$(${pkgs.coreutils}/bin/basename "$(${pkgs.coreutils}/bin/readlink -f "$d")")" = virtio_gpu ]; then
-        export WLR_RENDERER=pixman
-      fi
+    for v in /sys/class/drm/card[0-9]*/device/vendor; do
+      [ -e "$v" ] || continue
+      # By PCI VENDOR, not device/driver: that symlink resolves to the PCI bus
+      # driver (virtio-pci), never the DRM driver (virtio_gpu), so the old
+      # `basename … = virtio_gpu` test never matched, WLR_RENDERER stayed
+      # unset, and cage tried EGL/Vulkan on a 2D device — "Unable to create
+      # the wlroots renderer", exit, and the guest powered off ~1 s in. That
+      # is what .#test-captive-vm caught the first time it ran (2026-09-25).
+      # 0x1af4 virtio, 0x1234 QEMU stdvga/bochs, 0x1b36 Red Hat qxl: software
+      # framebuffers with no usable GL here — render on the CPU. A passed-
+      # through real GPU (0x1002 AMD, 0x10de NVIDIA, 0x8086 Intel) keeps GL.
+      case "$(${pkgs.coreutils}/bin/cat "$v")" in
+        0x1af4 | 0x1234 | 0x1b36) export WLR_RENDERER=pixman ;;
+      esac
     done
     export XKB_DEFAULT_LAYOUT=${lib.escapeShellArg captive.keyboardLayout}
     export XKB_DEFAULT_VARIANT=${lib.escapeShellArg captive.keyboardVariant}
@@ -249,6 +256,10 @@ in
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
+      # Same reason as portal-kiosk below: a debug run's serial console is
+      # the only place this unit's verdict can be read after the discard.
+      StandardOutput = "journal+console";
+      StandardError = "journal+console";
     };
     script = ''
       for _ in $(seq 1 30); do
@@ -282,8 +293,14 @@ in
       TTYVHangup = "yes";
       TTYVTDisallocate = "yes";
       StandardInput = "tty-fail";
-      StandardOutput = "journal";
-      StandardError = "journal";
+      # journal+console, not journal: this guest's journal is volatile and
+      # gone at poweroff, and the run discards the VM, so a kiosk that dies
+      # in its first second leaves no trace at all — which is how the first
+      # .#test-captive-vm run went (cage opened its session and exited, reason
+      # unrecorded). The console is `-serial none` outside a debug run, so
+      # nothing reaches the host unless captive-vm-run was asked to keep it.
+      StandardOutput = "journal+console";
+      StandardError = "journal+console";
       UtmpIdentifier = "%n";
       UtmpMode = "user";
       IgnoreSIGPIPE = "no";

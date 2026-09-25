@@ -43,7 +43,8 @@
 #   CVM_GPU_ROM, CVM_GPU_INPUTS ("auto" or evdev paths), CVM_GPU_GRAB_TOGGLE
 #   CVM_CPU                       AllowedCPUs for the VMM, or empty
 #   CVM_VIEWER_UNIT, CVM_VT
-#   CVM_DEBUG                     1: guest serial console to the run dir
+#   CVM_DEBUG                     1: guest serial console to the run dir, copied
+#                                 to $CVM_STATEDIR/debug/serial.log at discard
 #   CVM_SYSFS, CVM_DEVDIR, CVM_PROCSYS   test seams; /sys, /dev, /proc/sys
 set -euo pipefail
 export LC_ALL=C
@@ -388,6 +389,14 @@ viewer_up() {
     sleep 0.1
   done
   [ -S "$CVM_RUNDIR/vnc/vnc.sock" ] || refuse "QEMU did not open its display socket"
+  # QEMU created the socket under its own group ($CVM_GROUP) and UMask 0007,
+  # so it is 0770 $CVM_USER:$CVM_GROUP regardless of the vnc dir's setgid bit
+  # (which does not survive here anyway). The viewer runs as $CVM_USER with
+  # primary group $CVM_VIEW_GROUP and is NOT in $CVM_GROUP, so without this it
+  # gets "Unable to connect to VNC server" and the display never comes up.
+  # Root hands the socket to the viewer group explicitly.
+  chgrp "$CVM_VIEW_GROUP" "$CVM_RUNDIR/vnc/vnc.sock"
+  chmod 0770 "$CVM_RUNDIR/vnc/vnc.sock"
   # Switch first: the viewer's logind session is then born active on its VT,
   # so cage gets the seat's DRM and input devices at once. From here until
   # discard, the desktop session is on an inactive VT and gets no input.
@@ -441,6 +450,19 @@ discard() {
   [ "$tap_made" = 1 ] && ip link del "$CVM_TAP"
   [ -n "$fwd_uplink_old" ] && echo "$fwd_uplink_old" > "$CVM_PROCSYS/net/ipv4/conf/$uplink/forwarding"
   [ -n "$vfio_owner" ] && chown "$vfio_owner" "$CVM_DEVDIR/vfio/$vfio_group"
+  # Under debug the guest console is the only record of WHY a run ended, and
+  # the run dir does not outlive the unit: RuntimeDirectory= is removed on
+  # stop whatever this script keeps, which is how the first sweep run of
+  # .#test-captive-vm spent 240 s polling a file systemd had already deleted
+  # (host.nix now also preserves the run dir under debug; this copy is the
+  # belt to that brace, and it survives the next run's preclean). Root-only:
+  # the bytes are guest-controlled. A non-debug run writes no serial log, so
+  # nothing is ever kept from one.
+  if [ "$CVM_DEBUG" = 1 ] && [ -f "$CVM_RUNDIR/ctl/serial.log" ]; then
+    install -d -m 0700 "$CVM_STATEDIR/debug"
+    cp -f "$CVM_RUNDIR/ctl/serial.log" "$CVM_STATEDIR/debug/serial.log"
+    chmod 0600 "$CVM_STATEDIR/debug/serial.log"
+  fi
   rm -rf "${CVM_RUNDIR:?}/boot" "${CVM_RUNDIR:?}/vnc"
   [ "$CVM_DEBUG" = 1 ] || rm -rf "${CVM_RUNDIR:?}/ctl"
   [ -n "$start_ts" ] && audit_append
