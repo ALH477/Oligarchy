@@ -48,7 +48,7 @@ Comments next to the code are load-bearing. A 400-line module is often 300 lines
 6. **Read-write stays out of `.mcp.json`:** `oligarchy-forge`, `oligarchy-plugins`, `oligarchy-p2p`, `dsp-ctl`, `services.dcf-mesh-agent`, `services.dcf-hypr-agent`.
 7. **Do not set `AQ_DRM_DEVICES` / `WLR_DRM_DEVICES` toward the dGPU.** No display path; Hyprland SIGABRTs. Client apps use `DRI_PRIME` (`custom.platform.displayGpu`). Assertion in `home/hyprland/default.nix`.
 8. **Do not import HydraMesh `spa/modules/dcf-spa.nix`.** It sets `networking.nftables.enable` and fights `demod-ip-blocker`. Use `modules/security/dcf-spa-gate.nix`.
-9. **New always-on service:** add a `lib.mkForce false` in the ISO block in `flake.nix` if the ISO should stay light. Plugins/P2P are imported on `nixosConfigurations.nixos` only.
+9. **New always-on service:** add a `lib.mkForce false` in the ISO block in `flake.nix` if the ISO should stay light. P2P is imported on `nixosConfigurations.nixos` only; plugins are on `nixos` and `builder` (the latter for `microvm.nix`).
 10. **Secrets:** sops-nix. Never commit decrypted material, `*.age`, or `secrets/secrets.yaml`. Runtime paths only — a repo-relative env file copies into `/nix/store`.
 11. **Pin via flake inputs**, not ad-hoc fetches. `allowUnfree = true`. Do not re-enable `allowBroken` (removed on purpose in `flake.nix`).
 12. **DCF Docker images are `:latest` and off.** Do not enable `custom.dcfCommunityNode` / `custom.dcfIdentity` until those images are digests. Bind ports in `modules/hydramesh.nix` must match `modules/dcf-community-node.nix`.
