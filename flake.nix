@@ -866,14 +866,18 @@
         # `command` claims are disabled by policy (command_mode = "off"), so
         # nothing in the docs can execute anything here — it is a pure read of
         # the tree.
+        #
+        # Reads `$src` in place rather than copying it first: the tracked tree
+        # is ~114 MB (assets/ is most of it) and `verify` opens files read-only
+        # — only `--receipt` would write, and we do not pass it. The upstream
+        # README's copy-then-verify recipe is for trees that need to be
+        # writable; this one does not.
         truthgate-docs = pkgs.runCommand "truthgate-docs"
           {
             nativeBuildInputs = [ truthgate.packages.${system}.truthgate ];
             src = self;
           } ''
-          cp -r "$src"/. .
-          chmod -R u+w .
-          truthgate verify --fail
+          truthgate --root "$src" verify --fail
           touch "$out"
         '';
 
@@ -2699,8 +2703,8 @@
             # Core Nix development
             nil # Nix LSP
             nixpkgs-fmt
-            truthgate.packages.${system}.truthgate # docs claim gate (`truthgate verify --fail`)
             nixfmt-rfc-style
+            truthgate.packages.${system}.truthgate # docs claim gate (`truthgate verify --fail`)
             nix-tree # Explore Nix store
             nix-diff # Compare Nix derivations
             nvd # NixOS version diff

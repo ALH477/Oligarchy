@@ -890,10 +890,10 @@ tree-wide.
 id: docs-count
 kind: glob_count
 glob: docs/*.md
-min: 12
+min: 13
 -->
-At least twelve of these live under `docs/`; the docs gate counts them, so a
-deleted document has to be removed from this table too.
+`docs/` holds thirteen Markdown files. The docs gate counts them, so deleting
+one fails the build until this table and this sentence are updated with it.
 <!-- truth:end -->
 
 ## 15. Build & verification

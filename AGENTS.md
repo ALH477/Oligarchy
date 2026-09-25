@@ -59,8 +59,9 @@ Comments next to the code are load-bearing. A 400-line module is often 300 lines
 
 <!-- truth:claim
 id: mcp-aspect-lists
-kind: file_exists
+kind: file_contains
 path: modules/mcp-servers/nixos-module.nix
+pattern: aspectNames
 -->
 Seven lists must agree (miss one → silent `exec failed`): `crates/core/src/allowlist.rs` (`ASPECTS` + `list_for`), `crates/umbrella/src/main.rs` (`is_known_aspect` + usage), `modules/mcp-servers/flake.nix` `aspectNames`, `modules/mcp-servers/nixos-module.nix` `aspectNames`, repo-root `.mcp.json`, `modules/mcp-servers/README.md`, `docs/architecture.md` §9. Copy `crates/hydramesh` or `crates/storage`. Tools must work **unprivileged**. Allowlist no deleting binaries.
 <!-- truth:end -->
