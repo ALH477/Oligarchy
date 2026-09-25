@@ -6,7 +6,9 @@
 # .#test-captive-vm-policy VM (no nested KVM), and ran as-is while the policy
 # was written — it is what found the weak-host-model hole the input chain now
 # closes. The last check is anti-vacuity: with the table deleted, the drops
-# must turn into successes, or the passes above proved nothing.
+# must turn into successes, or the passes above proved nothing. The check
+# count is guarded in-script (`expected` below, as in run.sh and vm-run.sh),
+# so a deleted check is a red run here and not only in the VM node's grep.
 set -uo pipefail
 POLICY=${1:?policy.nft}
 pass=0; fail=0
@@ -108,4 +110,11 @@ expect_ok "without the table, guest -> venue:22 is reachable (the forward drops 
 expect_ok "without the table, venue -> host 10.207.0.1:2222 is reachable (the input drops were the policy's)" V curl -s --max-time 3 http://10.207.0.1:2222/
 
 echo; echo "policy-test: $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+expected=14
+ran=$((pass + fail))
+if [ "$ran" -ne "$expected" ]; then
+  echo "policy-test: check count drifted — $ran ran, expected $expected; update 'expected'" >&2
+  exit 1
+fi
+[ "$fail" -eq 0 ] || { echo "policy-test: FAILED" >&2; exit 1; }
+echo "policy-test: OK"

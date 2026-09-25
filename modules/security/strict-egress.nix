@@ -119,14 +119,10 @@ let
     let
       settings = config.nix.settings;
       urls = (settings.substituters or [ ]) ++ (settings.trusted-substituters or [ ]);
-      hostOf = url:
-        let
-          afterScheme = last (splitString "//" url);
-          hostPort = head (splitString "/" afterScheme);
-          # Strip any user:pass@ prefix, then the port.
-          host = head (splitString ":" (last (splitString "@" hostPort)));
-        in
-        host;
+      # Scheme-agnostic, strips user:pass@ and :port. Lives in its own file
+      # because captive-portal/default.nix feeds the same allowlist and must
+      # parse a URL the same way.
+      hostOf = import ./url-host.nix { inherit lib; };
     in
     # A local or daemon substituter ("daemon", "auto", "file:///…") has no host
       # to allow, and hostOf would produce nonsense for it.

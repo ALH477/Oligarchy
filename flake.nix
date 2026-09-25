@@ -2088,9 +2088,10 @@
         # Captive portal contract — the things that are silent when they break.
         #
         # Same shape as locale-contract: pure eval of the real host config, no
-        # KVM, no closure. Three evaluations (base, https loginUrl, autoOpen
-        # off), so it sits in legacyPackages beside locale-contract and never
-        # lands on `nix flake check`'s critical path.
+        # KVM, no closure. Seven evaluations (base, https loginUrl, autoOpen
+        # off, loginUrl with a port, and three microvm variants), so it sits in
+        # legacyPackages beside locale-contract and never lands on
+        # `nix flake check`'s critical path. .github/workflows/eval.yml runs it.
         #
         # What it asserts on nixosConfigurations.nixos:
         #   - the module is ENABLED there (a gate that inspected a disabled
@@ -2098,7 +2099,10 @@
         #   - NetworkManager's connectivity URI is exactly the probe the option
         #     describes and is plain http
         #   - the probe host and login host are on strictEgress.allow.domains,
-        #     so enforcing egress can never make every portal read as "limited"
+        #     so enforcing egress can never make every portal read as "limited";
+        #     the login host is the bare hostname even when loginUrl carries a
+        #     port (modules/security/url-host.nix, shared with strict-egress)
+        #   - the option is OFF by default; configuration.nix is what turns it on
         #   - the watcher unit exists, restarts always with no start-rate
         #     limit, and is wanted by the graphical session; the CLIs are on
         #     PATH; the browser kind is an isolated one; opens are rate-limited
@@ -2114,6 +2118,12 @@
             override = m: (self.nixosConfigurations.nixos.extendModules { modules = [ m ]; }).config;
             withHttps = override { custom.network.captivePortal.loginUrl = lib'.mkForce "https://neverssl.com/"; };
             noAuto = override { custom.network.captivePortal.autoOpen = lib'.mkForce false; };
+            # The defect this guards: loginHost used to be parsed with an
+            # http://-only split that kept the port, so `portal.test:8080`
+            # landed on strictEgress.allow.domains as a domain that never
+            # resolves. The module now uses the same hostOf as strict-egress.
+            withPort = override { custom.network.captivePortal.loginUrl = lib'.mkForce "http://portal.test:8080/"; };
+            hostOf = import ./modules/security/url-host.nix { lib = lib'; };
 
             # Design F, as the shipped config would run it with kind = microvm.
             withVm = override { custom.network.captivePortal.browser.kind = lib'.mkForce "microvm"; };
@@ -2136,7 +2146,7 @@
 
             cp = base.custom.network.captivePortal;
             conn = base.networking.networkmanager.settings.connectivity or { };
-            loginHost = lib'.head (lib'.splitString "/" (lib'.removePrefix "http://" cp.loginUrl));
+            loginHost = hostOf cp.loginUrl;
             egress = base.networking.firewall.strictEgress.allow.domains;
             pkgNames = map (p: p.name or "") base.environment.systemPackages;
             onPath = n: lib'.elem n pkgNames;
@@ -2144,6 +2154,10 @@
 
             payload = pkgs.writeText "captive-portal-contract.json" (builtins.toJSON {
               enabled = cp.enable;
+              # Reads the option DECLARATION, so no extra eval: the module must
+              # default off like every other feature, and `enabled` above then
+              # proves it is configuration.nix that turns it on.
+              defaultOff = !self.nixosConfigurations.nixos.options.custom.network.captivePortal.enable.default;
               uri = conn.uri or null;
               uriIsProbe = (conn.uri or "") == "http://${cp.probe.host}${cp.probe.path}";
               uriPlainHttp = lib'.hasPrefix "http://" (conn.uri or "");
@@ -2152,6 +2166,11 @@
               loginPlainHttp = lib'.hasPrefix "http://" cp.loginUrl;
               egressHasProbeHost = lib'.elem cp.probe.host egress;
               egressHasLoginHost = lib'.elem loginHost egress;
+              hostStripsPort = hostOf "http://portal:8080/login" == "portal";
+              hostStripsUserinfo = hostOf "http://u:p@portal/" == "portal";
+              egressPortStripped =
+                let d = withPort.networking.firewall.strictEgress.allow.domains;
+                in lib'.elem "portal.test" d && !(lib'.any (lib'.hasInfix ":") d);
               cliOnPath = onPath "captive-login" && onPath "nmtui-portal" && onPath "captive-portal-watch";
               watcherPresent = svc != null;
               watcherRestartAlways = (svc.serviceConfig.Restart or null) == "always";
@@ -2213,6 +2232,7 @@
               }
               # Anti-vacuity first: everything below is about an enabled module.
               want enabled
+              want defaultOff
               want uriIsProbe
               want uriPlainHttp
               want probeEnabled
@@ -2220,6 +2240,9 @@
               want loginPlainHttp
               want egressHasProbeHost
               want egressHasLoginHost
+              want hostStripsPort
+              want hostStripsUserinfo
+              want egressPortStripped
               want cliOnPath
               want watcherPresent
               want watcherRestartAlways
@@ -2237,7 +2260,7 @@
               done
               echo "uri: $(jq -r .uri "$j")" >> $out/report.txt
               [ "$fail" -eq 0 ] || { echo "captive-portal-contract: FAILED" >&2; exit 1; }
-              echo "captive-portal-contract: 35 checks passed" | tee -a $out/report.txt
+              echo "captive-portal-contract: 39 checks passed" | tee -a $out/report.txt
             '';
 
         # ════════════════════════════════════════════════════════════════════════
@@ -2416,6 +2439,12 @@
             source = { custom.network.trustedWifiSecretsFile = "/run/secrets/wifi-env"; };
             storePath = override [ sample { custom.network.trustedWifiSecretsFile = pkgs.writeText "wifi-env" "HOME_PSK=unused\n"; } ];
             withSecrets = override [ sample source ];
+            # The sops route with no encrypted file in the tree. hosts/asher
+            # already evaluates with custom.secrets.enable on, so enabling it
+            # alone is safe; only `.assertions` is forced below, never the sops
+            # manifest, so the missing `./secrets/wifi.enc.env` path literal is
+            # never touched and the module's own assertion is what answers.
+            wifiSopsMissing = override [ sample { custom.secrets.enable = true; custom.secrets.wifi.enable = true; } ];
             rendered = withSecrets.networking.networkmanager.ensureProfiles.profiles.home;
             noSource = override [ sample ];
             # pskVar = "hunter2" must die in the option type, which is a throw
@@ -2442,6 +2471,9 @@
               storePathSecretsRefused = lib'.any
                 (a: !a.assertion && lib'.hasInfix "must not be a Nix store path" a.message)
                 storePath.assertions;
+              wifiSopsMissingFileRefused = lib'.any
+                (a: !a.assertion && lib'.hasInfix "wifi.enc.env" a.message)
+                wifiSopsMissing.assertions;
               # ── stage 2: resolver, mDNS, MAC ──
               networkManagerOn = nm.enable;
               resolvedOn = c.services.resolved.enable;
@@ -2501,8 +2533,9 @@
               want noSecretsSourceRefused
               want literalPskRefused
               want storePathSecretsRefused
+              want wifiSopsMissingFileRefused
               [ "$fail" -eq 0 ] || { echo "network-posture-contract: FAILED" >&2; exit 1; }
-              echo "network-posture-contract: 22 checks passed" | tee -a $out/report.txt
+              echo "network-posture-contract: 23 checks passed" | tee -a $out/report.txt
             '';
       };
 

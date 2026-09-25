@@ -1075,6 +1075,13 @@
       # declares only the age key location until a secret sub-option is on.
       # Pre-req: sudo age-keygen -o /var/lib/sops-nix/key.txt (see .sops.yaml).
       custom.secrets.enable = lib.mkDefault false;
+      # Captive-portal detection + auto-open login page (modules/captive-portal).
+      # This is the switch for nixos and every host layered on it (nixos-asher,
+      # fw13, intel, optimus, builder). The ISO inherits it deliberately: an
+      # installer on venue Wi-Fi is exactly where auto-opening the login page
+      # helps, and strict-egress is already off there, so the module's only
+      # effect on the ISO is the watcher and a throwaway browser profile.
+      custom.network.captivePortal.enable = true;
       # Portal logins in a disposable, verified microVM (Design F): available,
       # off until its gates are green on the builder. Flip browser.kind to
       # "microvm" in local.nix to use it; see modules/captive-portal/vm/.

@@ -33,7 +33,10 @@
 let
   cfg = config.custom.network.captivePortal;
   probeUri = "http://${cfg.probe.host}${cfg.probe.path}";
-  loginHost = lib.head (lib.splitString "/" (lib.removePrefix "http://" cfg.loginUrl));
+  # Shared with strict-egress: strips user:pass@ and :port, so a loginUrl with
+  # a port does not put "host:port" into the egress domain allowlist.
+  hostOf = import ../security/url-host.nix { inherit lib; };
+  loginHost = hostOf cfg.loginUrl;
 
   runtimeInputs = with pkgs; [ networkmanager libnotify xdg-utils util-linux coreutils findutils jq systemd ];
 
@@ -73,9 +76,10 @@ in
   imports = [ ./vm/host.nix ];
 
   options.custom.network.captivePortal = {
-    enable = lib.mkEnableOption "captive portal detection and auto-open login page" // {
-      default = true;
-    };
+    # Off here like every other feature; configuration.nix turns it on. The
+    # module owning a `default = true` was the one exception to the repo's
+    # off-by-default convention, and .#captive-portal-contract now asserts it.
+    enable = lib.mkEnableOption "captive portal detection and auto-open login page";
 
     probe = {
       host = lib.mkOption {

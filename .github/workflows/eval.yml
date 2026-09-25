@@ -68,7 +68,9 @@ jobs:
     name: evaluate
     if: vars.OLIGARCHY_CI == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 60, not 30: the host loop below is 6 toplevel evals, and the two
+    # contract gates at the end add a dozen extendModules evals on top.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -191,3 +193,18 @@ jobs:
       # difference between one login tab and a new one every five minutes.
       - name: nix build .#captive-portal-tests
         run: nix build --no-update-lock-file --print-build-logs .#captive-portal-tests
+
+      # The two eval-only contracts. Neither realizes a closure or needs KVM:
+      # each is a handful of extendModules evaluations of .#nixos (5 for the
+      # posture contract, 7 for the captive-portal one) that read option values
+      # back and refuse the misconfigurations the modules are supposed to
+      # refuse. network-posture-contract is the gate that caught
+      # services.openssh.openFirewall putting :22 back on every interface during
+      # the review of #41 — and until this step existed, nothing ran it unless
+      # someone remembered to. Two steps, not one, so a failure is named in the
+      # job view rather than buried in a shared log.
+      - name: nix build .#network-posture-contract
+        run: nix build --no-update-lock-file --print-build-logs .#network-posture-contract
+
+      - name: nix build .#captive-portal-contract
+        run: nix build --no-update-lock-file --print-build-logs .#captive-portal-contract

@@ -138,6 +138,20 @@ in
           assertion = secretsFile == null || !(lib.hasPrefix builtins.storeDir (toString secretsFile));
           message = "custom.network.trustedWifiSecretsFile must not be a Nix store path — the store is world-readable. Use a sops secret or a root-only file under /run or /var.";
         }
+        {
+          # An assertion, not a bare `sopsFile = ./…` reference alone: NixOS
+          # forces `assertions` before any derivation under system.build.toplevel,
+          # so this message wins over sops-nix's "path … does not exist" error,
+          # which names a /nix/store/…-source path and not the fix. pathExists
+          # also sees what flake evaluation sees: a file that exists on disk but
+          # is untracked is filtered out of the source tree, and this says so.
+          assertion = !useSops || builtins.pathExists ./secrets/wifi.enc.env;
+          message = ''
+            custom.secrets.wifi.enable is on but modules/secrets/wifi.enc.env is not in the flake source.
+            Create it (sops --encrypt modules/secrets/wifi.env > modules/secrets/wifi.enc.env, see .sops.yaml)
+            and `git add` it: an untracked file is invisible to flake evaluation even though it is on disk.
+          '';
+        }
       ];
 
       networking.networkmanager.ensureProfiles = {
