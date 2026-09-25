@@ -97,6 +97,11 @@ let
   # fresh clone — where the NixOS module declaring these options is absent, and
   # `osConfig` itself is `{ }` when home.nix is evaluated standalone.
   session = osConfig.custom.session or { };
+
+  # custom.vpn (modules/vpn.nix). Same `or` discipline as `session` above --
+  # osConfig is `{ }` when home.nix is evaluated standalone, and the NixOS
+  # module declaring this option is absent on a fresh clone.
+  vpnEnabled = osConfig.custom.vpn.enable or false;
   autoLogin = session.autoLogin or { };
   restore = session.restore or { };
   restoreOn = restore.enable or false;
@@ -548,6 +553,14 @@ in
         # DCF (DeMoD Communication Framework) — moved off Super+D (now the control center)
         (lib.optional (features.enableDCF or false) "$mod SHIFT, D, exec, $terminal --title 'DCF Control' -e dcf-control")
 
+        # Windscribe tunnel (custom.vpn). The tunnel is on demand and has no
+        # kill switch, so flipping it is a deliberate, frequent act and earns a
+        # key. Super+V is the clipboard picker; Super+Shift+V is the tunnel.
+        # The bind reports the resulting state rather than toggling silently —
+        # a VPN you cannot tell the state of is worse than no VPN.
+        (lib.optional vpnEnabled "$mod SHIFT, V, exec, oligarchy-vpn toggle")
+        (lib.optional vpnEnabled "$mod CTRL, V, exec, $terminal --title 'Windscribe' -e bash -c 'oligarchy-vpn status; echo; read -n1 -p \"press any key\"'")
+
         # Gaming - Full support
         (lib.optional (features.enableGaming or false) "$mod, F9, exec, ~/.config/hypr/scripts/gamemode.sh toggle")
         (lib.optional (features.enableGaming or false) "$mod SHIFT, F9, exec, mangohud --dlsym")
@@ -597,6 +610,15 @@ in
         "float, class:^(floating-term)$"
         "size 1000 700, class:^(floating-term)$"
         "center, class:^(floating-term)$"
+
+        # Windscribe (custom.windscribeApp). The client asks for a small fixed
+        # size and draws its own chrome; tiled, it paints its scene clipped
+        # inside whatever surface the compositor hands it, which looks like
+        # graphical corruption rather than a layout problem. Two classes on
+        # purpose: "Windscribe" is the native-Wayland name and "Windscribe2"
+        # the XWayland one, and the package launcher defaults to XWayland.
+        "float, class:^(Windscribe2?)$"
+        "center, class:^(Windscribe2?)$"
         "animation slide, class:^(floating-term)$"
 
         # Tool windows

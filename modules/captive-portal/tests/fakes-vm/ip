@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Fake iproute2 for the orchestrator gate. Records every call; answers the
+# default-route query from $FAKE_ROUTE, or from $FAKE_ROUTE2 once
+# $FAKE_ROUTE_SWITCH_AFTER queries have been answered (the link-change case).
+set -eu
+echo "ip $*" >> "$FAKE_LOG"
+case "$*" in
+  "link show cp0") test -e "$FAKE_DIR/stale-tap" ; exit ;;
+  "link del cp0") rm -f "$FAKE_DIR/stale-tap" ;;
+esac
+if [ "$*" = "-4 -j route show default" ]; then
+  n=$(( $(cat "$FAKE_DIR/route-calls" 2>/dev/null || echo 0) + 1 ))
+  echo "$n" > "$FAKE_DIR/route-calls"
+  if [ -n "${FAKE_ROUTE_SWITCH_AFTER:-}" ] && [ "$n" -gt "$FAKE_ROUTE_SWITCH_AFTER" ]; then
+    cat "$FAKE_ROUTE2"
+  else
+    cat "$FAKE_ROUTE"
+  fi
+fi

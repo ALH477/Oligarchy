@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Pretend to be root, for the refusal checks only.
+echo 0

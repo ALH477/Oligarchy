@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Fake systemctl for captive-portal-open's microvm kind: records the call,
+# succeeds unless FAKE_SYSTEMCTL_OK=0.
+echo "systemctl $*" >> "$FAKE_NM_CALLS"
+[ "${FAKE_SYSTEMCTL_OK:-1}" = 1 ]

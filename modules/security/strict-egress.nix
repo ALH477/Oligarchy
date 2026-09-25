@@ -152,6 +152,12 @@ let
     )
     cfg.allow.uids;
 
+  ifaceRules = concatMapStringsSep "\n        "
+    (i:
+      ''oifname "${i}" accept''
+    )
+    cfg.allow.interfaces;
+
   logLevelArg = optionalString (cfg.logging.level != "off") "level ${cfg.logging.level} ";
 
   finalVerdict =
@@ -198,6 +204,7 @@ let
         type filter hook output priority filter + 10; policy ${if cfg.recovery.dryRun then "accept" else "drop"};
 
         oif "lo" accept
+        ${optionalString (cfg.allow.interfaces != [ ]) ifaceRules}
         ct state established,related accept
         ct state invalid drop
 
@@ -441,6 +448,33 @@ in
         description = ''
           User names whose traffic bypasses egress filtering entirely
           (meta skuid). Escape hatch for daemons with IP-diverse endpoints.
+        '';
+      };
+      interfaces = mkOption {
+        type = types.listOf types.str;
+        default = [ ];
+        example = [ "wsc0" ];
+        description = ''
+          Output interfaces whose traffic bypasses egress filtering entirely
+          (oifname). The escape hatch for a full-tunnel VPN.
+
+          Understand the trade before setting this. Every rule below filters on
+          DESTINATION ADDRESS, and a tunnelled packet still carries the real
+          destination, so a VPN does NOT by itself break the allowlist: every
+          allow.domains entry keeps matching whether the packet leaves via the
+          physical NIC or via the tunnel. What naming an interface here buys is
+          the traffic that can never be allowlisted by address — IP-diverse UDP
+          such as Discord voice and arbitrary game servers. What it costs is
+          that for as long as that interface is up, this table constrains
+          nothing that routes through it, and the VPN provider becomes the
+          egress boundary instead.
+
+          Leave it empty and use allow.ports for the IP-diverse cases if you
+          would rather keep the boundary here.
+
+          Note this accepts by interface NAME, matched at packet time. An
+          interface that does not exist yet costs nothing; the rule simply
+          never matches until it appears.
         '';
       };
     };

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Fake install: logs the exact call, then performs it WITHOUT -o/-g.
+#
+# A Nix build has no CAP_CHOWN, so the real `install -d -o captive-vm -g
+# captive-view` refuses with "Operation not permitted" and the orchestrator
+# dies before it ever starts the VMM — which is what made every run/* check
+# below fail in the sandbox while passing on a developer's machine.
+#
+# The ownership and setgid mode of the VNC socket dir ARE a security property
+# (2750 captive-vm:captive-view is what lets the viewer reach the socket and
+# nobody else), so they are asserted from this log instead of from the
+# filesystem. What stays UNMEASURED here is that the kernel actually applies
+# them; only .#test-captive-vm, which runs as root in a VM, can show that.
+set -eu
+echo "install $*" >> "$FAKE_LOG"
+args=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    -o | -g) shift 2 ;;
+    -m)
+      # Drop setgid/setuid too. `chmod 2750` needs membership of the
+      # directory's group, which the build user has no more of than it has
+      # CAP_CHOWN, so the real install refuses the mode as well as the owner.
+      mode=$2
+      case $mode in
+        [1-7][0-7][0-7][0-7]) mode="0${mode#?}" ;;
+      esac
+      args+=(-m "$mode")
+      shift 2
+      ;;
+    *)
+      args+=("$1")
+      shift
+      ;;
+  esac
+done
+exec "$FAKE_REAL_INSTALL" "${args[@]}"

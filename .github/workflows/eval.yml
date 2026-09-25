@@ -21,6 +21,20 @@
 # UUIDs in the hardware-configuration files are plain strings that are never
 # stat'd, and custom.secrets.enable defaults false, so no age key or secrets/
 # directory is required either.
+#
+# nixos-asher — the maintainer's real Framework 16 — is now a COMMITTED host
+# (nixos.extendModules { modules = [ ./hosts/asher ]; }, hosts/asher/), not an
+# out-of-repo override read through the pathExists guards above. It is exactly
+# as pure as nixos, nixos-fw13, nixos-intel, nixos-optimus and builder: its
+# hosts/asher/default.nix and hosts/asher/state.nix are ordinary flake source,
+# resolved by relative path, so a machine that is not the maintainer's laptop
+# still evaluates it byte-for-byte the same way asher's own machine does. That
+# purity is exactly the property that broke silently before this host existed
+# — the old channel (~/.config/oligarchy/{local,state}.nix) degraded to the
+# fresh-clone-minimal config with no error, no warning, and nothing for this
+# lane to catch, because pure eval simply couldn't see the file it needed.
+# nixos-asher closes that gap by making the maintainer's config something this
+# lane — and any fork's PR — can evaluate at all.
 # ═══════════════════════════════════════════════════════════════════════════════
 name: eval
 
@@ -139,15 +153,17 @@ jobs:
       # cheapest thing that would still have caught essentially every eval
       # regression in this repo's history.
       #
-      # All five are checked because they diverge only in their platform
-      # profile, which is exactly the kind of difference that rots unnoticed —
-      # the three alternate laptops and the builder are not what the
-      # maintainer rebuilds daily.
+      # All six are checked because they diverge only in their platform
+      # profile (or, for nixos-asher, one extra committed module layer), which
+      # is exactly the kind of difference that rots unnoticed — the three
+      # alternate laptops and the builder are not what the maintainer rebuilds
+      # daily, and nixos-asher is the one host where an eval break here means
+      # the maintainer's own machine is what's silently degraded.
       - name: Evaluate all hosts
         run: |
           set -euo pipefail
           rc=0
-          for host in nixos nixos-fw13 nixos-intel nixos-optimus builder; do
+          for host in nixos nixos-asher nixos-fw13 nixos-intel nixos-optimus builder; do
             printf '\n=== %s ===\n' "$host"
             if drv=$(nix eval --raw --no-update-lock-file \
                        ".#nixosConfigurations.${host}.config.system.build.toplevel.drvPath"); then
@@ -169,3 +185,9 @@ jobs:
       # remote transport.
       - name: nix build .#mcp-self-audit
         run: nix build --no-update-lock-file --print-build-logs .#mcp-self-audit
+
+      # Also small: bash + shellcheck against a fake nmcli, no VM. It guards
+      # the captive-portal scripts' open-once state machine, which is the
+      # difference between one login tab and a new one every five minutes.
+      - name: nix build .#captive-portal-tests
+        run: nix build --no-update-lock-file --print-build-logs .#captive-portal-tests

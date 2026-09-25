@@ -444,20 +444,43 @@ in
     ];
 
     # Directory setup
-    system.activationScripts.aiStackSetup = stringAfter [ "users" ] ''
+    system.activationScripts.aiStackSetup = stringAfter [ "users" ] (''
       mkdir -p "${paths.base}" "${paths.ollama}" "${paths.compose}"
       chown -R ${userName}:users "${paths.base}" "${paths.ollama}"
       chmod 700 "${paths.ollama}"
-    '';
+    '' + optionalString cfg.dedicatedSwap.enable ''
+      # dedicatedSwap.path's PARENT directory, not dedicatedSwap.path itself.
+      # NixOS's `size`-based swapDevices auto-creation makes the *file* with
+      # `truncate` on activation; it never makes the directory the file lives
+      # in. This host's dedicatedSwap.path defaulted to
+      # /var/lib/ollama-agentic/swapfile, and /var/lib/ollama-agentic never
+      # existed, so truncate failed, mkswap-*.service failed, and the
+      # generated .swap unit failed with it — on every host that ever
+      # enabled this option. Created here (stage-2 activation), not via
+      # systemd.tmpfiles: activation runs before systemd starts anything, so
+      # this directory is guaranteed to exist before the generated
+      # mkswap-*.service that depends on it. A tmpfiles rule is ordered by
+      # systemd against the same units it would need to precede and would
+      # race the swap unit instead of preceding it.
+      mkdir -p "$(dirname ${cfg.dedicatedSwap.path})"
+    '');
 
     # AI-dedicated overflow tier — separate from the generic backup swap in
     # configuration.nix. This is a list-type option so it merges with that
     # one automatically; NixOS's `size`-based auto-creation handles the file
-    # since dedicatedSwap.path lives on the (always-mounted) root ext4 fs.
+    # itself (truncate + mkswap), but NOT its parent directory — that's what
+    # the dedicatedSwap.enable branch of aiStackSetup above is for.
     swapDevices = lib.optional cfg.dedicatedSwap.enable {
       device = cfg.dedicatedSwap.path;
       size = cfg.dedicatedSwap.sizeGB * 1024;
       priority = cfg.dedicatedSwap.priority;
+      # nofail: matches the other two swap entries (configuration.nix's
+      # /swapfile and hosts/asher's external-drive entry). Without it, a
+      # failure here (unmounted root variant, disk full, whatever) is a hard
+      # unit failure rather than a warning — which is exactly the failure
+      # mode that motivated fixing the directory-creation bug above in the
+      # first place.
+      options = [ "nofail" ];
     };
 
     # Firewall for LAN access — explicit opt-in only; a non-loopback bind no

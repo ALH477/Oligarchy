@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Fake nmcli for the no-KVM gate. State is a word in $FAKE_NM_STATE; monitor
+# streams $FAKE_NM_EVENTS as it grows; every `connectivity check` is logged.
+set -eu
+case "$*" in
+  "-t -g CONNECTIVITY general") cat "$FAKE_NM_STATE" ;;
+  "networking connectivity check")
+    echo check >> "$FAKE_NM_CALLS"
+    cat "$FAKE_NM_STATE"
+    ;;
+  monitor) exec tail -n +1 -f --sleep-interval=0.05 "$FAKE_NM_EVENTS" ;;
+  *)
+    echo "fake nmcli: unexpected arguments: $*" >&2
+    exit 64
+    ;;
+esac

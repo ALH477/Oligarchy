@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Fake systemd-run: records the whole argv (one arg per line, so tests can
+# match exact arguments), then plays the VMM:
+#   - creates $FAKE_VNC_SOCK when the argv carries -vnc (a real unix socket)
+#   - marks the unit active, unless the "guest" is scripted to exit at once:
+#     FAKE_QEMU_DIES=1 always; FAKE_GPU_DIES=1 only when the argv has vfio-pci
+set -eu
+{ echo "--- systemd-run"; printf '%s\n' "$@"; } >> "$FAKE_DIR/systemd-run.argv"
+echo "systemd-run $*" >> "$FAKE_LOG"
+args=" $* "
+if [[ $args == *" -vnc "* ]] && [ -n "${FAKE_VNC_SOCK:-}" ]; then
+  rm -f "$FAKE_VNC_SOCK"
+  python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$FAKE_VNC_SOCK"
+fi
+if [ "${FAKE_QEMU_DIES:-0}" = 1 ]; then exit 0; fi
+if [ "${FAKE_GPU_DIES:-0}" = 1 ] && [[ $args == *vfio-pci* ]]; then exit 0; fi
+touch "$FAKE_DIR/qemu-active"

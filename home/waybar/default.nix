@@ -10,6 +10,13 @@ let
   # 12-hour table below is kept LOCAL for that same reason -- do NOT import
   # modules/locale/lib.nix here.
   locale = osConfig.custom.locale or { };
+
+  # custom.vpn (modules/vpn.nix). Same `or` discipline as `locale` above: home/
+  # has to evaluate standalone, and on a fresh clone the NixOS module declaring
+  # this option is not in scope. The tunnel is on demand, so an indicator is
+  # not decoration -- without one there is nothing on screen that says whether
+  # traffic is currently leaving through Windscribe.
+  vpnEnabled = osConfig.custom.vpn.enable or false;
   glibcLocale = locale.glibcLocale or "en_US.UTF-8";
   lang = locale.language or "en-US";
 
@@ -41,6 +48,7 @@ let
       (lib.optional (features.hasBacklight or false) "backlight")
       (lib.optional (features.hasBattery or false) "battery")
       "group/network"
+      (lib.optional vpnEnabled "custom/vpn")
       (lib.optional (features.enableGaming or false) "custom/gamemode")
       "custom/caffeine"
       (lib.optional (features.enableDev or false) "custom/repo-updates")
@@ -286,6 +294,12 @@ let
     @keyframes networkDisconnected {
       from { opacity: 0.6; }
       to { opacity: 1; }
+    }
+
+    /* Windscribe tunnel (custom.vpn). Only present when the module is on. */
+    #custom-vpn {
+      color: ${p.success};
+      padding: 0 8px;
     }
 
     /* Tray styling */
@@ -603,6 +617,19 @@ in
         interval = 2;
         tooltip = true;
         on-click = "~/.config/hypr/scripts/gamemode.sh toggle";
+      };
+
+      # Always defined, referenced only when custom.vpn.enable -- same reason
+      # as custom/gamemode above: lib.mkIf inside these serialized settings
+      # leaks _type/condition attrs into the generated JSON.
+      "custom/vpn" = {
+        format = "{}";
+        exec = "oligarchy-vpn status --icon";
+        interval = 5;
+        tooltip = true;
+        tooltip-format = "Windscribe WireGuard (on demand)\\nClick to toggle · Right: full status";
+        on-click = "oligarchy-vpn toggle";
+        on-click-right = "kitty --class floating-term -e bash -c 'oligarchy-vpn status; echo; read -n1 -p \"press any key\"'";
       };
 
       "custom/caffeine" = {

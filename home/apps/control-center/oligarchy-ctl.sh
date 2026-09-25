@@ -13,11 +13,25 @@ set -uo pipefail
 
 FLAKE_DIR="${OLIGARCHY_FLAKE_DIR:-/etc/nixos}"
 HOST="${OLIGARCHY_HOST:-nixos}"
-# Outside the repo on purpose: Nix's local-flake source filtering excludes
-# gitignored files from the evaluated source tree entirely, so an in-repo
-# override file would silently vanish from `nix build`/`nixos-rebuild switch`
-# the moment it's gitignored. See configuration.nix's local-override import.
-LOCAL_FILE="$HOME/.config/oligarchy/state.nix"
+# OLIGARCHY_REBUILD_FLAGS: extra nixos-rebuild flags (e.g. "--impure"). Uses
+# ${VAR=default} (no colon) deliberately: that form substitutes only when the
+# variable is UNSET, so a pure host's OLIGARCHY_REBUILD_FLAGS="" (see
+# hosts/asher/default.nix) is preserved as empty rather than having --impure
+# re-added by a ${VAR:=default}. Looks like a typo; it is not.
+: "${OLIGARCHY_REBUILD_FLAGS=--impure}"
+# LOCAL_FILE is machine-mutable state: set_local() below wholesale-overwrites
+# it on every kernel-*/gpu-*/persona-* action. Its LOCATION therefore has to
+# be somewhere pure evaluation can read, or a persona switch becomes a
+# silent no-op the moment the target host builds purely (see
+# configuration.nix's local-override import) — the same failure this
+# variable exists to dodge, just relocated to a different subsystem.
+# OLIGARCHY_STATE_NIX lets a pure host (nixos-asher) point this at
+# hosts/asher/state.nix, which is imported by a RELATIVE path and so
+# resolves against the flake's own copied source tree — answerable under
+# pure eval, unlike an absolute $HOME path. No other host wires this
+# variable, so the default stays $HOME/.config/oligarchy/state.nix, which
+# remains readable only via --impure.
+LOCAL_FILE="${OLIGARCHY_STATE_NIX:-$HOME/.config/oligarchy/state.nix}"
 STATE="$HOME/.config/oligarchy/state.json"
 TERM_CMD="${TERMINAL:-kitty}"
 
@@ -162,6 +176,8 @@ EOF
     network) cat <<'EOF'
 net-tui|Network (nmtui)
 net-edit|Connection editor
+vpn-toggle|Windscribe VPN (toggle)
+vpn-status|Windscribe VPN status
 EOF
       ;;
     security) cat <<'EOF'
@@ -242,11 +258,16 @@ persona_menu() {
 }
 
 rebuild_cmd_copy() {
-  # --impure is required: LOCAL_FILE/STATE live outside the repo specifically
-  # so a fresh clone never sees them, and checking whether an ambient
-  # filesystem path exists is exactly what pure evaluation (this system's
-  # default — see configuration.nix's local-override comment) disallows.
-  local cmd="sudo nixos-rebuild switch --flake $FLAKE_DIR#$HOST --impure"
+  # --impure is conditional on the host, via OLIGARCHY_REBUILD_FLAGS (set
+  # above). nixos-asher's session sets it to "" (hosts/asher/default.nix)
+  # because its LOCAL_FILE/STATE_NIX resolve inside the flake source tree
+  # and are answerable under pure eval. Every other host still defaults to
+  # --impure because LOCAL_FILE/STATE there live outside the repo (see the
+  # LOCAL_FILE comment above) and checking whether that ambient path exists
+  # is exactly what pure evaluation disallows. The ${VAR:+...} expansion
+  # drops the flag entirely when OLIGARCHY_REBUILD_FLAGS is the empty
+  # string, rather than leaving a stray trailing space in the copied command.
+  local cmd="sudo nixos-rebuild switch --flake $FLAKE_DIR#$HOST${OLIGARCHY_REBUILD_FLAGS:+ $OLIGARCHY_REBUILD_FLAGS}"
   if command -v wl-copy >/dev/null 2>&1; then printf '%s' "$cmd" | wl-copy; fi
   note "Rebuild command copied: $cmd"
 }
@@ -264,16 +285,24 @@ build_fragment() {
 }
 
 # Persist a choice (kernel/gpu/persona) and regenerate the local override
-# fragment. LOCAL_FILE lives outside the repo (~/.config/oligarchy/state.nix),
-# so unlike the old in-repo oligarchy-local.nix this never needs `git add` —
-# it's picked up by configuration.nix's builtins.pathExists import as-is.
+# fragment. On the default host LOCAL_FILE lives outside the repo
+# (~/.config/oligarchy/state.nix), so unlike the old in-repo
+# oligarchy-local.nix this never needs `git add` — it's picked up by
+# configuration.nix's builtins.pathExists import as-is. On nixos-asher
+# OLIGARCHY_STATE_NIX redirects it to hosts/asher/state.nix instead, which
+# IS tracked, so a persona switch there does show up in `git status`.
 set_local() { # $1=key $2=value
   local tmp frag
   tmp="$(mktemp)"
   jq --arg k "$1" --arg v "$2" '.[$k]=$v' "$STATE" > "$tmp" && mv "$tmp" "$STATE"
   frag="$(build_fragment)"
-  mkdir -p "$(dirname "$LOCAL_FILE")"
-  printf '%s\n' "$frag" > "$LOCAL_FILE"
+  # set -uo pipefail has no -e, so a failed write here (root-owned dir,
+  # read-only fs, ...) would otherwise fall straight through to the note()
+  # below and report success. Check both steps explicitly.
+  if ! mkdir -p "$(dirname "$LOCAL_FILE")" || ! printf '%s\n' "$frag" > "$LOCAL_FILE"; then
+    note "Failed to write $LOCAL_FILE — $1=$2 was NOT persisted (check permissions / filesystem)."
+    return 1
+  fi
   note "Set $1=$2 → wrote $LOCAL_FILE. Rebuild to apply (command copied)."
   rebuild_cmd_copy
 }
@@ -359,6 +388,14 @@ run() {
 
     net-tui)        in_term nmtui ;;
     net-edit)       nm-connection-editor >/dev/null 2>&1 & ;;
+    # custom.vpn (modules/vpn.nix). Absent unless that module is enabled, so
+    # both arms degrade to a plain "command not found" note rather than a
+    # silent no-op.
+    # oligarchy-vpn announces the resulting state itself, so no note() here.
+    vpn-toggle)     if command -v oligarchy-vpn >/dev/null 2>&1; then oligarchy-vpn toggle >/dev/null 2>&1
+                    else note "custom.vpn is not enabled on this host"; fi ;;
+    vpn-status)     if command -v oligarchy-vpn >/dev/null 2>&1; then visible oligarchy-vpn status
+                    else note "custom.vpn is not enabled on this host"; fi ;;
 
     sec-status)         visible oligarchy-security status ;;
     sec-scan-quick)     visible oligarchy-security scan quick ;;

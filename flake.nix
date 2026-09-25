@@ -33,6 +33,17 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # windscribe-app — the vendor Windscribe desktop client, helper daemon and
+    # CLI (custom.windscribeApp). Repackaged from the upstream GPLv2 release
+    # artifact, because upstream's own Linux build drives vcpkg against a
+    # custom registry and FetchContent-clones wsnet at configure time, neither
+    # of which a sandboxed Nix build can do. Opt-in, defaults OFF, and
+    # mutually exclusive with custom.vpn. See modules/windscribe-app/README.md.
+    windscribe-app = {
+      url = "path:./modules/windscribe-app";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # oligarchy-vault — user-data encryption (custom.vault.*): age blobs,
     # fscrypt directories, gocryptfs overlays. Opt-in, defaults OFF, no
     # always-on unit, so the ISO needs no mkForce.
@@ -215,6 +226,7 @@
     , demod-talk
     , minecraft
     , android-mirror
+    , windscribe-app
     , greeting
     , boot-intro
     , blipply-assistant
@@ -340,6 +352,12 @@
         # USB scrcpy phone-mirror (custom.androidMirror). Opt-in, defaults OFF,
         # so the ISO needs no mkForce. See modules/android-mirror/README.md.
         android-mirror.nixosModules.default
+
+        # Windscribe vendor client (custom.windscribeApp). Opt-in, defaults
+        # OFF, and an assertion refuses to run alongside custom.vpn — both take
+        # the default route. Read-write and network-facing, so like
+        # oligarchy-forge it stays out of the MCP surface.
+        windscribe-app.nixosModules.default
         # User-data encryption (custom.vault.*): age blobs, fscrypt dirs,
         # gocryptfs overlays. Opt-in, defaults OFF — like android-mirror it
         # declares no always-on unit, so the ISO needs no mkForce. Turn it on
@@ -363,13 +381,28 @@
         # modules/oligarchy-archive.nix.
         ./modules/oligarchy-archive.nix
 
+        # custom.mounts — UUID/PARTUUID-pinned volumes and the swapfiles that
+        # live on them. A plain path module: it has no package and no source
+        # tree, so there is nothing for a sub-flake to pin. Opt-in, defaults
+        # OFF, and with `volumes = { }` it emits no fileSystems entry, no unit,
+        # no tmpfiles rule and no swapDevices entry, so no ISO mkForce is
+        # needed. Plain `fileSystems` stays correct for anything that is
+        # neither removable nor a swap target — see the banner comment in
+        # modules/mounts.nix for the two things it cannot do.
+        ./modules/mounts.nix
+
         ./modules/secure-boot.nix
         ./modules/agentic-local-ai.nix
         # oligarchy-mcp.nix removed — replaced by mcp-servers.nixosModules.default
         ./modules/secrets.nix
         ./modules/security/strict-egress.nix
+        # Windscribe over WireGuard (custom.vpn). Opt-in, defaults OFF, and
+        # ON DEMAND even when enabled — nothing starts at boot. Must come after
+        # strict-egress and ip-blocklists, whose allow.* lists it writes into.
+        # See docs/vpn-windscribe.md.
         ./modules/security/dcf-spa-gate.nix
         ./modules/security/ip-blocklists.nix
+        ./modules/vpn.nix
         ./modules/security/hardening.nix
         ./modules/security/malware-shield.nix
         ./modules/security/security-cli.nix
@@ -523,7 +556,27 @@
         nixos-hardware.nixosModules.framework-16-7040-amd
         ./modules/hardware-configuration.nix
         { networking.hostName = "nixos"; }
-        { custom.platform = { gpu = "amd"; cpu = "amd"; framework = true; }; }
+
+        # mkDefault on `gpu`, and only on `gpu`. The control center's
+        # build_fragment() (home/apps/control-center/oligarchy-ctl.sh) emits
+        # `custom.platform.gpu = "..."` at NORMAL priority into state.nix, so
+        # a host that also pins it at normal priority turns every `oligarchy-
+        # ctl gpu-*` action into "conflicting definition values" — the gpu
+        # verbs have never been able to work. (kernel-* and persona-* are
+        # fine: both of their sinks are already mkDefault.)
+        #
+        # It is fixed here rather than left alone because hosts/asher moved
+        # state.nix INTO the flake tree: the clash used to be reachable only
+        # on an `--impure` run, and now it would break the ordinary pure daily
+        # rebuild. `cpu`/`framework` stay pinned — nothing writes them, and
+        # they are statements of fact about the chassis.
+        #
+        # Safe for the downstream readers: `hasDgpu`'s default is computed
+        # from the RESOLVED value of `gpu` (modules/platform.nix:106), as is
+        # `displayGpu`'s from `hasDgpu`, and the two assertions there read the
+        # resolved values too — mkDefault changes which definition wins, not
+        # what anything sees afterwards.
+        { custom.platform = { gpu = nixpkgs.lib.mkDefault "amd"; cpu = "amd"; framework = true; }; }
 
         # Tiered plugin runtime — STAGE 1 (tier 0 only), and this is the only
         # host that gets it. The other three and the ISO are untouched;
@@ -652,6 +705,30 @@
         }
       ];
 
+      # ────────────────────────────────────────────────────────────────────
+      # The maintainer's actual machine: `nixos` plus hosts/asher.
+      #
+      # Same hardware as `nixos` above — this adds no hardware-configuration
+      # and no nixos-hardware profile, only one person's toggles. Those
+      # toggles used to live at ~/.config/oligarchy/local.nix and reached the
+      # build only under `--impure`; pure evaluation answers `pathExists`
+      # FALSE rather than erroring, so a forgotten flag silently built a
+      # different machine with no warning of any kind (hosts/asher/default.nix
+      # carries the incident that motivated moving them in here).
+      #
+      # extendModules, NOT a second mkHost list. `nixos`'s module list above
+      # is ~130 lines carrying the plugin runtime, the P2P substituter, the
+      # DSP VM and their reasoning; a copy would drift from it silently. This
+      # way `.#nixos` is literally not edited — `git diff` proves that in one
+      # line — and the fresh-clone-minimal promise it makes is untouched.
+      # Same idiom the session-survives-switch and locale-contract gates use
+      # further down this file.
+      #
+      #   sudo nixos-rebuild switch --flake .#nixos-asher     (no --impure)
+      # ────────────────────────────────────────────────────────────────────
+      nixosConfigurations.nixos-asher =
+        self.nixosConfigurations.nixos.extendModules { modules = [ ./hosts/asher ]; };
+
       # Framework 13 AMD 7040 — iGPU only, no expansion-bay dGPU. Unverified
       # against real hardware (see hosts/framework13/hardware-configuration.nix).
       nixosConfigurations.nixos-fw13 = mkHost [
@@ -660,7 +737,9 @@
         {
           networking.hostName = "nixos-fw13";
           custom.platform = {
-            gpu = "amd";
+            # mkDefault so `oligarchy-ctl gpu-*` can write state.nix without
+            # a conflicting-definition error — see the nixos host above.
+            gpu = nixpkgs.lib.mkDefault "amd";
             cpu = "amd";
             framework = true;
             frameworkModel = "13";
@@ -678,7 +757,9 @@
         ./hosts/intel/hardware-configuration.nix
         {
           networking.hostName = "nixos-intel";
-          custom.platform = { gpu = "intel"; cpu = "intel"; framework = false; };
+          # mkDefault on gpu — see the nixos host above (control-center
+          # gpu-* actions write custom.platform.gpu at normal priority).
+          custom.platform = { gpu = nixpkgs.lib.mkDefault "intel"; cpu = "intel"; framework = false; };
         }
       ];
 
@@ -693,7 +774,8 @@
         {
           networking.hostName = "nixos-optimus";
           custom.platform = {
-            gpu = "nvidia-optimus";
+            # mkDefault on gpu — see the nixos host above.
+            gpu = nixpkgs.lib.mkDefault "nvidia-optimus";
             cpu = "intel";
             framework = false;
             # Obtain with: lspci | grep -E 'VGA|3D|Display'  ("01:00.0" -> "PCI:1:0:0")
@@ -734,12 +816,21 @@
           # modprobe line in modules/ci-builder.nix. `gpu` is irrelevant on a
           # headless host but the option is an enum with no "none" member.
           custom.platform = {
-            gpu = "amd";
+            # mkDefault on gpu — see the nixos host above.
+            gpu = nixpkgs.lib.mkDefault "amd";
             cpu = "amd";
             framework = false;
             hasDgpu = false;
             displayGpu = "igpu";
           };
+
+          # Headless CI box: it has no ~/.config/oligarchy and never will, by
+          # construction — every one of its builds is a pure evaluation on
+          # purpose. Silence configuration.nix's pure-eval advisory here so it
+          # stays a signal rather than a line every gates.yml run prints.
+          # The three alternate laptops deliberately keep it: they are real
+          # machines somebody could sit down at and forget --impure on.
+          custom.localOverrides.expected = false;
 
           custom.ciBuilder = {
             enable = true;
@@ -803,6 +894,14 @@
               # the installer; force it off wherever SDDM was forced on.
               services.greetd.enable = lib.mkForce false;
 
+              # The installer has no maintainer's home directory and is always
+              # built purely, so configuration.nix's pure-eval advisory is
+              # noise here — and it DOES reach this output: the ISO embeds the
+              # system closure, so it evaluates system.build.toplevel, which is
+              # where showWarnings sits. Silence it the way the advisory's own
+              # text tells you to.
+              custom.localOverrides.expected = lib.mkForce false;
+
               # Disable production services in ISO
               services.ollamaAgentic.enable = lib.mkForce false;
               custom.dcfCommunityNode.enable = lib.mkForce false;
@@ -826,6 +925,10 @@
               # `custom.desktopFeatures` default — force the whole feature off.
               custom.desktopFeatures.enablePersonalApps = lib.mkForce false;
               custom.androidMirror.enable = lib.mkForce false;
+              # Same Rule 9 reading: off by default already, forced anyway so
+              # the installer never carries a tunnel or a secret slot for one.
+              custom.vpn.enable = lib.mkForce false;
+              custom.windscribeApp.enable = lib.mkForce false;
 
               # fwupd is enabled above for oligarchy-hw-detect, but the weekly
               # refresh timer phones LVFS the moment the live image nets up.
@@ -1175,6 +1278,20 @@
         # stdlib unittest cases are the only gate on that allowlist, and they
         # need neither D-Bus nor KVM.
         #
+        # What this gate does NOT cover, despite the name: it is a Bluetooth
+        # bonding-POLICY gate, not a gamepad-FUNCTION gate. It never loads
+        # hid_xpadneo, opens an evdev node, reads a HID descriptor, or checks
+        # that a bonded pad delivers input at all — it would pass green with
+        # xpadneo absent from the kernel entirely. The whole post-bond
+        # driver/quirks/input path (see modules/gamepad-bluetooth/default.nix's
+        # header comment on the xpadneo GameSir-Nova misclassification) is
+        # unmeasured here on purpose: a real input assertion needs physical BLE
+        # hardware and cannot run in a VM, so per CLAUDE.md's gate rule this
+        # comment names the gap instead of a gate implying a guarantee it can't
+        # give. `gamepad-bond-policy-tests` would be a more honest name for
+        # this attribute; not renamed here because it's load-bearing in
+        # CLAUDE.md, docs and muscle memory — a rename is a separate call.
+        #
         # Run on demand:  nix build .#gamepad-bluetooth-tests
         # ════════════════════════════════════════════════════════════════════
         gamepad-bluetooth-tests =
@@ -1467,6 +1584,51 @@
             '';
 
         # ════════════════════════════════════════════════════════════════════
+        # Captive portal scripts — modules/captive-portal/tests/run.sh.
+        #
+        # The watcher, captive-login and nmtui-portal are plain bash files
+        # configured through CAPTIVE_* env vars precisely so this gate can run
+        # the SAME files against a fake nmcli: the open-once-per-episode state
+        # machine, the re-arm on full/none, the display-vs-TTY split and the
+        # nmtui hand-off are all asserted here without a VM. What only a
+        # booted NetworkManager can prove (that the probe actually flips to
+        # PORTAL) lives in tests/default.nix as .#test-captive-portal.
+        #
+        # Run on demand:  nix build .#captive-portal-tests
+        # ════════════════════════════════════════════════════════════════════
+        captive-portal-tests =
+          pkgs.runCommand "captive-portal-tests"
+            {
+              nativeBuildInputs = [
+                pkgs.bash pkgs.shellcheck pkgs.coreutils pkgs.findutils pkgs.gnugrep pkgs.gnused
+                pkgs.util-linux pkgs.jq pkgs.openssh pkgs.python3
+              ];
+              meta = with nixpkgs.lib; {
+                description = "Assert the captive-portal scripts and the portal-VM orchestrator against fakes; bash, no KVM";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              cp -r ${./modules/captive-portal} src
+              chmod -R u+w src
+              # The sandbox has no /usr/bin/env; the shebangs must resolve.
+              patchShebangs src/bin src/tests
+
+              find src/bin src/tests -type f -print0 | xargs -0 shellcheck
+              echo "shellcheck: clean" | tee $out/report.txt
+
+              bash src/tests/run.sh 2>&1 | tee -a $out/report.txt
+              test "''${PIPESTATUS[0]}" -eq 0
+
+              # The portal-VM orchestrator (Design F): real jq, sha256sum and
+              # ssh-keygen; fakes for everything that needs root or hardware.
+              bash src/tests/vm-run.sh 2>&1 | tee -a $out/report.txt
+              test "''${PIPESTATUS[0]}" -eq 0
+            '';
+
+        # ════════════════════════════════════════════════════════════════════
         # oligarchy-adopt fixtures — docs/localization-roadmap.md §8.
         #
         # The adoption tool reads the /etc a stock install left behind and
@@ -1601,7 +1763,12 @@
       # ══════════════════════════════════════════════════════════════════════
       // (
         let
-          vmTests = import ./tests { inherit pkgs; inherit (nixpkgs) lib; };
+          vmTests = import ./tests {
+            inherit pkgs;
+            inherit (nixpkgs) lib;
+            # The portal-VM tests build a guest with microvm.nix's guest module.
+            microvm = oligarchy-plugins.inputs.microvm;
+          };
         in
         nixpkgs.lib.mapAttrs'
           (name: drv: nixpkgs.lib.nameValuePair "test-${name}" drv)
@@ -1915,6 +2082,427 @@
 
               [ "$fail" -eq 0 ] || exit 1
               echo "inspected $total combination(s); mirror checked on $mirrors of them" >> $out/report.txt
+            '';
+
+        # ════════════════════════════════════════════════════════════════════════
+        # Captive portal contract — the things that are silent when they break.
+        #
+        # Same shape as locale-contract: pure eval of the real host config, no
+        # KVM, no closure. Three evaluations (base, https loginUrl, autoOpen
+        # off), so it sits in legacyPackages beside locale-contract and never
+        # lands on `nix flake check`'s critical path.
+        #
+        # What it asserts on nixosConfigurations.nixos:
+        #   - the module is ENABLED there (a gate that inspected a disabled
+        #     module inspected nothing)
+        #   - NetworkManager's connectivity URI is exactly the probe the option
+        #     describes and is plain http
+        #   - the probe host and login host are on strictEgress.allow.domains,
+        #     so enforcing egress can never make every portal read as "limited"
+        #   - the watcher unit exists, restarts always with no start-rate
+        #     limit, and is wanted by the graphical session; the CLIs are on
+        #     PATH; the browser kind is an isolated one; opens are rate-limited
+        #   - an https loginUrl is REFUSED by the module's own assertion
+        #   - autoOpen = false really removes the unit
+        #
+        # Run on demand:  nix build .#captive-portal-contract
+        # ════════════════════════════════════════════════════════════════════════
+        captive-portal-contract =
+          let
+            lib' = nixpkgs.lib;
+            base = self.nixosConfigurations.nixos.config;
+            override = m: (self.nixosConfigurations.nixos.extendModules { modules = [ m ]; }).config;
+            withHttps = override { custom.network.captivePortal.loginUrl = lib'.mkForce "https://neverssl.com/"; };
+            noAuto = override { custom.network.captivePortal.autoOpen = lib'.mkForce false; };
+
+            # Design F, as the shipped config would run it with kind = microvm.
+            withVm = override { custom.network.captivePortal.browser.kind = lib'.mkForce "microvm"; };
+            vmCfg = withVm.custom.network.captivePortal.microvm;
+            g = vmCfg.build.guest.config;
+            gStore = g.fileSystems."/nix/store" or { };
+            vmSvc = withVm.systemd.services.captive-vm or null;
+            viewer = withVm.systemd.services.captive-vm-viewer or null;
+            dspCore = override {
+              custom.network.captivePortal.browser.kind = lib'.mkForce "microvm";
+              custom.network.captivePortal.microvm.cpu = lib'.mkForce 1;
+              boot.kernelParams = [ "isolcpus=0,1" ];
+            };
+            storeKey = override {
+              custom.network.captivePortal.browser.kind = lib'.mkForce "microvm";
+              custom.network.captivePortal.microvm.publicKey = lib'.mkForce "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeFakeFakeFakeFakeFakeFakeFakeFakeFake";
+              custom.network.captivePortal.microvm.signingKeyFile = lib'.mkForce "/nix/store/0000000000000000000000000000000-key";
+            };
+            failedWith = cfg: frag: lib'.any (a: !a.assertion && lib'.hasInfix frag a.message) cfg.assertions;
+
+            cp = base.custom.network.captivePortal;
+            conn = base.networking.networkmanager.settings.connectivity or { };
+            loginHost = lib'.head (lib'.splitString "/" (lib'.removePrefix "http://" cp.loginUrl));
+            egress = base.networking.firewall.strictEgress.allow.domains;
+            pkgNames = map (p: p.name or "") base.environment.systemPackages;
+            onPath = n: lib'.elem n pkgNames;
+            svc = base.systemd.user.services.captive-portal-watch or null;
+
+            payload = pkgs.writeText "captive-portal-contract.json" (builtins.toJSON {
+              enabled = cp.enable;
+              uri = conn.uri or null;
+              uriIsProbe = (conn.uri or "") == "http://${cp.probe.host}${cp.probe.path}";
+              uriPlainHttp = lib'.hasPrefix "http://" (conn.uri or "");
+              probeEnabled = conn.enabled or false;
+              responseSet = (conn.response or "") != "";
+              loginPlainHttp = lib'.hasPrefix "http://" cp.loginUrl;
+              egressHasProbeHost = lib'.elem cp.probe.host egress;
+              egressHasLoginHost = lib'.elem loginHost egress;
+              cliOnPath = onPath "captive-login" && onPath "nmtui-portal" && onPath "captive-portal-watch";
+              watcherPresent = svc != null;
+              watcherRestartAlways = (svc.serviceConfig.Restart or null) == "always";
+              watcherInSession = lib'.elem "graphical-session.target" (svc.wantedBy or [ ]);
+              watcherNoStartLimit = (svc.unitConfig.StartLimitIntervalSec or null) == 0;
+              # The audit's headline finding: the portal page never opens in
+              # the everyday profile. kind = command is the VM gate's seam and
+              # a deliberate choice elsewhere; xdg-open is the one that is not.
+              browserIsolated = cp.browser.kind != "xdg-open";
+              rateLimited = cp.minInterval >= 30;
+              httpsRefused = lib'.any
+                (a: !a.assertion && lib'.hasInfix "must be plain http://" a.message)
+                withHttps.assertions;
+              autoOpenOffRemovesUnit = !(noAuto.systemd.user.services ? captive-portal-watch);
+
+              # ── Design F: the portal microVM ──
+              # Off by default until its gates are green on the builder.
+              vmOffByDefault = cp.browser.kind != "microvm" && !(base.systemd.services ? captive-vm);
+              vmGuestModuleWired = vmCfg.guestModule != null;
+              vmGuestStoreIsVerity = (gStore.device or "") == "/dev/mapper/nixstore" && (gStore.fsType or "") == "erofs";
+              vmGuestVerityInInitrd = g.boot.initrd.systemd.dmVerity.enable && g.boot.initrd.systemd.services ? captive-verity;
+              vmGuestNoWritableDisk = g.microvm.volumes == [ ] && g.microvm.shares == [ ] && g.microvm.writableStoreOverlay == null;
+              vmGuestNoVsock = g.microvm.vsock.cid == null;
+              vmGuestNoSsh = !g.services.openssh.enable;
+              vmGuestNoNix = !g.nix.enable;
+              vmGuestNoDocker = !(g.virtualisation.docker.enable or false);
+              vmGuestNoLockdownClaim = !(lib'.any (p: lib'.hasPrefix "lockdown=" p) g.boot.kernelParams);
+              vmOrchestratorNotify = (vmSvc.serviceConfig.Type or null) == "notify";
+              vmOrchestratorBounded = !(lib'.elem "CAP_SYS_ADMIN" (vmSvc.serviceConfig.CapabilityBoundingSet or [ "CAP_SYS_ADMIN" ]));
+              vmViewerOffline = (viewer.serviceConfig.PrivateNetwork or false) == true;
+              vmViewerOwnVt = lib'.hasPrefix "/dev/tty" (viewer.serviceConfig.TTYPath or "");
+              vmTapUnmanaged = lib'.elem "interface-name:cp0" withVm.networking.networkmanager.unmanaged;
+              vmPolkitScoped = lib'.hasInfix "captive-vm.service" withVm.security.polkit.extraConfig;
+              vmDspCoreRefused = failedWith dspCore "isolated (isolcpus)";
+              vmStoreKeyRefused = failedWith storeKey "must not be a Nix store path";
+            });
+          in
+          pkgs.runCommand "captive-portal-contract"
+            {
+              nativeBuildInputs = [ pkgs.jq ];
+              meta = with nixpkgs.lib; {
+                description = "Assert the captive-portal module is wired into nixos: probe URI, egress allowlist, watcher unit, https refusal";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              j=${payload}
+              cp "$j" $out/contract.json
+              fail=0
+              want() { # want <field> — must be true
+                if [ "$(jq -r ".$1" "$j")" = true ]; then
+                  echo "PASS  $1" | tee -a $out/report.txt
+                else
+                  echo "FAIL  $1 = $(jq -c ".$1" "$j")" | tee -a $out/report.txt >&2
+                  fail=1
+                fi
+              }
+              # Anti-vacuity first: everything below is about an enabled module.
+              want enabled
+              want uriIsProbe
+              want uriPlainHttp
+              want probeEnabled
+              want responseSet
+              want loginPlainHttp
+              want egressHasProbeHost
+              want egressHasLoginHost
+              want cliOnPath
+              want watcherPresent
+              want watcherRestartAlways
+              want watcherInSession
+              want watcherNoStartLimit
+              want browserIsolated
+              want rateLimited
+              want httpsRefused
+              want autoOpenOffRemovesUnit
+              for k in vmOffByDefault vmGuestModuleWired vmGuestStoreIsVerity vmGuestVerityInInitrd \
+                vmGuestNoWritableDisk vmGuestNoVsock vmGuestNoSsh vmGuestNoNix vmGuestNoDocker \
+                vmGuestNoLockdownClaim vmOrchestratorNotify vmOrchestratorBounded vmViewerOffline \
+                vmViewerOwnVt vmTapUnmanaged vmPolkitScoped vmDspCoreRefused vmStoreKeyRefused; do
+                want "$k"
+              done
+              echo "uri: $(jq -r .uri "$j")" >> $out/report.txt
+              [ "$fail" -eq 0 ] || { echo "captive-portal-contract: FAILED" >&2; exit 1; }
+              echo "captive-portal-contract: 35 checks passed" | tee -a $out/report.txt
+            '';
+
+        # ════════════════════════════════════════════════════════════════════════
+        # Portal-VM activation reference — Design F, the build half.
+        #
+        # Builds the guest image nixosConfigurations.nixos would boot with
+        # browser.kind = "microvm" (Firefox closure + erofs: minutes, disk, no
+        # KVM) and asserts, against the REAL artifacts:
+        #   - the verity tree verifies the store disk, and re-deriving the tree
+        #     from the disk with the manifest's own recipe gives the same root:
+        #     the reference is reproducible from the image, not just recorded
+        #   - the launcher's baked reference is sha256(manifest.json)
+        #   - kernel/initrd/tree/policy hashes in the manifest match the files
+        #   - the real launcher's `verify` accepts it, and refuses a manifest
+        #     that is one byte off (a copy, via a patched wrapper env)
+        #   - a manifest signature from a throwaway key verifies; a tampered
+        #     copy, another namespace and another key do not
+        #   - the cmdline claims no lockdown (a no-op on this kernel) and does
+        #     not already carry captive.verity=
+        # Tamper detection of dm-verity itself is exercised on a small image
+        # with the same flags, since flipping bytes in a 1 GiB copy buys nothing.
+        #
+        # Determinism across builds: `nix build .#captive-vm-image --rebuild`
+        # rebuilds the manifest and fails if it differs.
+        #
+        # Run on demand:  nix build .#captive-vm-reference
+        # ════════════════════════════════════════════════════════════════════════
+        captive-vm-image =
+          ((self.nixosConfigurations.nixos.extendModules {
+            modules = [{ custom.network.captivePortal.browser.kind = nixpkgs.lib.mkForce "microvm"; }];
+          }).config.custom.network.captivePortal.microvm.build.manifest);
+
+        captive-vm-reference =
+          let
+            build = (self.nixosConfigurations.nixos.extendModules {
+              modules = [{ custom.network.captivePortal.browser.kind = nixpkgs.lib.mkForce "microvm"; }];
+            }).config.custom.network.captivePortal.microvm.build;
+            m = build.manifest;
+          in
+          pkgs.runCommand "captive-vm-reference"
+            {
+              nativeBuildInputs = with pkgs; [ cryptsetup jq openssh coreutils gnused gnugrep erofs-utils ];
+              meta = with nixpkgs.lib; {
+                description = "Assert the portal-VM manifest is reproducible from its image and the launcher enforces it";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              M=${m}/manifest.json
+              fail=0
+              ok() { echo "PASS  $1" | tee -a $out/report.txt; }
+              no() { echo "FAIL  $1" | tee -a $out/report.txt >&2; fail=1; }
+              t() { local n=$1; shift; if "$@"; then ok "$n"; else no "$n"; fi; }
+              f() { local n=$1; shift; if "$@"; then no "$n"; else ok "$n"; fi; }
+              q() { jq -er "$1" "$M"; }
+              s() { sha256sum "$1" | cut -c1-64; }
+
+              root=$(q .store.verity.root)
+              store=$(q .store.path)
+              tree=$(q .store.verity.hashTree)
+              t "verity: the tree verifies the store disk" veritysetup verify "$store" "$tree" "$root"
+              salt=$(s "$store")
+              uuid=$(printf '%s' "$salt" | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12}).*/\1-\2-\3-\4-\5/')
+              veritysetup format --hash=sha256 --data-block-size=4096 --hash-block-size=4096 \
+                --salt="$salt" --uuid="$uuid" "$store" again.img > again.txt
+              t "verity: re-deriving from the disk gives the manifest's root" \
+                test "$(sed -n 's/^Root hash:[[:space:]]*//p' again.txt)" = "$root"
+              t "verity: and a byte-identical tree" cmp -s again.img "$tree"
+
+              ref=$(cat ${m}/reference)
+              t "reference: is sha256(manifest.json)" test "$ref" = "$(s "$M")"
+              t "reference: is the value baked into the launcher" \
+                grep -q "CVM_REFERENCE.*$ref" ${build.launcher}/bin/captive-vm-run
+              t "hashes: kernel" test "$(s "$(q .kernel.path)")" = "$(q .kernel.sha256)"
+              t "hashes: initrd" test "$(s "$(q .initrd.path)")" = "$(q .initrd.sha256)"
+              t "hashes: hash tree" test "$(s "$tree")" = "$(q .store.verity.hashTreeSha256)"
+              t "hashes: egress policy" test "$(s "$(q .policy.nft)")" = "$(q .policy.nftSha256)"
+              f "cmdline: claims no lockdown (a no-op on the stock kernel)" grep -q 'lockdown=' <<< "$(q .cmdline)"
+              f "cmdline: does not carry captive.verity= itself" grep -q 'captive.verity=' <<< "$(q .cmdline)"
+              t "cmdline: boots the guest's own init" grep -q 'init=/nix/store/' <<< "$(q .cmdline)"
+
+              # The real launcher, pointed at a scratch run dir and a stand-in
+              # /dev/kvm (the sandbox has none).
+              mkdir -p dev run
+              ln -s /dev/null dev/kvm
+              t "launcher: verify accepts the built image" \
+                env CVM_RUNDIR=$PWD/run CVM_DEVDIR=$PWD/dev ${build.launcher}/bin/captive-vm-run verify
+              cp "$M" m2.json
+              sed -i 's/reboot=t/reboot=T/' m2.json
+              t "launcher: the tampered copy really differs" test "$(s m2.json)" != "$ref"
+              # Same script, same reference, same env as the wrapper — only the
+              # manifest differs, so a refusal can only be the reference check.
+              f "launcher: refuses a manifest one byte off" \
+                env CVM_RUNDIR=$PWD/run CVM_DEVDIR=$PWD/dev CVM_MANIFEST=$PWD/m2.json \
+                CVM_REFERENCE="$ref" CVM_QEMU=/nonexistent \
+                bash ${./modules/captive-portal/bin/captive-vm-run.sh} verify
+
+              ssh-keygen -q -t ed25519 -N "" -f key
+              ssh-keygen -q -t ed25519 -N "" -f other
+              ssh-keygen -Y sign -q -f key -n oligarchy-captive-vm < "$M" > sig
+              printf 'captive-vm namespaces="oligarchy-captive-vm" %s\n' "$(cut -d' ' -f1,2 key.pub)" > allowed
+              printf 'captive-vm namespaces="oligarchy-captive-vm" %s\n' "$(cut -d' ' -f1,2 other.pub)" > allowed-other
+              v() { ssh-keygen -Y verify -f "$1" -I captive-vm -n "$2" -s sig < "$3" > /dev/null 2>&1; }
+              t "signature: verifies" v allowed oligarchy-captive-vm "$M"
+              f "signature: a tampered manifest does not verify" v allowed oligarchy-captive-vm m2.json
+              f "signature: another namespace does not verify" v allowed other-namespace "$M"
+              f "signature: another key does not verify" v allowed-other oligarchy-captive-vm "$M"
+
+              # dm-verity's own tamper detection, with the manifest's exact flags.
+              mkdir -p tiny/store
+              for i in $(seq 1 64); do head -c $((i * 997)) /dev/urandom > tiny/store/f$i; done
+              mkfs.erofs -T 0 --all-root tiny.erofs tiny/store > /dev/null
+              ts=$(s tiny.erofs)
+              tu=$(printf '%s' "$ts" | sed -E 's/^(.{8})(.{4})(.{4})(.{4})(.{12}).*/\1-\2-\3-\4-\5/')
+              veritysetup format --hash=sha256 --data-block-size=4096 --hash-block-size=4096 \
+                --salt="$ts" --uuid="$tu" tiny.erofs tiny.tree > tiny.txt
+              troot=$(sed -n 's/^Root hash:[[:space:]]*//p' tiny.txt)
+              t "verity/tamper: clean image verifies" veritysetup verify tiny.erofs tiny.tree "$troot"
+              printf '\x55' | dd of=tiny.erofs bs=1 seek=$(( $(stat -c %s tiny.erofs) / 2 + 7 )) conv=notrunc status=none
+              f "verity/tamper: one flipped byte is caught" veritysetup verify tiny.erofs tiny.tree "$troot"
+
+              cp "$M" $out/manifest.json
+              echo "reference: $ref" | tee -a $out/report.txt
+              [ "$fail" -eq 0 ] || { echo "captive-vm-reference: FAILED" >&2; exit 1; }
+              echo "captive-vm-reference: all checks passed" | tee -a $out/report.txt
+            '';
+
+        # ════════════════════════════════════════════════════════════════════════
+        # Network posture contract — docs/networking-design-spec (Designs C–E).
+        #
+        # Pure eval of nixosConfigurations.nixos (plus three cheap overrides
+        # for the trusted-Wi-Fi module). Every line here is a thing
+        # configuration.nix says in one place and nothing at runtime complains
+        # about when it drifts back:
+        #   - resolved carries no global "~." routing domain
+        #   - NM: connection.mdns = 0 and connection.llmnr = 0 (Avahi owns
+        #     .local; resolved must not be a second responder)
+        #   - NM: wifi.cloned-mac-address = stable (the real MAC never goes
+        #     out on a public SSID) while ethernet stays preserve
+        #   - Avahi is still on with nss-mdns (the reason mdns=0 is safe)
+        #   - resolved still on, dnssec allow-downgrade, DoT opportunistic
+        #     (the combination the captive-portal VM gate was written against)
+        #   - firewall: no 22 and no 443 in the interface-agnostic list; 22 on
+        #     tailscale0 only
+        #   - custom.network.trustedWifi renders `psk=$VAR` (never a literal),
+        #     pins DNS with ignore-auto-dns, refuses a literal-looking pskVar,
+        #     refuses profiles with no secrets source and refuses a secrets
+        #     file that lives in the world-readable store
+        #
+        # Run on demand:  nix build .#network-posture-contract
+        # ════════════════════════════════════════════════════════════════════════
+        network-posture-contract =
+          let
+            lib' = nixpkgs.lib;
+            c = self.nixosConfigurations.nixos.config;
+            nm = c.networking.networkmanager;
+            cc = nm.connectionConfig;
+            fw = c.networking.firewall;
+
+            # Lists of modules, not `//`: an attrset update would replace the
+            # whole `custom` attribute and silently drop the sample profile.
+            override = ms: (self.nixosConfigurations.nixos.extendModules { modules = ms; }).config;
+            sample = {
+              custom.network.trustedWifi.home = {
+                ssid = "Contract Net";
+                pskVar = "HOME_PSK";
+                dns = [ "9.9.9.9" "149.112.112.112" ];
+                priority = 20;
+              };
+            };
+            # A runtime path, never a store path: the module refuses those
+            # (asserted below) because the store is world-readable. Nothing is
+            # read at eval; the profile is rendered with `$HOME_PSK`.
+            source = { custom.network.trustedWifiSecretsFile = "/run/secrets/wifi-env"; };
+            storePath = override [ sample { custom.network.trustedWifiSecretsFile = pkgs.writeText "wifi-env" "HOME_PSK=unused\n"; } ];
+            withSecrets = override [ sample source ];
+            rendered = withSecrets.networking.networkmanager.ensureProfiles.profiles.home;
+            noSource = override [ sample ];
+            # pskVar = "hunter2" must die in the option type, which is a throw
+            # tryEval can see once the value is forced.
+            literalPsk = builtins.tryEval (builtins.deepSeq
+              (override [ sample source { custom.network.trustedWifi.home.pskVar = lib'.mkForce "hunter2"; } ])
+                .networking.networkmanager.ensureProfiles.profiles
+              true);
+
+            payload = pkgs.writeText "network-posture-contract.json" (builtins.toJSON {
+              # ── stage 3: firewall + profiles ──
+              sshNotGlobal = !(lib'.elem 22 fw.allowedTCPPorts);
+              tlsNotGlobal = !(lib'.elem 443 fw.allowedTCPPorts);
+              sshOnTailscale = lib'.elem 22 (fw.interfaces.tailscale0.allowedTCPPorts or [ ]);
+              profileRendersPskVar = rendered.wifi-security.psk == "$HOME_PSK";
+              profileIsWifiPsk = rendered.wifi-security.key-mgmt == "wpa-psk" && rendered.wifi.ssid == "Contract Net";
+              profilePinsDns = rendered.ipv4.dns == "9.9.9.9;149.112.112.112;" && rendered.ipv4.ignore-auto-dns == true;
+              profilePriority = rendered.connection.autoconnect-priority == 20;
+              profileEnvFileWired = lib'.length withSecrets.networking.networkmanager.ensureProfiles.environmentFiles == 1;
+              noSecretsSourceRefused = lib'.any
+                (a: !a.assertion && lib'.hasInfix "no secrets source" a.message)
+                noSource.assertions;
+              literalPskRefused = !literalPsk.success;
+              storePathSecretsRefused = lib'.any
+                (a: !a.assertion && lib'.hasInfix "must not be a Nix store path" a.message)
+                storePath.assertions;
+              # ── stage 2: resolver, mDNS, MAC ──
+              networkManagerOn = nm.enable;
+              resolvedOn = c.services.resolved.enable;
+              noGlobalRoutingDomain = !(lib'.elem "~." c.services.resolved.domains);
+              dnssecAllowDowngrade = c.services.resolved.dnssec == "allow-downgrade";
+              dotOpportunistic = c.services.resolved.dnsovertls == "opportunistic";
+              mdnsOff = (cc."connection.mdns" or null) == 0;
+              llmnrOff = (cc."connection.llmnr" or null) == 0;
+              wifiMacStable = (cc."wifi.cloned-mac-address" or null) == "stable";
+              ethernetMacPreserve = (cc."ethernet.cloned-mac-address" or null) == "preserve";
+              avahiOn = c.services.avahi.enable && c.services.avahi.nssmdns4;
+              nmUsesResolved = nm.dns == "systemd-resolved";
+            });
+          in
+          pkgs.runCommand "network-posture-contract"
+            {
+              nativeBuildInputs = [ pkgs.jq ];
+              meta = with nixpkgs.lib; {
+                description = "Assert the LAN posture in configuration.nix: no ~. routing domain, Avahi alone on mDNS, LLMNR off, stable Wi-Fi MAC";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              j=${payload}
+              cp "$j" $out/contract.json
+              fail=0
+              want() {
+                if [ "$(jq -r ".$1" "$j")" = true ]; then
+                  echo "PASS  $1" | tee -a $out/report.txt
+                else
+                  echo "FAIL  $1 = $(jq -c ".$1" "$j")" | tee -a $out/report.txt >&2
+                  fail=1
+                fi
+              }
+              # Anti-vacuity: the posture is about NM + resolved + Avahi all on.
+              want networkManagerOn
+              want resolvedOn
+              want avahiOn
+              want nmUsesResolved
+              want noGlobalRoutingDomain
+              want dnssecAllowDowngrade
+              want dotOpportunistic
+              want mdnsOff
+              want llmnrOff
+              want wifiMacStable
+              want ethernetMacPreserve
+              want sshNotGlobal
+              want tlsNotGlobal
+              want sshOnTailscale
+              want profileRendersPskVar
+              want profileIsWifiPsk
+              want profilePinsDns
+              want profilePriority
+              want profileEnvFileWired
+              want noSecretsSourceRefused
+              want literalPskRefused
+              want storePathSecretsRefused
+              [ "$fail" -eq 0 ] || { echo "network-posture-contract: FAILED" >&2; exit 1; }
+              echo "network-posture-contract: 22 checks passed" | tee -a $out/report.txt
             '';
       };
 

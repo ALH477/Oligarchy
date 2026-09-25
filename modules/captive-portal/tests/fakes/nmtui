@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+echo "nmtui $*" >> "$FAKE_NM_CALLS"
+exit "${FAKE_NMTUI_EXIT:-0}"

@@ -7,11 +7,14 @@
 # Replace the placeholder below with that public key, then encrypt:
 #   sops --encrypt modules/secrets/dcf-id.env > modules/secrets/dcf-id.enc.env
 #
+# The Windscribe WireGuard config is a *.enc.conf under the same rule;
+# `oligarchy-vpn import <windscribe.conf>` writes it for you.
+#
 # NEVER commit the private key or any *.env plaintext (see .gitignore).
 keys:
   - &host_framework16 age1PLACEHOLDER_RUN_AGE_KEYGEN_AND_PASTE_PUBLIC_KEY_HERE
 creation_rules:
-  - path_regex: modules/secrets/.*\.enc\.(env|yaml|json)$
+  - path_regex: modules/secrets/.*\.enc\.(env|yaml|json|conf)$
     key_groups:
       - age:
           - *host_framework16

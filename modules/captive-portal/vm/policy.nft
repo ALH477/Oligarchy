@@ -1,0 +1,50 @@
+# Egress policy for one portal-VM run. Loaded by captive-vm-run with @UPLINK@
+# replaced by the active uplink (after checking this file's sha256 against the
+# manifest, so the policy is part of the activation reference), deleted on
+# discard. Stands alone beside the NixOS iptables firewall like dcf-spa-gate:
+# its drops are final, its accepts still have to pass the NixOS chains
+# (hence networking.firewall.interfaces.cp0 admitting DNS in the module).
+#
+# Guest 10.207.0.2 <-> host 10.207.0.1 on tap cp0, NATed out of the uplink so
+# the portal authorises the HOST's MAC and IP, which is the identity that has
+# to end up online.
+table inet captive_vm {
+	chain input {
+		type filter hook input priority filter - 10; policy accept;
+		# The only host service the guest may reach: the DNS forwarder, which
+		# answers from the uplink's resolver (and so from the portal's).
+		iifname "cp0" ip saddr 10.207.0.2 ip daddr 10.207.0.1 udp dport 53 accept
+		iifname "cp0" ip saddr 10.207.0.2 ip daddr 10.207.0.1 tcp dport 53 accept
+		iifname "cp0" counter drop
+		# Weak host model: Linux delivers a packet for ANY local address that
+		# arrives on ANY interface, so without this a venue peer routing
+		# 10.207.0.0/30 at the laptop reaches whatever listens on 10.207.0.1
+		# (the forwarder) through the uplink. Found by the netns policy test.
+		ip daddr 10.207.0.1 counter drop
+	}
+
+	chain forward {
+		type filter hook forward priority filter - 10; policy accept;
+
+		# Guest -> portal: web only, and never into the tailnet, link-local
+		# metadata, loopback or multicast ranges even if a route exists.
+		iifname "cp0" ip daddr { 100.64.0.0/10, 169.254.0.0/16, 127.0.0.0/8, 224.0.0.0/4 } counter drop
+		iifname "cp0" oifname "@UPLINK@" ip saddr 10.207.0.2 tcp dport { 80, 443 } accept
+		iifname "cp0" counter drop
+
+		# Replies only, and only to the guest.
+		iifname "@UPLINK@" oifname "cp0" ip daddr 10.207.0.2 ct state established,related accept
+		oifname "cp0" counter drop
+
+		# Forwarding is switched on for the uplink for the duration of the run
+		# (the guest's replies arrive there). That must not turn the laptop into
+		# a router for the venue's LAN: no new flow from the uplink is forwarded
+		# anywhere while this table exists.
+		iifname "@UPLINK@" ct state new counter drop
+	}
+
+	chain postrouting {
+		type nat hook postrouting priority srcnat; policy accept;
+		oifname "@UPLINK@" ip saddr 10.207.0.2 masquerade
+	}
+}

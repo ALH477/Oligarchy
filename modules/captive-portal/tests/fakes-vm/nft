@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Fake nft: records calls, keeps what `nft -f -` was fed.
+set -eu
+echo "nft $*" >> "$FAKE_LOG"
+case "$*" in
+  "list table inet captive_vm") test -e "$FAKE_DIR/stale-table" ; exit ;;
+  "delete table inet captive_vm") rm -f "$FAKE_DIR/stale-table" ;;
+esac
+if [ "$*" = "-f -" ]; then cat > "$FAKE_DIR/nft-loaded"; fi

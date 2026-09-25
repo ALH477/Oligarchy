@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Fake nmcli for the orchestrator gate: "portal" until $FAKE_NM_FULL_AFTER
+# checks have been answered, then "full" (never, when unset).
+set -eu
+echo "nmcli $*" >> "$FAKE_LOG"
+case "$*" in
+  "networking connectivity check")
+    n=$(( $(cat "$FAKE_DIR/nm-calls" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" > "$FAKE_DIR/nm-calls"
+    if [ -n "${FAKE_NM_FULL_AFTER:-}" ] && [ "$n" -ge "$FAKE_NM_FULL_AFTER" ]; then echo full; else echo portal; fi
+    ;;
+  "-t -g GENERAL.CONNECTION device show "*) echo "Venue \"Guest\" Wi-Fi" ;;
+  *) exit 64 ;;
+esac

@@ -134,6 +134,16 @@ jobs:
           - test-hardening
           - test-dcf-spa-gate
           - test-ip-blocklists
+          # Two-node: a nginx portal + dnsmasq venue and an NM client.
+          - test-captive-portal
+          - test-mdns-single-responder
+          - test-network-profiles
+          # Portal VM (Design F): the egress policy against network namespaces
+          # (plain KVM), then the whole run end to end — NESTED KVM, because
+          # the client node boots the portal guest inside itself.
+          - test-captive-vm-policy
+          - test-captive-vm
+          - captive-vm-reference
 
     steps:
       - uses: actions/checkout@v4

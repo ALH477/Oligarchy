@@ -12,6 +12,9 @@ secrets/README.md
 # Plaintext env secrets must never be committed; sops-encrypted (*.enc.*) may.
 modules/secrets/*.env
 !modules/secrets/*.enc.env
+# Same pair for the Windscribe wg-quick config (custom.secrets.vpn).
+modules/secrets/*.conf
+!modules/secrets/*.enc.conf
 modules/secrets/keys.txt
 
 # Python bytecode

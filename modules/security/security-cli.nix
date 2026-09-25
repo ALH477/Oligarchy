@@ -15,9 +15,23 @@ let
   runDir = "/run/oligarchy-security";
   statusJson = "${runDir}/status.json";
 
+  # custom.vpn (modules/vpn.nix), read with `or` defaults so this CLI still
+  # evaluates where that module is absent.
+  #
+  # This is posture, not decoration. custom.vpn.trustTunnel adds the tunnel
+  # interface to strictEgress.allow.interfaces, so while the tunnel is up the
+  # egress chain constrains nothing that routes through it — and "Strict egress
+  # : enforcing" on its own would then be reporting a boundary that is not
+  # where the reader thinks it is.
+  vpnEnabled = config.custom.vpn.enable or false;
+  vpnIface = config.custom.vpn.interface or "wsc0";
+  vpnBypassesEgress = vpnEnabled
+    && (config.custom.vpn.trustTunnel or false)
+    && (config.networking.firewall.strictEgress.enable or false);
+
   securityCli = pkgs.writeShellScriptBin "oligarchy-security" ''
     set -u
-    export PATH=${makeBinPath [ pkgs.systemd pkgs.gnugrep pkgs.gawk pkgs.coreutils pkgs.jq pkgs.openssh pkgs.nftables ]}:$PATH
+    export PATH=${makeBinPath [ pkgs.systemd pkgs.gnugrep pkgs.gawk pkgs.coreutils pkgs.jq pkgs.openssh pkgs.nftables pkgs.iproute2 ]}:$PATH
 
     have() { command -v "$1" >/dev/null 2>&1; }
 
@@ -61,6 +75,15 @@ let
       else echo "off"; fi
     }
     q_events() { [ -f /var/lib/malware-shield/events.log ] && wc -l < /var/lib/malware-shield/events.log || echo 0; }
+    q_vpn() {
+      ${if !vpnEnabled then ''echo "off"'' else ''
+      if ip link show ${vpnIface} >/dev/null 2>&1; then
+        echo "up${optionalString vpnBypassesEgress " — egress filtering bypassed"}"
+      else
+        echo "down"
+      fi
+      ''}
+    }
     q_blocklist() {
       # Entry count of the merged threat-intel set, or "off". Reads the state
       # file rather than shelling out to ipset, which needs root.
@@ -73,11 +96,12 @@ let
     }
 
     build_status() {
-      local ssh_pw fail2ban egress clamd apparmor auditd usbguard docker_rootless events blocklist
+      local ssh_pw fail2ban egress clamd apparmor auditd usbguard docker_rootless events blocklist vpn
       ssh_pw=$(q_ssh_password)
       fail2ban=$(q_unit fail2ban.service)
       egress=$(q_egress_mode)
       blocklist=$(q_blocklist)
+      vpn=$(q_vpn)
       clamd=$(q_unit clamav-daemon.service)
       apparmor=$(q_unit apparmor.service)
       auditd=$(q_unit auditd.service)
@@ -88,12 +112,12 @@ let
         --arg ssh_pw "$ssh_pw" --arg fail2ban "$fail2ban" --arg egress "$egress" \
         --arg clamd "$clamd" --arg apparmor "$apparmor" --arg auditd "$auditd" \
         --arg usbguard "$usbguard" --arg docker_rootless "$docker_rootless" \
-        --arg blocklist "$blocklist" \
+        --arg blocklist "$blocklist" --arg vpn "$vpn" \
         --argjson events "''${events:-0}" --arg ts "$(date -Is)" \
         '{ts:$ts, ssh_password_auth:$ssh_pw, fail2ban:$fail2ban, egress:$egress,
           clamav:$clamd, apparmor:$apparmor, auditd:$auditd, usbguard:$usbguard,
           docker_rootless:$docker_rootless, malware_events:$events,
-          blocklist:$blocklist}'
+          blocklist:$blocklist, vpn:$vpn}'
     }
 
     cmd_status() {
@@ -108,6 +132,7 @@ let
             "SSH password auth : \(.ssh_password_auth)",
             "fail2ban          : \(.fail2ban)",
             "Strict egress     : \(.egress)",
+            "VPN tunnel        : \(.vpn)",
             "IP blocklists     : \(.blocklist)",
             "ClamAV daemon     : \(.clamav)",
             "AppArmor          : \(.apparmor)",

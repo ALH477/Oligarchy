@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Fake dnsmasq: records its arguments, then waits to be killed like the real one.
+echo "dnsmasq $*" >> "$FAKE_LOG"
+trap 'echo "dnsmasq stopped" >> "$FAKE_LOG"; exit 0' TERM
+sleep 1000 & wait

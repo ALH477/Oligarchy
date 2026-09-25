@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Fake systemctl for the orchestrator gate.
+set -eu
+echo "systemctl $*" >> "$FAKE_LOG"
+case "$*" in
+  "is-active --quiet captive-vm-qemu.service") test -e "$FAKE_DIR/qemu-active" ;;
+  "stop captive-vm-qemu.service" | "kill -s KILL captive-vm-qemu.service") rm -f "$FAKE_DIR/qemu-active" ;;
+  *) exit 0 ;;
+esac

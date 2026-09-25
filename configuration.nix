@@ -20,18 +20,42 @@
     ./modules/terminus-dev.nix
     ./modules/gamepad-bluetooth
     ./modules/session-resume.nix
+    # Captive portal detection + auto-open login page (hotel/airport Wi-Fi).
+    ./modules/captive-portal
+    # Trusted Wi-Fi profiles from Nix, PSKs from sops (custom.network.trustedWifi).
+    ./modules/network-profiles.nix
   ]
-  # Optional local overrides, both at absolute paths OUTSIDE the repo so a
-  # fresh clone never sees them (Nix's local-flake source filtering excludes
-  # gitignored files from the evaluated source tree entirely — an in-repo
-  # override file would vanish from `nix build`/`nixos-rebuild switch` even on
-  # this machine the moment it's gitignored, which is why these live under
-  # ~/.config/oligarchy instead of the old in-repo oligarchy-local.nix):
-  #   local.nix — hand-maintained personal toggles (steam, malware-shield,
-  #     the DSP VM, the personal package list, etc.), never touched by tooling.
+  # ── The fresh-user hatch (NOT the maintainer's channel any more) ──────────
+  #
+  # Two optional files at absolute paths OUTSIDE the repo, so a fresh clone
+  # never sees them. They live under ~/.config/oligarchy rather than in-tree
+  # because Nix's local-flake source filtering excludes gitignored files from
+  # the evaluated source tree entirely — an in-repo, gitignored override would
+  # vanish from `nix build` / `nixos-rebuild switch` even on this machine.
+  #
+  #   local.nix — hand-maintained personal toggles. This is what
+  #     `nix run .#oligarchy-adopt` writes for somebody arriving from a stock
+  #     NixOS install: it reads their existing /etc/locale.conf, vconsole.conf
+  #     and localtime and turns them into custom.locale.* here, so a fresh
+  #     user keeps their language and keyboard on the first rebuild. A shipped
+  #     flow with its own gate — `nix build .#locale-adopt-fixtures`.
   #   state.nix — written by the control center (kernel/gpu/persona picks);
   #     kept separate because the control center wholesale-overwrites its file
   #     on every UI action, which would silently wipe local.nix if shared.
+  #
+  # WHAT CHANGED: this pair used to be the MAINTAINER's channel as well, and
+  # it is a bad one. `builtins.pathExists` on an out-of-tree absolute path does
+  # not *error* under pure evaluation — Nix catches its own RestrictedPathError
+  # and answers `false` — so a rebuild that forgot `--impure` quietly built a
+  # machine with every toggle back at its fresh-clone default, printed nothing,
+  # and switched to it. An autoLogin flip arrived that way, put a boot on
+  # hyprlock instead of the greeter, and never showed up in `git diff`.
+  #
+  # So the maintainer's settings now live IN the repo, at `hosts/asher/`, and
+  # are built as `.#nixos-asher` — pure, diffable, bisectable, reviewable. See
+  # hosts/asher/default.nix for the full account. The advisory in the `config`
+  # block below (`custom.localOverrides.expected`) is what makes a pure build
+  # of a host that still relies on these two files say so out loud.
   #
   # NOTE: hardcodes "asher" rather than config.custom.user.name — `imports` is
   # evaluated to determine what `config` even contains, so referencing `config`
@@ -43,6 +67,25 @@
 
   options = {
     custom.steam.enable = lib.mkEnableOption "Steam and gaming support";
+
+    # Does this host expect to be configured through the two
+    # ~/.config/oligarchy files imported above? True for anything that might
+    # be somebody's daily laptop; false for hosts that carry their overrides
+    # in-tree (hosts/asher) or have no home directory at all (the headless
+    # builder). It gates ONE warning and nothing else — never an assertion,
+    # because pure evaluation is the CORRECT mode for CI, the ISO,
+    # `nix flake check` and a fresh clone.
+    custom.localOverrides.expected = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Whether this host's configuration is expected to be completed by
+        ~/.config/oligarchy/{local,state}.nix. When true, a PURE evaluation
+        (no `--impure`) emits a warning, because those files were not read and
+        cannot even be probed for existence. Set false on hosts whose settings
+        are tracked in the repository.
+      '';
+    };
   };
 
   config =
@@ -355,14 +398,13 @@
       };
 
       # ── AI-stack dedicated swap + container memory accounting ────────────────
-      # See modules/agentic-local-ai.nix for the module that owns these options.
-      # Swap tier ordering: zram (100) > AI-dedicated (50) > generic backup (10).
-      # The AI-only swapfile lives on root ext4 (always mounted), and the
-      # container mem/swap caps prevent Ollama from eating the entire system.
+      # See modules/agentic-local-ai.nix for the module that owns these options
+      # — including the priority reasoning, which lives there only (in
+      # dedicatedSwap.priority's option description) and not duplicated here.
       services.ollamaAgentic.dedicatedSwap = {
         enable = lib.mkDefault false;
         sizeGB = 24;
-        priority = 50;
+        priority = 5;
       };
       services.ollamaAgentic.containerMemoryLimitGB = 18;
 
@@ -382,7 +424,64 @@
       warnings = lib.optional
         (config.boot.resumeDevice == ""
           && builtins.elem config.services.upower.criticalPowerAction [ "Hibernate" "HybridSleep" ])
-        "Oligarchy: upower criticalPowerAction is ${config.services.upower.criticalPowerAction} but boot.resumeDevice is unset — hibernation cannot resume. See the hibernate block near swapDevices in configuration.nix.";
+        "Oligarchy: upower criticalPowerAction is ${config.services.upower.criticalPowerAction} but boot.resumeDevice is unset — hibernation cannot resume. See the hibernate block near swapDevices in configuration.nix."
+
+      # ── Pure-eval advisory ───────────────────────────────────────────────
+      # The failure this exists for is SILENT: `builtins.pathExists` on an
+      # out-of-tree absolute path does not throw under pure evaluation, it
+      # answers `false` (Nix catches its own RestrictedPathError), so the two
+      # ~/.config/oligarchy imports at the top of this file simply do not
+      # happen and nothing anywhere says so. A rebuild that forgot `--impure`
+      # therefore builds a machine with every personal toggle back at its
+      # fresh-clone default — successfully, quietly — and switches to it.
+      #
+      # Detector: `builtins.getEnv "HOME"`. Pure evaluation returns "" for
+      # every getEnv; `--impure` returns the real value. Verified on this
+      # machine. (Under `sudo nixos-rebuild` HOME is /root, which is still a
+      # non-empty string, so the impure path stays quiet as intended.)
+      #
+      # This is the NixOS `warnings` option, NOT `lib.warnIf` wrapped around
+      # the `imports` list. `imports` is evaluated to work out what `config`
+      # even contains, so nothing placed there can be conditioned on an option
+      # or suppressed per host — which is exactly what
+      # `custom.localOverrides.expected` needs to be able to do. Precedent:
+      # the hibernate warning directly above, and modules/kernel.nix:190.
+      #
+      # Advisory, never an assertion. Pure evaluation is the CORRECT mode for
+      # .github/workflows/eval.yml, the installer ISO, `nix flake check` and
+      # anybody building from a fresh clone; none of them has a home directory
+      # full of this machine's opinions, and each silences this by setting
+      # custom.localOverrides.expected = false (see hosts/asher/default.nix
+      # and nixosConfigurations.builder in flake.nix).
+      ++ lib.optional
+        (config.custom.localOverrides.expected && builtins.getEnv "HOME" == "")
+        ''
+          Oligarchy: this is a PURE evaluation, and this host
+          (custom.localOverrides.expected = true) expects out-of-repo overrides.
+
+          ~/.config/oligarchy/local.nix and ~/.config/oligarchy/state.nix were
+          NOT read. Pure evaluation cannot even tell you whether they exist —
+          builtins.pathExists answers "false" for an out-of-tree absolute path
+          rather than erroring — so every toggle they would have set (steam,
+          malware-shield, strict-egress, the DSP VM, the persona, the kernel
+          and GPU picks, ...) has fallen back to its fresh-clone-minimal
+          default.
+
+          This build will SUCCEED anyway. That is the problem: the result is a
+          working but different machine, with no other signal that it is.
+
+            * The maintainer's Framework 16 is now tracked in the repository.
+              Rebuild it as:
+                  sudo nixos-rebuild switch --flake .#nixos-asher
+              No --impure needed, and the settings show up in `git diff`.
+
+            * Still using the out-of-repo channel on this host? Add --impure:
+                  sudo nixos-rebuild switch --flake .#nixos --impure
+
+            * Building CI, the ISO, `nix flake check`, or a fresh clone? Then
+              nothing is wrong and this message is noise — that host should
+              set `custom.localOverrides.expected = false;`.
+        '';
 
       boot.kernel.sysctl = {
         # Deliberately left at 10 even though zramSwap is now on. The usual
@@ -858,7 +957,7 @@
       };
 
       # ──────────────────────────────────────────────────────────────────────────
-      # Networking (unchanged)
+      # Networking — captive portal handling lives in modules/captive-portal/
       # ──────────────────────────────────────────────────────────────────────────
       networking = {
         # hostName is set per-host in flake.nix — sharing "nixos" across every
@@ -870,11 +969,26 @@
             backend = "wpa_supplicant";
             powersave = false;
             scanRandMacAddress = true;
+            # One random MAC per SSID, persistent across reconnects: a public
+            # network never sees the hardware address, and a captive portal
+            # still recognises the machine after a reconnect ("random" would
+            # re-prompt on every association). Ethernet stays "preserve"
+            # below — the wired LAN is only ever home/office and DHCP
+            # reservations key on the real address.
+            macAddress = "stable";
           };
           dns = "systemd-resolved";
           connectionConfig = {
-            "connection.mdns" = 2;
-            "connection.llmnr" = 2;
+            # Avahi owns mDNS here (printers, .local peers, nss-mdns below).
+            # resolved's responder on the same UDP 5353 answers the same
+            # <host>.local and trips Avahi's conflict detection into renaming
+            # this host <host>-2.local. 0 = resolved neither answers nor
+            # resolves .local on any link; nss-mdns does the lookups.
+            # LLMNR has no consumer in this stack and is a spoofable name
+            # protocol on shared LANs: off. .#network-posture-contract and
+            # .#test-mdns-single-responder hold both.
+            "connection.mdns" = 0;
+            "connection.llmnr" = 0;
             "ipv6.ip6-privacy" = 2;
           };
           ethernet.macAddress = "preserve";
@@ -885,7 +999,17 @@
           allowPing = true;
           # 4798x/4800x Sunshine ports removed — the service is disabled above;
           # re-add them alongside services.sunshine if it ever comes back.
-          allowedTCPPorts = [ 22 443 ];
+          #
+          # No 22 and no 443 here. This list is interface-agnostic and the
+          # Wi-Fi interface is the same on the home LAN and in a café, so
+          # anything in it is open to every network the laptop ever joins.
+          # SSH is admitted on tailscale0 only (below); nothing in the base
+          # config listens on 443, and the modules that do (dcf-identity,
+          # demod-talk, ...) open their own ports. LAN-side SSH for a host
+          # that needs it as a recovery path: put `networking.firewall.
+          # allowedTCPPorts = [ 22 ]` in ~/.config/oligarchy/local.nix — it
+          # merges — and turn custom.security.hardening on first.
+          allowedTCPPorts = [ ];
           allowedUDPPorts = [ 5353 ];
           # tailscale0 is NOT a trusted interface: every tailnet peer would
           # bypass the firewall to all ports. SSH is admitted per-interface
@@ -900,10 +1024,19 @@
         # which trips a NixOS assertion / causes the two to fight over the radio.
       };
 
-      # SSH for local + Tailscale access (LAN already admits :22 in firewall).
+      # SSH over Tailscale (the firewall admits :22 on tailscale0 only).
       # Hardened settings (keys-only, AllowUsers, MaxAuthTries, fail2ban) are
       # owned by modules/security/hardening.nix (custom.security.hardening).
       services.openssh.enable = true;
+      # openFirewall defaults to TRUE in nixpkgs, and it appends to the GLOBAL
+      # networking.firewall.allowedTCPPorts — so leaving it alone puts :22 back
+      # on every interface the laptop ever joins, silently undoing the
+      # per-interface list above. Emptying allowedTCPPorts is necessary but not
+      # sufficient; this line is the other half. The tailscale0 entry in the
+      # firewall block is what actually admits SSH.
+      # `nix build .#network-posture-contract` (check `sshNotGlobal`) is what
+      # caught this: the port was global again with the literal 22 removed.
+      services.openssh.openFirewall = false;
 
 
       # Malware Shield (modules/security/malware-shield.nix) — monitor mode:
@@ -942,6 +1075,26 @@
       # declares only the age key location until a secret sub-option is on.
       # Pre-req: sudo age-keygen -o /var/lib/sops-nix/key.txt (see .sops.yaml).
       custom.secrets.enable = lib.mkDefault false;
+      # Portal logins in a disposable, verified microVM (Design F): available,
+      # off until its gates are green on the builder. Flip browser.kind to
+      # "microvm" in local.nix to use it; see modules/captive-portal/vm/.
+      custom.network.captivePortal.microvm = {
+        guestModule = inputs.oligarchy-plugins.inputs.microvm.nixosModules.microvm;
+        provenance = {
+          nixpkgs = inputs.nixpkgs.narHash or "unknown";
+          microvm = inputs.oligarchy-plugins.inputs.microvm.narHash or "unknown";
+        };
+      };
+
+      # Trusted Wi-Fi: declare networks here or in local.nix, PSK names only.
+      # Encrypt modules/secrets/wifi.env (HOME_PSK=...) with sops per
+      # .sops.yaml, then flip custom.secrets.wifi.enable; see
+      # modules/network-profiles.nix.
+      #   custom.network.trustedWifi.home = {
+      #     ssid = "…"; pskVar = "HOME_PSK";
+      #     dns = [ "9.9.9.9" "149.112.112.112" ];
+      #   };
+      custom.secrets.wifi.enable = lib.mkDefault false;
 
       # Security hardening ladder (modules/security/hardening.nix):
       # SSH keys-only + fail2ban now; apparmor/auditd flip on after soak.
@@ -984,6 +1137,15 @@
             "huggingface.co"
             # dcf-node-binary
             "api.demod.ltd"
+            # Discord. The `workstation` preset carries discord.com and
+            # gateway.discord.gg, but this host runs `developer`, so they are
+            # not allowlisted here without this. Voice is NOT in this list —
+            # it is IP-diverse UDP, see allow.ports below.
+            "discord.com"
+            "discordapp.com"
+            "gateway.discord.gg"
+            "cdn.discordapp.com"
+            "media.discordapp.net"
             # Steam store/community/API/CDN — confirmed against live
             # WOULDBLOCK entries during the dry-run soak (store.steampowered.com
             # -> 23.0.194.117, api.steampowered.com -> 23.41.4.x,
@@ -1045,9 +1207,32 @@
             # 27055/27061/27079/27123 during the same soak.
             { port = 27000; to = 27100; proto = "tcp"; }
             { port = 27000; to = 27100; proto = "udp"; }
+            # Discord voice. Same escape-hatch reasoning as Steam above: the
+            # voice server is handed out per-call from a pool spanning
+            # unrelated /24s, so there is no address to allowlist. UDP only,
+            # and only the ephemeral range Discord actually uses.
+            { port = 50000; to = 65535; proto = "udp"; }
           ];
         };
       };
+
+      # Windscribe over WireGuard (modules/vpn.nix). Off here; turn it on in
+      # ~/.config/oligarchy/local.nix together with custom.secrets.vpn.enable
+      # and the custom.vpn.endpoints line that `oligarchy-vpn import` prints.
+      #
+      # ON DEMAND even when enabled: autoStart stays false, so the tunnel only
+      # exists between `oligarchy-vpn up` and `oligarchy-vpn down`. There is no
+      # kill switch — a dropped tunnel falls back to the plain route rather
+      # than going dark. See docs/vpn-windscribe.md.
+      custom.vpn.enable = lib.mkDefault false;
+
+      # The vendor Windscribe client (modules/windscribe-app) — GUI, server
+      # picker, R.O.B.E.R.T., split tunnelling, and a root helper daemon.
+      # The ALTERNATIVE to custom.vpn above, not a companion: both take the
+      # default route and an assertion refuses to have both on. Repackaged
+      # from the upstream GPLv2 release artifact, since upstream's own Linux
+      # build needs the network at configure time.
+      custom.windscribeApp.enable = lib.mkDefault false;
 
       # Minecraft server — Paper + Geyser + Floodgate, so Java AND Bedrock
       # clients join one world. Reachable over the tailnet only: the ports are
@@ -1075,7 +1260,13 @@
       services.resolved = {
         enable = true;
         dnssec = "allow-downgrade";
-        domains = [ "~." ];
+        # No `domains = [ "~." ]`. A global routing domain only steers
+        # queries to the global DNS= servers, and none are configured, so
+        # resolved never routed anything by it: link resolvers always won
+        # (which is also why captive portals resolve — .#test-captive-portal
+        # asserts that under exactly these settings). It read as intent to
+        # pin DNS globally; that intent belongs on trusted profiles
+        # (ipv4.dns + ignore-auto-dns), where it does not break portals.
         fallbackDns = [ "1.1.1.1" "8.8.8.8" "2606:4700:4700::1111" "2001:4860:4860::8888" ];
         dnsovertls = "opportunistic";
       };
