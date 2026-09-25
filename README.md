@@ -1,5 +1,7 @@
 # Oligarchy NixOS – The Unstoppable War Machine
 
+[![eval](https://github.com/ALH477/Oligarchy/actions/workflows/eval.yml/badge.svg?branch=main)](https://github.com/ALH477/Oligarchy/actions/workflows/eval.yml)
+
 **Framework 16 Native · 68K LoC · AMD 7040 · Intel · Nvidia Optimus · Hyprland · Plasma 6 · IceWM · LeftWM · X11/Wayland · CachyOS/Zen kernel · ~5–7 W idle · Nuclear-grade DSP coprocessor · Per-plugin W^X sandbox runtime · P2P Nix substituter · Calamares Install · DeMoD Branded · DCF Compute Fabric**
 
 ![logo](Untitled.jpg)
