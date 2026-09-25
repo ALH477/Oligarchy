@@ -1243,6 +1243,15 @@
         # serverProperties = { motd = "Oligarchy"; difficulty = "normal"; };
         # tailscaleTag = "tag:minecraft";
         # acknowledgeTailnetReach = true;  # only once an ACL actually narrows it
+        # DCF-Minecraft (docs/dcf-minecraft.md): command blocks/redstone on the
+        # DCF mesh through a conforming register; plugin + datapack from the
+        # hydramesh input. Hermes (7801/bare) must listen on mc-chat to hear it.
+        # dcf = {
+        #   enable = true;
+        #   bridge = "plugin";
+        #   peers = [ { host = "127.0.0.1"; port = 7801; dialect = "bare"; } ];
+        #   bedrockWs.enable = false;   # vanilla Bedrock /connect on tailscale0:19134
+        # };
       };
 
       # Tailscale mesh — join with: sudo tailscale up

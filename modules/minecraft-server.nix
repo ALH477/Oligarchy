@@ -50,7 +50,7 @@
 # that tailscale0 is NOT a trusted interface, because that would admit every
 # tailnet peer to every port.
 # ─────────────────────────────────────────────────────────────────────────────
-{ config, lib, pkgs, ... }:
+{ config, lib, pkgs, hydramesh, ... }:
 
 with lib;
 
@@ -141,11 +141,54 @@ let
   # The only thing worth setting there is the update checker, whose cost is one
   # log line and a request to api.papermc.io — a host the build already needs.
 
+  # ── DCF-Minecraft (docs/dcf-minecraft.md) ──────────────────────────────────
+  # The plugin and the datapack come from the already-locked `hydramesh` flake
+  # input (AGENTS.md: no new sub-flake inputs). Both are LGPL; the plugin jar
+  # holds only com.demod.dcf.* classes. Evaluated lazily: a host with
+  # dcf.enable = false never touches hydramesh.packages.
+  dcf = cfg.dcf;
+  hm = hydramesh.packages.${pkgs.stdenv.hostPlatform.system} or
+    (throw "the hydramesh flake has no packages for system ${pkgs.stdenv.hostPlatform.system}");
+  dcfPlugin = dcf.enable && dcf.bridge == "plugin";
+  dcfSidecar = dcf.enable && (dcf.bridge == "sidecar" || dcf.bedrockWs.enable);
+  dcfPeer = p: "${p.host}:${toString p.port}/${p.dialect}";
+  levelName = cfg.serverProperties.level-name or "world";
+  dcfJar = "dcf-minecraft-paper.jar";
+  # The plugin's config.yml, in datapack mode: the datapack is always installed
+  # with dcf.enable, so the plugin hands inbound frames to `function dcf:rx_commit`
+  # and polls the datapack's tx_pending in-process (no console hop).
+  dcfPluginConfigFile = yaml.generate "dcf-config.yml" {
+    node-id = dcf.nodeId;
+    bind = "127.0.0.1:${toString dcf.udpPort}";
+    peers = map dcfPeer dcf.peers;
+    flush-ms = 20;
+    world = levelName;
+    origin = [ dcf.origin.x dcf.origin.y dcf.origin.z ];
+    mode = "datapack";
+    namespace = "dcf";
+    pulse-ticks = 4;
+    watch = { enabled = false; min = [ 0 0 0 ]; max = [ 0 0 0 ]; };
+  };
+  # The console FIFO is upstream's ListenFIFO; read it from the socket unit so a
+  # nixpkgs rename cannot leave the sidecar writing into nothing.
+  fifoPath = config.systemd.sockets.minecraft-server.socketConfig.ListenFIFO or "/run/minecraft-server.stdin";
+  dcfSidecarArgs = concatStringsSep " " (
+    [
+      "--fifo ${fifoPath}"
+      "--log /var/lib/minecraft/logs/latest.log"
+      "--namespace dcf"
+    ]
+    ++ optionals (dcf.bridge == "sidecar") (map (p: "--peer ${dcfPeer p}") dcf.peers)
+    ++ optional dcf.bedrockWs.enable
+      "--bedrock-ws ${if cfg.bindAddress != null then cfg.bindAddress else "0.0.0.0"}:${toString dcf.bedrockWs.port}"
+  );
+
   # Jar names this module owns. Deliberately version-LESS: a build number in the
   # filename would leave the old jar beside the new one on a bump, and Paper
   # would load the same plugin twice then refuse to enable one.
-  managedJars = [ "Geyser-Spigot.jar" "floodgate-spigot.jar" ];
-  activeJars = optionals cfg.crossplay.enable managedJars;
+  crossplayJars = [ "Geyser-Spigot.jar" "floodgate-spigot.jar" ];
+  managedJars = crossplayJars ++ [ dcfJar ];
+  activeJars = optionals cfg.crossplay.enable crossplayJars ++ optional dcfPlugin dcfJar;
   retiredJars = subtractLists activeJars managedJars;
 
   # ── preStart ───────────────────────────────────────────────────────────────
@@ -174,6 +217,9 @@ let
     ${optionalString cfg.crossplay.enable ''
       install_jar ${cfg.crossplay.geyser}/share/geyser/Geyser-Spigot.jar Geyser-Spigot.jar
       install_jar ${cfg.crossplay.floodgate}/share/floodgate/floodgate-spigot.jar floodgate-spigot.jar
+    ''}
+    ${optionalString dcfPlugin ''
+      install_jar ${dcf.package}/share/dcf-minecraft/dcf-minecraft-paper.jar ${dcfJar}
     ''}
 
     # Retire jars this module used to own. Two cases: crossplay was switched
@@ -215,6 +261,22 @@ let
       install_config ${floodgateConfigFile} plugins/floodgate/config.yml
     ''}
     install_config ${bstatsConfigFile} plugins/bStats/config.yml
+    ${optionalString dcfPlugin ''
+      install_config ${dcfPluginConfigFile} plugins/DcfMinecraft/config.yml
+    ''}
+
+    # The DCF datapack: a store SYMLINK is fine here (a server never writes into
+    # a datapack), and a dangling one is pruned like a retired jar.
+    ${optionalString dcf.enable ''
+      mkdir -p "${levelName}/datapacks"
+      ln -sfn ${dcf.datapack}/share/dcf-minecraft/datapack "${levelName}/datapacks/dcf"
+    ''}
+    for link in */datapacks/*; do
+      [ -L "$link" ] || continue
+      case "$(readlink "$link")" in
+        /nix/store/*) { [ -e "$link" ] && ${if dcf.enable then "true" else "false"}; } || rm -f "$link" ;;
+      esac
+    done
 
     # NOT managed, deliberately: plugins/floodgate/key.pem. Floodgate generates
     # that keypair on first start and Geyser, in the same JVM, picks it up on
@@ -360,6 +422,91 @@ in
       '';
     };
 
+    dcf = {
+      enable = mkEnableOption ''
+        DCF-Minecraft: a conforming DeModFrame register in the world, bridged to
+        Punctim UDP peers — command blocks and redstone on the DCF mesh. Installs
+        the datapack and (bridge = "plugin") the Paper plugin from the hydramesh
+        flake input. See docs/dcf-minecraft.md
+      '';
+
+      bridge = mkOption {
+        type = types.enum [ "plugin" "sidecar" ];
+        default = "plugin";
+        description = ''
+          "plugin": the Paper plugin speaks UDP itself and drives the datapack
+          in-process (no console). "sidecar": no plugin; `punctim mc` runs as a
+          separate unit over the console FIFO and the server log.
+        '';
+      };
+
+      nodeId = mkOption {
+        type = types.str;
+        default = "0x00B1";
+        description = "DCF src id of frames this world originates (the Hermes agent is 0x00A1).";
+      };
+
+      udpPort = mkOption {
+        type = types.port;
+        default = 7810;
+        description = "Loopback UDP port the plugin binds (bridge = \"plugin\"); peers send here.";
+      };
+
+      peers = mkOption {
+        type = types.listOf (types.submodule {
+          options = {
+            host = mkOption { type = types.str; default = "127.0.0.1"; };
+            port = mkOption { type = types.port; };
+            dialect = mkOption {
+              type = types.enum [ "bare" "proto" ];
+              default = "bare";
+              description = ''
+                "bare": 17-B frames / 32-B SuperPacks — the Hermes agent
+                (services.dcf-mesh-agent, 7801), JS and web nodes. "proto":
+                ProtoMessage MSG_FRAME — dcf_node.py, Go/Rust/C nodes, punctim io.
+              '';
+            };
+          };
+        });
+        default = [{ host = "127.0.0.1"; port = 7801; dialect = "bare"; }];
+        description = "UDP peers every world frame goes to. Loopback peers need no firewall change.";
+      };
+
+      origin = {
+        x = mkOption { type = types.int; default = 0; };
+        y = mkOption { type = types.int; default = 64; };
+        z = mkOption { type = types.int; default = 0; };
+      };
+
+      bedrockWs = {
+        enable = mkEnableOption ''
+          a listener for a VANILLA Bedrock client's own `/connect ws://host:port`
+          (no server, no mod), on `interface` only — the client's protocol
+          crossing the host boundary, like Geyser's RakNet listener. Plain WS,
+          no TLS: the client's "Require Encrypted Websockets" must be off
+        '';
+        port = mkOption {
+          type = types.port;
+          default = 19134;
+          description = "TCP port for Bedrock /connect, opened on `interface` only.";
+        };
+      };
+
+      package = mkOption {
+        type = types.package;
+        default = hm.dcf-minecraft-paper;
+        defaultText = literalExpression "hydramesh.packages.<system>.dcf-minecraft-paper";
+        description = "The Paper plugin (LGPL-3.0-only; embeds only com.demod.dcf.* classes).";
+      };
+
+      datapack = mkOption {
+        type = types.package;
+        default = hm.dcf-minecraft-datapack;
+        defaultText = literalExpression "hydramesh.packages.<system>.dcf-minecraft-datapack";
+        description = "The generated vanilla datapack, linked at <level-name>/datapacks/dcf.";
+      };
+    };
+
     crossplay = {
       enable = mkOption {
         type = types.bool;
@@ -475,8 +622,34 @@ in
     # services.demod-talk and custom.p2pCache.peer use.
     networking.firewall = mkIf cfg.openFirewall {
       interfaces.${cfg.interface} = {
-        allowedTCPPorts = [ javaPort ];
+        allowedTCPPorts = [ javaPort ] ++ optional (dcf.enable && dcf.bedrockWs.enable) dcf.bedrockWs.port;
         allowedUDPPorts = optional cfg.crossplay.enable cfg.crossplay.bedrockPort;
+      };
+    };
+
+    # The sidecar: `punctim mc` as the minecraft user, driving the console FIFO
+    # (no RCON — a password would land in the store) and the Bedrock listener.
+    # Same sandbox shape as upstream's unit; the FIFO lives in /run and the log
+    # in /var/lib, so PrivateTmp costs nothing here.
+    systemd.services.minecraft-dcf-sidecar = mkIf dcfSidecar {
+      description = "DCF-Minecraft sidecar (punctim mc) for the Paper world";
+      after = [ "minecraft-server.service" ];
+      bindsTo = [ "minecraft-server.service" ];
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        User = "minecraft";
+        Group = "minecraft";
+        WorkingDirectory = "/var/lib/minecraft";
+        ExecStart = "${hm.dcf-python}/bin/punctim mc ${dcfSidecarArgs}";
+        Restart = "on-failure";
+        RestartSec = 5;
+        NoNewPrivileges = true;
+        PrivateUsers = true;
+        ProtectHome = true;
+        PrivateTmp = true;
+        ProtectSystem = "strict";
+        ReadWritePaths = [ "/var/lib/minecraft" fifoPath ];
+        UMask = "0077";
       };
     };
 
@@ -516,6 +689,15 @@ in
     };
 
     assertions = [
+      {
+        assertion = !dcf.enable || dcf.peers != [ ] || dcf.bedrockWs.enable;
+        message = "services.oligarchyMinecraft.dcf: give at least one peer (or enable bedrockWs).";
+      }
+      {
+        assertion = !(dcf.enable && dcf.bedrockWs.enable)
+          || (dcf.bedrockWs.port != javaPort && dcf.bedrockWs.port != cfg.crossplay.bedrockPort);
+        message = "services.oligarchyMinecraft.dcf.bedrockWs.port must differ from javaPort and crossplay.bedrockPort.";
+      }
       {
         assertion = cfg.interface != "";
         message = "services.oligarchyMinecraft.interface must name a real interface.";
@@ -606,7 +788,13 @@ in
     ];
 
     warnings =
-      optional (cfg.crossplay.enable && (gy.bedrockVersions or null) != null) ''
+      optional (dcf.enable && any (p: p.port == 7801 && p.dialect == "bare") dcf.peers) ''
+        services.oligarchyMinecraft.dcf peers include 7801/bare — the Hermes agent
+        (services.dcf-mesh-agent). It listens on channel "duet"; the world's
+        chat rides "mc-chat" and events "mc-world", so start that agent with
+        DCF_CHANNEL=mc-chat (or accept_all_channels) or it will ignore the world.
+      ''
+      ++ optional (cfg.crossplay.enable && (gy.bedrockVersions or null) != null) ''
         services.oligarchyMinecraft: this Geyser (${gy.version or "?"}) serves
         Bedrock clients ${gy.bedrockVersions} and no others. Bedrock auto-updates
         from the app stores and generally cannot be held back, so when your

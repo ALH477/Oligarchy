@@ -134,6 +134,9 @@ jobs:
           - test-hardening
           - test-dcf-spa-gate
           - test-ip-blocklists
+          # Paper stubbed (offline VM), real jars: crossplay + DCF-Minecraft plugin,
+          # datapack, sidecar unit, tunnel-scoped ports (plain KVM).
+          - test-minecraft-server
           # Two-node: a nginx portal + dnsmasq venue and an NM client.
           - test-captive-portal
           - test-mdns-single-responder
