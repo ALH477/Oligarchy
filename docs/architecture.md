@@ -108,7 +108,9 @@ and one headless CI build server (`builder`, §5d) — plus the installer ISO
    `demod-ip-blocker` (ingress blocklist), `lanzaboote` (secure boot,
    opt-in), `nixos-generators` (the ISO and the DSP guest image),
    `hydramesh` (`github:ALH477/HydraMesh`, deliberately not following
-   nixpkgs), `yara-rules` (`flake = false`).
+   nixpkgs), `nnnvim` (`github:ALH477/nnnvim`, the editor — also
+   deliberately not following nixpkgs, see below), `yara-rules`
+   (`flake = false`).
    Note `fw-fanctrl` is **not** an input — that option comes from nixpkgs
    25.11 now and is configured in `modules/platform.nix`.
 2. **Home Manager** — `home-manager.nixosModules.home-manager`, with
@@ -119,10 +121,42 @@ and one headless CI build server (`builder`, §5d) — plus the installer ISO
    `minecraft`, `android-mirror` — plus the `./modules/*.nix` files and `./configuration.nix`.
 
 `specialArgs` threads `inputs`, `nixpkgs-unstable`, `vm-manager`,
-`dsp-ctl`, `oligarchy-forge`, `mcp-servers`, `hydramesh` and `demod-talk`
-into every module. The commented-out
+`dsp-ctl`, `oligarchy-forge`, `mcp-servers`, `hydramesh`, `nnnvim` and
+`demod-talk` into every module. The commented-out
 `archibaldos` input is the template for adding the external DSP
 coprocessor when available.
+
+### The editor input
+
+<!-- truth:claim
+id: nnnvim-module
+kind: file_contains
+path: flake.nix
+pattern: nnnvim.nixosModules.default
+-->
+`custom.nnnvim` (enabled in `configuration.nix`) is Neovim 0.12 plus the
+maintainer's config from `github:ALH477/nnnvim`, with every plugin and
+language server pinned by that flake. `flake.nix` lists
+`nnnvim.nixosModules.default` in `commonModules`, so it reaches every host
+and the ISO.
+
+Its input must **not** gain `inputs.nixpkgs.follows`. This is a harder
+version of the `hydramesh` exception above: nnnvim needs neovim 0.12 for
+`vim.pack`, `vim._core.ui2`, `:restart` and the runtime-bundled
+`nvim.undotree`, and nixos-25.11 ships 0.11.7 and carries no
+`vimPlugins.eldritch-nvim` attribute at all — so a `follows` fails at
+*eval*, not at runtime, and the error names a missing plugin rather than a
+Neovim version. The `unstable` overlay is no escape hatch either: the
+`nixpkgs-unstable` pin is on 0.11.6. The module resolves its package from
+nnnvim's own nixpkgs (the `hydramesh` pattern, §2 layer 1), so the cost is
+one extra nixpkgs evaluation.
+
+The ISO forces `custom.nnnvim.withLsp = false`: clang-tools, gopls and the
+rest are ~2.1 GiB of closure (2.6 GiB against 530 MiB) that nothing on a
+live installer will attach to a buffer. `vim` stays in
+`environment.systemPackages` as the fallback for a config or plugin that
+fails to evaluate.
+<!-- truth:end -->
 
 ### `nixosConfigurations.nixos-asher`
 
@@ -182,7 +216,7 @@ Option namespaces in play:
 
 | Namespace | Handles |
 |---|---|
-| `custom.*` | `custom.steam`, `custom.gamepadBluetooth`, `custom.androidMirror`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.secrets`, `custom.secureBoot`, `custom.vpn`, `custom.windscribeApp`, `custom.kernel.variant`, `custom.platform.gpu`, `custom.platform.displayGpu`, `custom.security.hardening`, `custom.dsp.enable`, `custom.session`, `custom.locale` (language/timezone/keyboard/fonts — the single source `services.xserver.xkb`, Hyprland's `kb_*` and the `console.keyMap` ckbcomp derivation all derive from; `modules/locale.nix`), `custom.localOverrides.expected` (bool, default `true` — when true and evaluation is pure, emits a `warnings` entry saying the out-of-repo `~/.config/oligarchy/{local,state}.nix` overrides were not read; `hosts/asher` and `nixosConfigurations.builder` set it `false` since neither reads those files) |
+| `custom.*` | `custom.steam`, `custom.gamepadBluetooth`, `custom.androidMirror`, `custom.audio`, `custom.dcfCommunityNode`, `custom.dcfIdentity`, `custom.mcpServers`, `custom.malwareShield`, `custom.nnnvim`, `custom.secrets`, `custom.secureBoot`, `custom.vpn`, `custom.windscribeApp`, `custom.kernel.variant`, `custom.platform.gpu`, `custom.platform.displayGpu`, `custom.security.hardening`, `custom.dsp.enable`, `custom.session`, `custom.locale` (language/timezone/keyboard/fonts — the single source `services.xserver.xkb`, Hyprland's `kb_*` and the `console.keyMap` ckbcomp derivation all derive from; `modules/locale.nix`), `custom.localOverrides.expected` (bool, default `true` — when true and evaluation is pure, emits a `warnings` entry saying the out-of-repo `~/.config/oligarchy/{local,state}.nix` overrides were not read; `hosts/asher` and `nixosConfigurations.builder` set it `false` since neither reads those files) |
 | `services.*` | project-defined services like `services.ollamaAgentic`, `services.dcf-tray`, `services.boot-intro`, `services.oligarchyGreeting`, `services.dsp-vm` |
 | `networking.firewall.strictEgress` | the nftables egress firewall (`modules/security/strict-egress.nix`). `allow.interfaces` is the full-tunnel-VPN escape hatch: it accepts by `oifname`, which hands the egress boundary to whatever is on the far end of that interface for as long as it is up |
 | `hardware.cpuSecurity` | CPU/kernel mitigations (forced spectre/MDS/SRSO + MSR-write block) |
@@ -861,7 +895,10 @@ tree-wide.
   `secrets/secrets.yaml`.
 - **State version is `25.11`** on `nixos-25.11` (nixpkgs stable). Keep new
   modules consistent with that. `nixpkgs-unstable` is available via the
-  `unstable` overlay for cherry-picks.
+  `unstable` overlay for cherry-picks — but only where the pin is new
+  enough. When it is not, the answer is a separate flake carrying its own
+  nixpkgs and consumed as a package, never a `follows` (see §2, the editor
+  input).
 - **MCP servers are read-only + dry-run by construction.** The agent
   surface can never mutate the running system. Each aspect server has a
   compile-time-checked CLI allowlist; the `ports-sec` crate is the only
