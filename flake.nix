@@ -224,6 +224,21 @@
       url = "github:ALH477/truthgate";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # Exsecutor (github:ALH477/exsecutor) — the capability-typed systems
+    # language whose `packages.somnium` is the screensaver engine behind
+    # custom.screensaver (modules/screensaver/). Deliberately NOT following
+    # our nixpkgs: the compiler's build closure is exactly fasmg (exsecutor's
+    # spec §18.1), and exsecutor's reproducibility figures are measured
+    # against its own nixos-unstable pin, so we take that pin rather than
+    # substitute a different fasmg under it. Lazy: nothing fetches it unless
+    # custom.screensaver is enabled or .#screensaver-tests is built.
+    #
+    # The lock pins the commit that added examples/somnium/ on exsecutor's
+    # claude/executor-screensaver-engine-vr1ka5 branch. Until that lands on
+    # exsecutor's main, `nix flake update exsecutor` moves to a main with no
+    # packages.somnium and evaluation fails loudly naming it.
+    exsecutor.url = "github:ALH477/exsecutor";
   };
 
   outputs =
@@ -402,6 +417,13 @@
         # neither removable nor a swap target — see the banner comment in
         # modules/mounts.nix for the two things it cannot do.
         ./modules/mounts.nix
+
+        # custom.screensaver — the Exsecutor screensaver (somnium, from the
+        # exsecutor input) behind a hypridle listener. Opt-in, defaults OFF:
+        # with enable = false it adds no package and no unit, and
+        # home/hyprland/default.nix adds no listener, so no ISO mkForce. See
+        # modules/screensaver/README.md.
+        ./modules/screensaver
 
         ./modules/secure-boot.nix
         ./modules/agentic-local-ai.nix
@@ -1542,6 +1564,152 @@
 
               [ "$fail" -eq 0 ] || exit 1
               echo "inspected $count unit(s) on /dev/tty1" >> $out/report.txt
+            '';
+
+        # ════════════════════════════════════════════════════════════════════
+        # custom.screensaver — the Exsecutor engine and its viewer pipeline.
+        #
+        # What the subsystem DOES is render frames and get them onto a
+        # screen, so that is what this runs, in four parts:
+        #
+        #   1. somnium, as the exsecutor flake builds it, renders every
+        #      effect fixture byte-identical to exsecutor's own golden files
+        #      (written by its independent oracle), and refuses the four bad
+        #      requests with exit 1 and zero bytes.
+        #   2. The host's request encoder — the bash in script.nix — produces
+        #      byte-identical requests to exsecutor's fixture inputs, so the
+        #      two repos cannot drift on the wire format.
+        #   3. The REAL oligarchy-screensaver pipeline, somnium into the real
+        #      mpv with the real argv plus --vo=null: mpv must report a
+        #      160x100 rgb24 video output (it decoded our stream with our
+        #      demuxer flags), the run crosses all three effects, and the
+        #      command must EXIT when mpv does. That last one is the producer
+        #      loop's `|| return 0`: without it the loop respawns somnium into
+        #      a closed pipe forever, and this derivation hangs to `timeout`.
+        #   4. --stop-screensaver=no is in the argv (see script.nix: without
+        #      it mpv inhibits idle and hypridle never locks).
+        #
+        # Plus one measurement, reported and NOT asserted: frames per second
+        # per effect with stdout to /dev/null. somnium writes one byte per
+        # write(2), and that number is what custom.screensaver.fps should be
+        # chosen against. It is recorded nowhere else yet.
+        #
+        # Unmeasured here: anything a compositor does. The window rule,
+        # fullscreen on the right monitor, hypridle actually firing the
+        # listener — those need a Wayland session. Part 3 uses a second
+        # instance of script.nix built with period = 1 (same builder, same
+        # text, other numbers), so the cycle is crossed in seconds.
+        #
+        # Run on demand:  nix build .#screensaver-tests
+        # ════════════════════════════════════════════════════════════════════
+        screensaver-tests =
+          let
+            exsecutorSrc = inputs.exsecutor;
+            somnium = inputs.exsecutor.packages.${system}.somnium;
+            command = pkgs.callPackage ./modules/screensaver/script.nix { inherit somnium; };
+            cycling = pkgs.callPackage ./modules/screensaver/script.nix {
+              inherit somnium;
+              period = 1;
+            };
+          in
+          pkgs.runCommand "screensaver-tests"
+            {
+              nativeBuildInputs = [ somnium pkgs.coreutils pkgs.diffutils pkgs.gnugrep ];
+              meta = with nixpkgs.lib; {
+                description = "Assert the Exsecutor screensaver renders its golden frames and its viewer pipeline decodes and exits";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out work
+              cd work
+              export HOME="$PWD"
+              E=${exsecutorSrc}
+              fail=0
+              pass() { echo "PASS  $*"; }
+              no() { echo "FAIL  $*" >&2; fail=1; }
+
+              # ── 1. the engine against exsecutor's goldens ───────────────
+              found=0
+              for n in plasma ignis vita semen_nihil; do
+                found=$((found + 1))
+                if somnium < "$E/tests/data/somnium_$n.bin" > "$n.out" \
+                    && cmp -s "$n.out" "$E/tests/programs/somnium_$n/expected.out"; then
+                  pass "somnium $n: $(stat -c %s "$n.out") bytes, identical to the oracle"
+                else
+                  no "somnium $n: output differs from exsecutor's tests/programs/somnium_$n/expected.out"
+                fi
+              done
+              for n in ignotum brevis longa magia; do
+                found=$((found + 1))
+                rc=0
+                somnium < "$E/tests/data/somnium_$n.bin" > "$n.out" || rc=$?
+                if [ "$rc" -eq 1 ] && [ ! -s "$n.out" ]; then
+                  pass "somnium refuses $n: exit 1, nothing written"
+                else
+                  no "somnium $n: exit $rc and $(stat -c %s "$n.out") bytes, expected exit 1 and none"
+                fi
+              done
+              # A renamed fixture directory must not turn part 1 into a no-op.
+              [ "$found" -eq 8 ] || no "part 1 inspected $found fixtures, expected 8"
+
+              # ── 2. the host encoder against exsecutor's requests ────────
+              while read -r n id skip write seed; do
+                if ${command}/bin/oligarchy-screensaver --request "$id" "$skip" "$write" "$seed" \
+                    | cmp -s - "$E/tests/data/somnium_$n.bin"; then
+                  pass "request $n: identical to exsecutor's tests/data/somnium_$n.bin"
+                else
+                  no "request $n: the encoder in script.nix disagrees with exsecutor's fixture"
+                fi
+              done <<'EOF'
+              plasma 0 37 2 0x0BADCAFE
+              ignis 1 60 1 1
+              vita 2 23 2 0x5EED
+              semen_nihil 0 0 1 0
+              ignotum 3 0 1 1
+              EOF
+
+              # ── 3. the real pipeline, headless ──────────────────────────
+              # 45 frames at 20 fps with period 1: plasma, fire, Life.
+              rc=0
+              timeout 120 ${cycling}/bin/oligarchy-screensaver --headless 45 mpv.log || rc=$?
+              if [ "$rc" -eq 0 ]; then
+                pass "oligarchy-screensaver --headless 45 exited 0 when mpv did"
+              elif [ "$rc" -eq 124 ]; then
+                no "oligarchy-screensaver did not exit after mpv quit (timeout): the producer loop is spinning"
+              else
+                no "oligarchy-screensaver --headless exited $rc"
+                tail -n 40 mpv.log >&2 || true
+              fi
+              if grep -qF 'VO: [null] 160x100 rgb24' mpv.log; then
+                pass "mpv decoded the stream as 160x100 rgb24"
+              else
+                no "mpv's log has no 'VO: [null] 160x100 rgb24' line"
+                tail -n 40 mpv.log >&2 || true
+              fi
+
+              # ── 4. the idle-inhibit trap ────────────────────────────────
+              if grep -qF -- '--stop-screensaver=no' ${command}/bin/oligarchy-screensaver; then
+                pass "the viewer is told not to inhibit idle"
+              else
+                no "--stop-screensaver=no is missing: mpv would inhibit idle and hypridle would never lock"
+              fi
+
+              # ── measurement, not assertion ──────────────────────────────
+              for s in 0:plasma 1:ignis 2:vita; do
+                id=''${s%%:*}; name=''${s#*:}
+                ${command}/bin/oligarchy-screensaver --request "$id" 0 100 7 > req.bin
+                t0=$(date +%s%N)
+                somnium < req.bin > /dev/null
+                t1=$(date +%s%N)
+                ms=$(( (t1 - t0) / 1000000 ))
+                echo "measured: $name, 100 frames to /dev/null in $ms ms" | tee -a $out/report.txt
+              done
+
+              [ "$fail" -eq 0 ] || { echo "screensaver-tests: FAILED" >&2; exit 1; }
+              echo "screensaver-tests: engine, encoder, viewer pipeline and idle flag all pass" \
+                >> $out/report.txt
             '';
 
         # ════════════════════════════════════════════════════════════════════
