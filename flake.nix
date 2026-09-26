@@ -1570,53 +1570,63 @@
         # custom.screensaver — the Exsecutor engine and its viewer pipeline.
         #
         # What the subsystem DOES is render frames and get them onto a
-        # screen, so that is what this runs, in four parts:
+        # screen, so that is what this runs:
         #
-        #   1. somnium, as the exsecutor flake builds it, renders every
-        #      effect fixture byte-identical to exsecutor's own golden files
-        #      (written by its independent oracle), and refuses the four bad
-        #      requests with exit 1 and zero bytes.
-        #   2. The host's request encoder — the bash in script.nix — produces
-        #      byte-identical requests to exsecutor's fixture inputs, so the
-        #      two repos cannot drift on the wire format.
-        #   3. The REAL oligarchy-screensaver pipeline, somnium into the real
-        #      mpv with the real argv plus --vo=null: mpv must report a
-        #      160x100 rgb24 video output (it decoded our stream with our
-        #      demuxer flags), the run crosses all three effects, and the
-        #      command must EXIT when mpv does. That last one is the producer
-        #      loop's `|| return 0`: without it the loop respawns somnium into
-        #      a closed pipe forever, and this derivation hangs to `timeout`.
-        #   4. --stop-screensaver=no is in the argv (see script.nix: without
-        #      it mpv inhibits idle and hypridle never locks).
+        #   1. BOTH builds of somnium -- the freestanding reference build
+        #      (packages.somnium) and the C-backend build the module ships
+        #      by default, with the module's default cflags -- render every
+        #      effect fixture byte-identical to exsecutor's own goldens
+        #      (written by its independent oracle), and refuse every bad
+        #      request with exit 1 and zero bytes. The C build agreeing with
+        #      the reference on the float effects (abyssus, signum) is the
+        #      -ffp-contract=off claim, measured.
+        #   2. The host's request encoder -- the bash in script.nix --
+        #      produces byte-identical requests to exsecutor's fixture inputs,
+        #      and the model it appends for the logo is exsecutor's.
+        #   3. The REAL oligarchy-screensaver pipeline into the real mpv with
+        #      the real argv plus --vo=null, twice: once across three
+        #      effects, once on the logo alone (the path that pipes the 3D
+        #      model after the request). mpv must report a 160x100 rgb24
+        #      video output, and the command must EXIT when mpv does -- the
+        #      producer loop's `|| return 0`; without it this derivation
+        #      hangs until `timeout`.
+        #   4. --stop-screensaver=no is in the argv (script.nix: without it
+        #      mpv inhibits idle and hypridle never locks).
         #
-        # Plus one measurement, reported and NOT asserted: frames per second
-        # per effect with stdout to /dev/null. somnium writes one byte per
-        # write(2), and that number is what custom.screensaver.fps should be
-        # chosen against. It is recorded nowhere else yet.
+        # Plus a measurement, reported and NOT asserted: frames per second
+        # per effect for each build, stdout to /dev/null -- the number to
+        # choose custom.screensaver.fps and `backend` against.
         #
-        # Unmeasured here: anything a compositor does. The window rule,
-        # fullscreen on the right monitor, hypridle actually firing the
-        # listener — those need a Wayland session. Part 3 uses a second
-        # instance of script.nix built with period = 1 (same builder, same
-        # text, other numbers), so the cycle is crossed in seconds.
+        # Unmeasured here: anything a compositor or GPU does -- the window
+        # rule, fullscreen on the right monitor, mpv's GPU scaling, hypridle
+        # firing the listener. Those need a Wayland session.
         #
         # Run on demand:  nix build .#screensaver-tests
         # ════════════════════════════════════════════════════════════════════
         screensaver-tests =
           let
             exsecutorSrc = inputs.exsecutor;
-            somnium = inputs.exsecutor.packages.${system}.somnium;
-            command = pkgs.callPackage ./modules/screensaver/script.nix { inherit somnium; };
+            reference = inputs.exsecutor.packages.${system}.somnium;
+            # the module's default backend and cflags on this (AMD) platform
+            fast = inputs.exsecutor.lib.buildExsecutorCProgram (inputs.exsecutor.lib.somniumCArgs // {
+              cflags = [ "-march=x86-64-v3" "-mtune=znver4" ];
+            });
+            command = pkgs.callPackage ./modules/screensaver/script.nix { somnium = fast; };
             cycling = pkgs.callPackage ./modules/screensaver/script.nix {
-              inherit somnium;
+              somnium = fast;
+              somnia = [ "pluvia" "abyssus" "vita" ];
               period = 1;
+            };
+            logo = pkgs.callPackage ./modules/screensaver/script.nix {
+              somnium = fast;
+              somnia = [ "signum" "plasma" ];
             };
           in
           pkgs.runCommand "screensaver-tests"
             {
-              nativeBuildInputs = [ somnium pkgs.coreutils pkgs.diffutils pkgs.gnugrep ];
+              nativeBuildInputs = [ pkgs.coreutils pkgs.diffutils pkgs.gnugrep ];
               meta = with nixpkgs.lib; {
-                description = "Assert the Exsecutor screensaver renders its golden frames and its viewer pipeline decodes and exits";
+                description = "Assert both Exsecutor screensaver builds render their golden frames and the viewer pipeline decodes and exits";
                 license = licenses.bsd3;
                 platforms = platforms.linux;
               };
@@ -1630,34 +1640,38 @@
               pass() { echo "PASS  $*"; }
               no() { echo "FAIL  $*" >&2; fail=1; }
 
-              # ── 1. the engine against exsecutor's goldens ───────────────
-              found=0
-              for n in plasma ignis vita semen_nihil; do
-                found=$((found + 1))
-                if somnium < "$E/tests/data/somnium_$n.bin" > "$n.out" \
-                    && cmp -s "$n.out" "$E/tests/programs/somnium_$n/expected.out"; then
-                  pass "somnium $n: $(stat -c %s "$n.out") bytes, identical to the oracle"
-                else
-                  no "somnium $n: output differs from exsecutor's tests/programs/somnium_$n/expected.out"
-                fi
+              # ── 1. both engines against exsecutor's goldens ─────────────
+              for build in reference:${reference} c:${fast}; do
+                name=''${build%%:*}
+                bin=''${build#*:}/bin/somnium
+                found=0
+                for n in plasma ignis vita semen_nihil pluvia stellae cuniculus abyssus titulus titulus_volatus signum; do
+                  found=$((found + 1))
+                  if "$bin" < "$E/tests/data/somnium_$n.bin" > "$name.$n.out" \
+                      && cmp -s "$name.$n.out" "$E/tests/programs/somnium_$n/expected.out"; then
+                    pass "$name somnium $n: identical to the oracle"
+                  else
+                    no "$name somnium $n: differs from exsecutor's tests/programs/somnium_$n/expected.out"
+                  fi
+                done
+                for n in ignotum brevis longa magia signum_brevis signum_magia; do
+                  found=$((found + 1))
+                  rc=0
+                  "$bin" < "$E/tests/data/somnium_$n.bin" > "$name.$n.out" || rc=$?
+                  if [ "$rc" -eq 1 ] && [ ! -s "$name.$n.out" ]; then
+                    pass "$name somnium refuses $n: exit 1, nothing written"
+                  else
+                    no "$name somnium $n: exit $rc and $(stat -c %s "$name.$n.out") bytes, expected exit 1 and none"
+                  fi
+                done
+                # A renamed fixture directory must not turn part 1 into a no-op.
+                [ "$found" -eq 17 ] || no "$name: part 1 inspected $found fixtures, expected 17"
               done
-              for n in ignotum brevis longa magia; do
-                found=$((found + 1))
-                rc=0
-                somnium < "$E/tests/data/somnium_$n.bin" > "$n.out" || rc=$?
-                if [ "$rc" -eq 1 ] && [ ! -s "$n.out" ]; then
-                  pass "somnium refuses $n: exit 1, nothing written"
-                else
-                  no "somnium $n: exit $rc and $(stat -c %s "$n.out") bytes, expected exit 1 and none"
-                fi
-              done
-              # A renamed fixture directory must not turn part 1 into a no-op.
-              [ "$found" -eq 8 ] || no "part 1 inspected $found fixtures, expected 8"
 
               # ── 2. the host encoder against exsecutor's requests ────────
               while read -r n id skip write seed; do
                 if ${command}/bin/oligarchy-screensaver --request "$id" "$skip" "$write" "$seed" \
-                    | cmp -s - "$E/tests/data/somnium_$n.bin"; then
+                    | cmp -s - <(head -c 17 "$E/tests/data/somnium_$n.bin"); then
                   pass "request $n: identical to exsecutor's tests/data/somnium_$n.bin"
                 else
                   no "request $n: the encoder in script.nix disagrees with exsecutor's fixture"
@@ -1667,27 +1681,39 @@
               ignis 1 60 1 1
               vita 2 23 2 0x5EED
               semen_nihil 0 0 1 0
-              ignotum 3 0 1 1
+              pluvia 3 40 1 0x51
+              abyssus 6 300 1 0x54
+              signum 8 20 1 0x56
+              ignotum 9 0 1 1
               EOF
+              if cmp -s <(tail -c 44801 "$E/tests/data/somnium_signum.bin") \
+                  ${fast}/share/somnium/signaculum_mesh.bin; then
+                pass "the shipped 3D model is exsecutor's tests/data/signaculum_mesh.bin"
+              else
+                no "share/somnium/signaculum_mesh.bin is not the model the goldens were rendered from"
+              fi
 
               # ── 3. the real pipeline, headless ──────────────────────────
-              # 45 frames at 20 fps with period 1: plasma, fire, Life.
-              rc=0
-              timeout 120 ${cycling}/bin/oligarchy-screensaver --headless 45 mpv.log || rc=$?
-              if [ "$rc" -eq 0 ]; then
-                pass "oligarchy-screensaver --headless 45 exited 0 when mpv did"
-              elif [ "$rc" -eq 124 ]; then
-                no "oligarchy-screensaver did not exit after mpv quit (timeout): the producer loop is spinning"
-              else
-                no "oligarchy-screensaver --headless exited $rc"
-                tail -n 40 mpv.log >&2 || true
-              fi
-              if grep -qF 'VO: [null] 160x100 rgb24' mpv.log; then
-                pass "mpv decoded the stream as 160x100 rgb24"
-              else
-                no "mpv's log has no 'VO: [null] 160x100 rgb24' line"
-                tail -n 40 mpv.log >&2 || true
-              fi
+              for run in "cycling:${cycling}:45" "logo:${logo}:30"; do
+                label=''${run%%:*}; rest=''${run#*:}
+                cmd=''${rest%:*}; n=''${rest##*:}
+                rc=0
+                timeout 300 "$cmd/bin/oligarchy-screensaver" --headless "$n" "$label.log" || rc=$?
+                if [ "$rc" -eq 0 ]; then
+                  pass "$label: oligarchy-screensaver --headless $n exited 0 when mpv did"
+                elif [ "$rc" -eq 124 ]; then
+                  no "$label: oligarchy-screensaver did not exit after mpv quit (timeout): the producer loop is spinning"
+                else
+                  no "$label: oligarchy-screensaver --headless exited $rc"
+                  tail -n 40 "$label.log" >&2 || true
+                fi
+                if grep -qF 'VO: [null] 160x100 rgb24' "$label.log"; then
+                  pass "$label: mpv decoded the stream as 160x100 rgb24"
+                else
+                  no "$label: mpv's log has no 'VO: [null] 160x100 rgb24' line"
+                  tail -n 40 "$label.log" >&2 || true
+                fi
+              done
 
               # ── 4. the idle-inhibit trap ────────────────────────────────
               if grep -qF -- '--stop-screensaver=no' ${command}/bin/oligarchy-screensaver; then
@@ -1697,18 +1723,27 @@
               fi
 
               # ── measurement, not assertion ──────────────────────────────
-              for s in 0:plasma 1:ignis 2:vita; do
-                id=''${s%%:*}; name=''${s#*:}
-                ${command}/bin/oligarchy-screensaver --request "$id" 0 100 7 > req.bin
-                t0=$(date +%s%N)
-                somnium < req.bin > /dev/null
-                t1=$(date +%s%N)
-                ms=$(( (t1 - t0) / 1000000 ))
-                echo "measured: $name, 100 frames to /dev/null in $ms ms" | tee -a $out/report.txt
+              for build in reference:${reference} c:${fast}; do
+                name=''${build%%:*}
+                bin=''${build#*:}/bin/somnium
+                for s in 0:plasma 1:ignis 2:vita 3:pluvia 4:stellae 5:cuniculus 6:abyssus 7:titulus 8:signum; do
+                  id=''${s%%:*}; eff=''${s#*:}
+                  if [ "$id" -eq 8 ]; then
+                    { ${command}/bin/oligarchy-screensaver --request "$id" 0 60 7; cat ${fast}/share/somnium/signaculum_mesh.bin; } > req.bin
+                  else
+                    ${command}/bin/oligarchy-screensaver --request "$id" 0 60 7 > req.bin
+                  fi
+                  t0=$(date +%s%N)
+                  "$bin" < req.bin > /dev/null
+                  t1=$(date +%s%N)
+                  ms=$(( (t1 - t0) / 1000000 ))
+                  [ "$ms" -gt 0 ] || ms=1
+                  echo "measured: $name $eff: 60 frames in $ms ms = $(( 60000 / ms )) fps" | tee -a $out/report.txt
+                done
               done
 
               [ "$fail" -eq 0 ] || { echo "screensaver-tests: FAILED" >&2; exit 1; }
-              echo "screensaver-tests: engine, encoder, viewer pipeline and idle flag all pass" \
+              echo "screensaver-tests: both engines, encoder, viewer pipeline and idle flag all pass" \
                 >> $out/report.txt
             '';
 

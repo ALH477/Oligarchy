@@ -223,11 +223,11 @@
         "nixpkgs": "nixpkgs_20"
       },
       "locked": {
-        "lastModified": 1790455044,
-        "narHash": "sha256-JtYN/XtrXllXrWkFEBrqZ9q5CC2h+jNMk0HKWrUaucc=",
+        "lastModified": 1790460882,
+        "narHash": "sha256-O0LRrltB/QEcnqLO7ozwSYFZaVLcz5CvFeWmY4tdBBM=",
         "owner": "ALH477",
         "repo": "exsecutor",
-        "rev": "433dde12d34d95a3c28902b2d32e6b88e1d329b8",
+        "rev": "d581c64a1dacb3e22e9f4de9768a4043793905d8",
         "type": "github"
       },
       "original": {
