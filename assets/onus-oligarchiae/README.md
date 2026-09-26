@@ -66,12 +66,10 @@ faust2jaqt -midi -nvoices 12 orchestra/ostinatum.dsp   # one client per section
 ## Provenance
 
 - Score: Exsecutor `examples/onus/` (`partitura.exsc` and `onus.exsc`, at
-  `6be3a8b`),
-  checked against `prototypes/onus_oracle.py`. **That program has not yet
-  been compiled by `exsc`.** It was written without `fasmg` in reach, and
-  the committed `.mid` was written by the oracle. A mechanical
-  transliteration of the program produced the same bytes. Exsecutor's
-  `examples/onus/README.md` gives the evidence exactly.
+  `84db83d`). Compiled by `exsc` and run, the program writes this `.mid`
+  byte for byte, and so does the independent oracle
+  `prototypes/onus_oracle.py`. Exsecutor's `examples/onus/README.md` gives
+  the evidence exactly.
 - The composition is original. It borrows from Holst's *Mars* in manner
   only: the 5/4 meter, the rhythm cell, the pedal and the chromatic climb.
   It quotes no melody from it.
