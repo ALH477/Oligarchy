@@ -246,6 +246,7 @@ input.
 | `modules/platform.nix` | GPU/CPU/framework probes, `custom.platform.gpu`, kernel-module fixes (e.g. AMD `usb-storage.quirks=:u`), Framework "You are based" banner. On dual-AMD-GPU hosts, `custom.platform.displayGpu` (default `"dgpu"`) plus `dgpuPciId`/`igpuPciId` select which GPU client apps (games, anything launched from Hyprland) render on via Mesa `DRI_PRIME`. This never touches Hyprland/Aquamarine's own backend device — the compositor always uses the iGPU, since the dGPU module has no display engine path of its own and telling Aquamarine to open it as primary is a fatal, unrecoverable crash (see `docs/dgpu-steam-forcing.md`) |
 | `modules/personas.nix` | `studio / gaming / dev / battery / minimal` — one-switch re-arming of kernel + DSP + AI + audio quantum + power (`minimal` is the fresh-clone default) |
 | `modules/blipply-integration.nix` | Voice assistant wiring; reads the MCP over stdio |
+| `modules/screensaver/` | `custom.screensaver` — an idle screensaver whose engine, `somnium`, is written in **Exsecutor** and comes from the `exsecutor` flake input. Nine effects, including a title card and the Exsecutor sigil turning under Exsecutor's own 3D engine. A plain directory module, not a sub-flake: `default.nix` declares the options and the on-demand user unit, `script.nix` builds `oligarchy-screensaver` (requests into `somnium`, raw 160x100 rgb24 frames into a fullscreen mpv), and `home/hyprland/default.nix` adds the hypridle listener. `backend` picks the C build or the freestanding fasmg one; both must render the same bytes. Opt-in, off by default — disabled it never fetches the input. `modules/screensaver/README.md` |
 
 ### Sub-flakes
 
@@ -917,6 +918,10 @@ nix build .#mcp-self-audit
 # docs drift gate (every truth:claim in AGENTS.md, docs/architecture.md, README.md holds; no KVM)
 nix build .#truthgate-docs
 
+# the Exsecutor screensaver: both somnium builds against exsecutor's goldens, the
+# request encoder against its fixtures, and the real somnium|mpv pipeline (no KVM)
+nix build .#screensaver-tests
+
 # plugin runtime gates — all need KVM, tier2 needs *nested* KVM
 nix build .#plugins-wx-enforcement   # the two W^X mirrors agree, on a booted kernel
 nix build .#plugins-policy-refusal   # policy refuses at INSTALL time, not at load time
@@ -941,6 +946,63 @@ nix flake check
 # MCP workspace unit tests (per-crate allowlist + build-gate tests)
 cd modules/mcp-servers && cargo test --workspace
 ```
+
+### 15a. Docs drift gate — TrvthNvke
+
+`AGENTS.md`, this file and `README.md` are **claim-gated**: each carries hidden
+`truth:claim` blocks binding a sentence to something checkable in the tree, and
+`nix build .#truthgate-docs` fails the moment the tree stops matching the
+sentence. Upstream is [TrvthNvke](https://github.com/ALH477/TrvthNvke); this
+tree still pins the input, the package and the policy file under the project's
+former name, `truthgate`, which GitHub redirects.
+
+A claim wraps the prose it governs:
+
+```markdown truth:ignore
+<!-- truth:claim
+id: hosts
+kind: file_contains
+path: flake.nix
+pattern: nixosConfigurations.nixos-optimus
+-->
+Hosts in `flake.nix`: `nixos` (primary), `nixos-asher` …
+<!-- truth:end -->
+```
+
+<!-- truth:claim
+id: docs-gate-entailment
+kind: file_contains
+path: .truthgate.toml
+pattern: require_entailment
+-->
+Four properties of the policy in `.truthgate.toml` are easy to get wrong:
+
+- **`command_mode = "off"`.** No Markdown in this repo may execute anything.
+  Every claim is a file, directory, string, glob, heading or structured-data
+  check — a pure read of the tree. That is what makes the gate safe on a
+  hosted runner, which is why the eval lane runs it on every push *including
+  from forks* (§5d's trust split).
+- **`require_entailment = true`.** A claim's prose must actually mention the
+  value it binds. You cannot bind a sentence to `flake.nix` and then write a
+  sentence that never says `flake.nix`; the gate rejects it. This is what keeps
+  a claim from decaying into a green checkbox with unrelated text above it.
+- **`require_lock = true`.** Editing the policy invalidates `.truthgate.lock`.
+  Re-pin with `truthgate lock` in the same change, or the gate refuses to run
+  at all rather than running against an unpinned policy.
+- **`coverage = "off"`, deliberately.** These are dense prose documents about a
+  large tree, so the useful facts are bound *explicitly* rather than inferred
+  from every path-shaped word in the file.
+<!-- truth:end -->
+
+Claim kinds: `file_exists`, `dir_exists`, `file_contains`, `glob_count`,
+`json_pointer`, `toml_key`, `heading`, `rel_link`, `version_sync`,
+`python_symbol`, `entrypoint`, `prose` — plus `command`, which policy disables
+here. Beyond the inline claims, a `[[docs]]` entry may demand that named
+headings survive and that every fence is either bound or marked `truth:ignore`
+(`require_bound_fences`, on for `AGENTS.md` and this file).
+
+**When a claim fails, the code moved: fix the sentence, do not delete the
+claim.**
 
 ## 16. Hardware-specific notes
 

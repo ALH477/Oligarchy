@@ -102,6 +102,15 @@ let
   # osConfig is `{ }` when home.nix is evaluated standalone, and the NixOS
   # module declaring this option is absent on a fresh clone.
   vpnEnabled = osConfig.custom.vpn.enable or false;
+
+  # custom.screensaver (modules/screensaver/). Same `or` discipline again.
+  # lockTimeout is hypridle's lock rung below, named because the screensaver
+  # must start before it: hyprlock is an ext-session-lock surface and covers
+  # everything, so a screensaver that starts after it only burns CPU.
+  screensaver = osConfig.custom.screensaver or { };
+  saverOn = screensaver.enable or false;
+  saverTimeout = screensaver.timeout or 420;
+  lockTimeout = 600;
   autoLogin = session.autoLogin or { };
   restore = session.restore or { };
   restoreOn = restore.enable or false;
@@ -631,6 +640,13 @@ in
         "size 65% 60%, class:^(scratch-term|scratch-notes|scratch-mon)$"
         "center, class:^(scratch-term|scratch-notes|scratch-mon)$"
 
+        # custom.screensaver's viewer (modules/screensaver/script.nix sets
+        # this app-id). mpv already asks for fullscreen; the rule makes it
+        # unconditional, and noanim keeps the wake-up from animating the
+        # window away over the desktop. Inert unless that window exists.
+        "fullscreen, class:^(oligarchy-screensaver)$"
+        "noanim, class:^(oligarchy-screensaver)$"
+
         # PiP support
         "float, title:^(Picture.in.[Pp]icture)$"
         "pin, title:^(Picture.in.[Pp]icture)$"
@@ -770,6 +786,10 @@ in
   # docs/dgpu-steam-forcing.md): turns the
   # comment-only warning into a build-time check.
   assertions = [
+    {
+      assertion = saverOn -> saverTimeout < lockTimeout;
+      message = "custom.screensaver.timeout (${toString saverTimeout}) must be below hypridle's lock timeout (${toString lockTimeout}, home/hyprland/default.nix): hyprlock covers every surface, so a screensaver started after the lock is never seen and only burns CPU until DPMS-off.";
+    }
     {
       # Also reject session-wide DRI_PRIME: `env=` in hyprland.conf lands in the
       # systemd user manager's environment, so every user unit (hyprlock
@@ -1160,12 +1180,23 @@ in
     # (hyprlock registers the handler only once started), which left a gap
     # where the session looked "about to lock" but nothing was listening.
     listener {
-      timeout = 600
+      timeout = ${toString lockTimeout}
       on-timeout = systemctl --user start --no-block hyprlock.service
     }
+  '' + lib.optionalString saverOn ''
+    # custom.screensaver (modules/screensaver/). It keeps running under the
+    # lock until DPMS-off below, deliberately: stopping it AT the lock would
+    # uncover the desktop for however long hyprlock takes to put up its
+    # surface. Resume stops it; the lock, if it came, is already underneath.
+    listener {
+      timeout = ${toString saverTimeout}
+      on-timeout = systemctl --user start --no-block oligarchy-screensaver.service
+      on-resume = systemctl --user stop --no-block oligarchy-screensaver.service
+    }
+  '' + ''
     listener {
       timeout = 660
-      on-timeout = hyprctl dispatch dpms off
+      on-timeout = hyprctl dispatch dpms off${lib.optionalString saverOn "; systemctl --user stop --no-block oligarchy-screensaver.service"}
       on-resume = hyprctl dispatch dpms on
     }
     listener {

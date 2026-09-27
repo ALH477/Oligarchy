@@ -218,6 +218,24 @@
       },
       "parent": []
     },
+    "exsecutor": {
+      "inputs": {
+        "nixpkgs": "nixpkgs_20"
+      },
+      "locked": {
+        "lastModified": 1790460882,
+        "narHash": "sha256-O0LRrltB/QEcnqLO7ozwSYFZaVLcz5CvFeWmY4tdBBM=",
+        "owner": "ALH477",
+        "repo": "exsecutor",
+        "rev": "d581c64a1dacb3e22e9f4de9768a4043793905d8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ALH477",
+        "repo": "exsecutor",
+        "type": "github"
+      }
+    },
     "flake-compat": {
       "flake": false,
       "locked": {
@@ -1094,6 +1112,22 @@
         "type": "github"
       }
     },
+    "nixpkgs_20": {
+      "locked": {
+        "lastModified": 1788881743,
+        "narHash": "sha256-2V9GZGvPfrNzxFozhI9dcqV+c3QdA8YZrvAAzqEB+dI=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "d6524aaca2ff07876657ae2b323f24be4874944b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "nixpkgs_3": {
       "locked": {
         "lastModified": 1744536153,
@@ -1340,6 +1374,7 @@
         "demod-voice": "demod-voice",
         "determinate": "determinate",
         "dsp-ctl": "dsp-ctl",
+        "exsecutor": "exsecutor",
         "greeting": "greeting",
         "home-manager": "home-manager_2",
         "hydramesh": "hydramesh",
