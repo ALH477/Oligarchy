@@ -32,7 +32,7 @@ Large: tens of thousands of lines of Nix, Rust and Shell. `docs/architecture.md`
 | `dgpu-steam-forcing.md` | dGPU-vs-iGPU client rendering; why Hyprland's backend never moves |
 | `secure-boot-enrollment.md`, `bios-uma-unlock.md` | firmware procedures — read before running either |
 | `dcf-mesh-agent.md` | the read-write UDP mesh endpoint kept out of the MCP surface |
-| `exsecutor-kernel-roadmap.md` | the Exsecutor/ring-0 agent-sandbox assessment: what the hardware actually allows, the six language prerequisites before any kernel object, and which phases are already built here. Claims about this tree are Truthgate-bound; Exsecutor claims are pinned by commit |
+| `exsecutor-kernel-roadmap.md` | the Exsecutor/ring-0 agent-sandbox assessment: what the hardware actually allows, the six language prerequisites before any kernel object, and which phases are already built here. Claims about this tree are TrvthNvke-bound; Exsecutor claims are pinned by commit |
 | `localization-roadmap.md` | i18n/l10n design: `custom.locale.*` contract, catalogs, installer round-trip (`oligarchy-adopt`), gates. Stages 0-2 landed (`custom.locale`, `oligarchy-adopt`); §3 is the measured part |
 
 <!-- truth:claim

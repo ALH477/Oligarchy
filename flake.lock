@@ -1392,11 +1392,11 @@
         "reliquary": "reliquary",
         "scrollmapper": "scrollmapper",
         "sops-nix": "sops-nix",
-        "truthgate": "truthgate",
         "vm-manager": "vm-manager",
         "warroom": "warroom",
         "windscribe-app": "windscribe-app",
-        "yara-rules": "yara-rules"
+        "yara-rules": "yara-rules",
+        "trvthnvke": "trvthnvke"
       }
     },
     "rust-overlay": {
@@ -1776,27 +1776,6 @@
         "type": "github"
       }
     },
-    "truthgate": {
-      "inputs": {
-        "flake-utils": "flake-utils_13",
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1790307701,
-        "narHash": "sha256-zogfbECw6JiaYjOq5EvR60iSibdzGIO49xw38Lcgqxk=",
-        "owner": "ALH477",
-        "repo": "truthgate",
-        "rev": "785e5db95dda4769877392dc4d19f665b0b40a28",
-        "type": "github"
-      },
-      "original": {
-        "owner": "ALH477",
-        "repo": "truthgate",
-        "type": "github"
-      }
-    },
     "vm-manager": {
       "inputs": {
         "nixpkgs": "nixpkgs_18",
@@ -1858,6 +1837,27 @@
       "original": {
         "owner": "Yara-Rules",
         "repo": "rules",
+        "type": "github"
+      }
+    },
+    "trvthnvke": {
+      "inputs": {
+        "flake-utils": "flake-utils_13",
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790469452,
+        "narHash": "sha256-yImSDUD7UGgFUAJxK1lX4Y1vMQUE5DG9wQ0ouj+w2ws=",
+        "owner": "ALH477",
+        "repo": "TrvthNvke",
+        "rev": "8012565071041d26e39a14ec3705424bb81c4954",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ALH477",
+        "repo": "TrvthNvke",
         "type": "github"
       }
     }

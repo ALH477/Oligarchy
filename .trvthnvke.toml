@@ -1,6 +1,6 @@
-# Truthgate policy — bind the load-bearing docs to the tree.
-# Gate: nix build .#truthgate-docs   (also runs in .github/workflows/eval.yml)
-# Re-pin after editing this file: truthgate lock
+# TrvthNvke policy — bind the load-bearing docs to the tree.
+# Gate: nix build .#trvthnvke-docs   (also runs in .github/workflows/eval.yml)
+# Re-pin after editing this file: trvthnvke lock
 #
 # command claims are OFF: nothing in a Markdown file may execute here. Every
 # claim is a file / directory / string / heading / glob check. Path-token
@@ -11,12 +11,12 @@
 fail_on = "error"
 command_mode = "off"
 require_lock = true
-lock_path = ".truthgate.lock"
+lock_path = ".trvthnvke.lock"
 coverage = "off"
 require_entailment = true
 ignore_requires_reason = true
 strict_ignore = true
-receipt_path = ".truthgate/receipt.json"
+receipt_path = ".trvthnvke/receipt.json"
 
 # The agent contract. Every fence is `truth:ignore` (commands are documentation
 # here) and the facts agents act on — W^X mirrors, the MCP allowlist, hosts,

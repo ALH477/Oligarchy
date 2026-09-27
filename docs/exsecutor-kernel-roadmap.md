@@ -12,7 +12,7 @@ This document assesses a design in which:
 
 No schedule or effort estimates are given. Sequencing is expressed as dependency order.
 
-Claims about **this** repository are bound by Truthgate and fail the docs gate when
+Claims about **this** repository are bound by TrvthNvke and fail the docs gate when
 the tree stops matching them. Claims about Exsecutor are **not** — that tree is not
 checked out here — and are pinned by commit instead. See *Verification status*.
 
@@ -564,7 +564,7 @@ Nothing here is legal advice; the derivative-work question and the licence excep
 
 **What is measured, and by what.**
 
-- **Claims about this repository are bound by Truthgate** and fail `nix build .#truthgate-docs` when the tree stops matching them. That covers the verity pipeline, the plugin microVM tier and its hypervisor set, the forge's container flags, the `security.lsm` and kernel-variant owners, the root filesystem, Secure Boot and the nixpkgs pin.
+- **Claims about this repository are bound by TrvthNvke** and fail `nix build .#trvthnvke-docs` when the tree stops matching them. That covers the verity pipeline, the plugin microVM tier and its hypervisor set, the forge's container flags, the `security.lsm` and kernel-variant owners, the root filesystem, Secure Boot and the nixpkgs pin.
 - **Hardware claims were measured on the target machine**, not inferred — see *Measured starting point*. The SEV-SNP and IBT statements in particular were asserted from general knowledge in earlier drafts and are now read from `/proc/cpuinfo` and the running kernel config.
 - **Claims about Exsecutor were read from a checkout and by driving the compiler directly**, including the target-triple table, the trap ABI, the import surface and the backend opcode coverage.
 

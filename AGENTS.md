@@ -17,7 +17,7 @@ nix build .#nixosConfigurations.nixos.config.system.build.toplevel
 sudo nixos-rebuild switch --flake .#nixos --impure
 nix build .#iso
 nix flake check                 # builds toplevel only; slow gates are packages
-nix build .#truthgate-docs      # docs drift gate: the truth:claim blocks in this file, docs/architecture.md, README.md
+nix build .#trvthnvke-docs      # docs drift gate: the truth:claim blocks in this file, docs/architecture.md, README.md
 ```
 
 `--impure` is required when `~/.config/oligarchy/{local,state}.nix` exists. Pure eval silently uses fresh-clone defaults (steam, DSP, persona, etc.) instead of erroring.
@@ -98,7 +98,7 @@ Hosts in `flake.nix`: `nixos` (primary), `nixos-asher` (committed `hosts/asher/`
 
 ## Bound facts
 
-Machine-checked by `nix build .#truthgate-docs`. When one of these fails, the code moved; fix the sentence, do not delete the claim.
+Machine-checked by `nix build .#trvthnvke-docs`. When one of these fails, the code moved; fix the sentence, do not delete the claim.
 
 <!-- truth:claim
 id: wx-manifest
@@ -170,7 +170,7 @@ Rule 12: and must match `modules/dcf-community-node.nix`.
 id: eval-runs-gate
 kind: file_contains
 path: .github/workflows/eval.yml
-pattern: truthgate-docs
+pattern: trvthnvke-docs
 -->
-The docs gate itself runs in the eval lane: `.github/workflows/eval.yml` builds `truthgate-docs` on every push and pull request.
+The docs gate itself runs in the eval lane: `.github/workflows/eval.yml` builds `trvthnvke-docs` on every push and pull request.
 <!-- truth:end -->

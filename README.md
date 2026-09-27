@@ -421,10 +421,10 @@ Every control is a declarative NixOS option, default-off unless noted. See [`doc
    <!-- truth:claim
    id: docs-gate
    kind: file_contains
-   path: .truthgate.toml
+   path: .trvthnvke.toml
    pattern: command_mode = "off"
    -->
-   The documentation is gated too: `nix build .#truthgate-docs` verifies every hidden claim in this README, `AGENTS.md` and `docs/architecture.md` against the tree, with command claims disabled in `.truthgate.toml` so no Markdown can execute anything.
+   The documentation is gated too: `nix build .#trvthnvke-docs` verifies every hidden claim in this README, `AGENTS.md` and `docs/architecture.md` against the tree, with command claims disabled in `.trvthnvke.toml` so no Markdown can execute anything.
    <!-- truth:end -->
 
 4. **Flash & Install**:

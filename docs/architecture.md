@@ -195,7 +195,7 @@ reads the out-of-repo files that advisory exists to catch.
 | `packages.x86_64-linux.default` | alias to `iso` |
 | `packages.x86_64-linux.malwareScan` | build gate — YARA-scan the system closure |
 | `packages.x86_64-linux.mcp-self-audit` | build gate — verify MCP workspace stays socket-free outside `ports-sec` |
-| `packages.x86_64-linux.truthgate-docs` | build gate — every `truth:claim` in `AGENTS.md`, this file and `README.md` still matches the tree (policy: `.truthgate.toml`) |
+| `packages.x86_64-linux.trvthnvke-docs` | build gate — every `truth:claim` in `AGENTS.md`, this file and `README.md` still matches the tree (policy: `.trvthnvke.toml`) |
 | `packages.x86_64-linux.plugins-*` | five build gates for the plugin runtime — see §5b |
 | `packages.x86_64-linux.p2p-*` | nine build gates for the P2P substituter — see §5c |
 | `packages.x86_64-linux.test-*` | the five `tests/default.nix` VM suites — packages, NOT checks, so `nix flake check` stays KVM-free |
@@ -956,7 +956,7 @@ nix build .#malwareScan
 nix build .#mcp-self-audit
 
 # docs drift gate (every truth:claim in AGENTS.md, docs/architecture.md, README.md holds; no KVM)
-nix build .#truthgate-docs
+nix build .#trvthnvke-docs
 
 # the Exsecutor screensaver: both somnium builds against exsecutor's goldens, the
 # request encoder against its fixtures, and the real somnium|mpv pipeline (no KVM)

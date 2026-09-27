@@ -226,14 +226,14 @@
       flake = false;
     };
 
-    # Truthgate — claim-verified Markdown (github:ALH477/truthgate). AGENTS.md,
+    # TrvthNvke — claim-verified Markdown (github:ALH477/TrvthNvke). AGENTS.md,
     # docs/architecture.md and README.md carry hidden `truth:claim` blocks that
     # bind a sentence to a file, directory or string in this tree; the
-    # `truthgate-docs` package fails when the tree stops matching the sentence.
-    # Policy in .truthgate.toml, pinned by .truthgate.lock. Pure stdlib Python,
+    # `trvthnvke-docs` package fails when the tree stops matching the sentence.
+    # Policy in .trvthnvke.toml, pinned by .trvthnvke.lock. Pure stdlib Python,
     # so following our nixpkgs costs nothing and avoids a second closure.
-    truthgate = {
-      url = "github:ALH477/truthgate";
+    trvthnvke = {
+      url = "github:ALH477/TrvthNvke";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -285,7 +285,7 @@
     , hydramesh
     , nnnvim
     , yara-rules
-    , truthgate
+    , trvthnvke
     , # archibaldos,
       ...
     } @ inputs:
@@ -909,12 +909,12 @@
       # Installation ISO & Tests
       # ════════════════════════════════════════════════════════════════════════
       packages.${system} = {
-        # Docs drift gate — Truthgate. Verifies every `truth:claim` in
+        # Docs drift gate — TrvthNvke. Verifies every `truth:claim` in
         # AGENTS.md, docs/architecture.md and README.md against this source
         # tree: documented files exist, documented strings are still in the
         # files they are attributed to, required headings survive. No KVM, no
         # network, seconds. The eval lane runs it on every push; locally:
-        #   nix build .#truthgate-docs
+        #   nix build .#trvthnvke-docs
         # `command` claims are disabled by policy (command_mode = "off"), so
         # nothing in the docs can execute anything here — it is a pure read of
         # the tree.
@@ -924,12 +924,12 @@
         # — only `--receipt` would write, and we do not pass it. The upstream
         # README's copy-then-verify recipe is for trees that need to be
         # writable; this one does not.
-        truthgate-docs = pkgs.runCommand "truthgate-docs"
+        trvthnvke-docs = pkgs.runCommand "trvthnvke-docs"
           {
-            nativeBuildInputs = [ truthgate.packages.${system}.truthgate ];
+            nativeBuildInputs = [ trvthnvke.packages.${system}.trvthnvke ];
             src = self;
           } ''
-          truthgate --root "$src" verify --fail
+          trvthnvke --root "$src" verify --fail
           touch "$out"
         '';
 
@@ -3097,7 +3097,7 @@
             nil # Nix LSP
             nixpkgs-fmt
             nixfmt-rfc-style
-            truthgate.packages.${system}.truthgate # docs claim gate (`truthgate verify --fail`)
+            trvthnvke.packages.${system}.trvthnvke # docs claim gate (`trvthnvke verify --fail`)
             nix-tree # Explore Nix store
             nix-diff # Compare Nix derivations
             nvd # NixOS version diff
@@ -3138,7 +3138,7 @@
             echo "║     --flake .#nixos                - fast eval smoke test      ║"
             echo "║   nix build .#iso                  - build installer ISO       ║"
             echo "║   nix build .#malwareScan          - YARA-scan the closure     ║"
-            echo "║   nix build .#truthgate-docs       - docs drift gate           ║"
+            echo "║   nix build .#trvthnvke-docs       - docs drift gate           ║"
             echo "║   nix fmt                          - format Nix sources        ║"
             echo "║   nvd diff /run/current-system ./result - diff closures        ║"
             echo "║   oligarchy-security status        - live security posture     ║"
