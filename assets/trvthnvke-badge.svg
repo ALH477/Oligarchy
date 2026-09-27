@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="161" height="20" viewBox="0 0 161 20" role="img" aria-label="gated by TrvthNvke">
+  <title>gated by TrvthNvke</title>
+  <!-- Offline by construction: one file, no <image>, no @font-face, no remote
+       shield service. Sizes are pinned with textLength so font substitution
+       cannot reflow it. -->
+  <clipPath id="pill"><rect width="161" height="20" rx="3"/></clipPath>
+  <g clip-path="url(#pill)">
+    <rect width="77" height="20" fill="#24292f"/>
+    <rect x="77" width="84" height="20" fill="#f7c518"/>
+  </g>
+  <g fill="#f7c518">
+    <path d="M10.107 7.588L8.25 4.371A6.5 6.5 0 0 1 14.75 4.371L12.893 7.588A2.786 2.786 0 0 0 10.107 7.588Z"/>
+    <path d="M14.286 10L18 10A6.5 6.5 0 0 1 14.75 15.629L12.893 12.412A2.786 2.786 0 0 0 14.286 10Z"/>
+    <path d="M10.107 12.412L8.25 15.629A6.5 6.5 0 0 1 5 10L8.714 10A2.786 2.786 0 0 0 10.107 12.412Z"/>
+    <circle cx="11.5" cy="10.0" r="1.625"/>
+  </g>
+  <g font-family="DejaVu Sans,Verdana,Geneva,sans-serif" font-size="11">
+    <text x="22" y="14" textLength="49"
+          lengthAdjust="spacingAndGlyphs" fill="#ffffff">gated by</text>
+    <text x="86" y="14" textLength="66"
+          lengthAdjust="spacingAndGlyphs" fill="#10141a" font-weight="bold">TRVTHNVKE</text>
+  </g>
+  <rect x="0.5" y="0.5" width="160" height="19" rx="3" fill="none" stroke="#10141a" stroke-opacity="0.2"/>
+</svg>

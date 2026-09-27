@@ -956,6 +956,19 @@ sentence. Upstream is [TrvthNvke](https://github.com/ALH477/TrvthNvke); this
 tree still pins the input, the package and the policy file under the project's
 former name, `truthgate`, which GitHub redirects.
 
+<!-- truth:claim
+id: trvthnvke-badge
+kind: file_exists
+path: assets/trvthnvke-badge.svg
+-->
+`README.md` carries upstream's "gated by TrvthNvke" badge, **vendored** to
+`assets/trvthnvke-badge.svg` rather than hot-linked. The file has no
+`<image>`, no `@font-face` and no remote shield service in it, so it renders
+offline and in a bare SVG viewer — and a `raw.githubusercontent.com` URL on
+someone else's default branch is exactly the unpinned external fetch §13 says
+not to add.
+<!-- truth:end -->
+
 A claim wraps the prose it governs:
 
 ```markdown truth:ignore
