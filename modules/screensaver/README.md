@@ -158,7 +158,15 @@ animations, `assets/screensaver-*.gif`):
 So the engine is no longer `[UNTESTED]`: it compiles, it runs, and it agrees
 with the oracle that wrote the goldens.
 
-What still has **not** run: the `c` backend build, `mpv` on this stream, and
-the gate itself. `.#screensaver-tests` remains the first measurement of the
-*pipeline* — and of the two backends agreeing with each other, which the run
-above does not test.
+**Operator confirmation (not a gate).** The maintainer has since run the
+module on the real Framework 16 and reports it working: hypridle fires the
+listener, the viewer takes the screen, and resume stops it. That is a human
+observation on one machine, recorded because it is the only evidence that
+exists for the layer the gate explicitly cannot reach — the compositor, the
+window rules, and hypridle itself. It is not reproducible in CI and does not
+substitute for one.
+
+What still has **not** run: the `c` backend build, `mpv` under the gate's
+`--vo=null` harness, and `.#screensaver-tests` itself. That gate remains the
+first *reproducible* measurement of the pipeline, and the only thing that
+tests the two backends against each other, which the run above does not.

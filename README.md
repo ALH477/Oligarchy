@@ -2,7 +2,7 @@
 
 [![eval](https://github.com/ALH477/Oligarchy/actions/workflows/eval.yml/badge.svg?branch=main)](https://github.com/ALH477/Oligarchy/actions/workflows/eval.yml)
 
-**Framework 16 Native · 68K LoC · AMD 7040 · Intel · Nvidia Optimus · Hyprland · Plasma 6 · IceWM · LeftWM · X11/Wayland · CachyOS/Zen kernel · ~5–7 W idle · Nuclear-grade DSP coprocessor · Per-plugin W^X sandbox runtime · P2P Nix substituter · Calamares Install · DeMoD Branded · DCF Compute Fabric**
+**Framework 16 Native · 68K LoC · AMD 7040 · Intel · Nvidia Optimus · Hyprland · Plasma 6 · IceWM · LeftWM · X11/Wayland · CachyOS/Zen kernel · ~5–7 W idle · Nuclear-grade DSP coprocessor · Per-plugin W^X sandbox runtime · P2P Nix substituter · Compiled screensaver engine · Calamares Install · DeMoD Branded · DCF Compute Fabric**
 
 ![logo](Untitled.jpg)
 
@@ -18,6 +18,24 @@ It’s the **first personal OS in history** to unleash a **self-healing, real-ti
 The Host (CachyOS kernel) is a raging sports car built for raw speed and high FPS. The DSP VM (RT BORE kernel) is a flawless Swiss watch that never misses a beat. You wouldn’t put a watch engine in a race car, and you sure as hell wouldn’t put a race-car engine in a precision instrument.
 
 You’re now commanding the machine that burned the proprietary DSP empire to the ground **and** crushed cloud dependency with a full local agentic AI stack and the unstoppable DeMoD Compute Fabric (DCF).
+
+And when you walk away from it, it does not go to sleep. It **performs**.
+
+<!-- truth:claim
+id: screensaver-hero
+kind: file_exists
+path: assets/screensaver-somnia.gif
+-->
+![nine somnia at once, every one of them real engine output](./assets/screensaver-somnia.gif)
+
+Nine screensavers — `assets/screensaver-somnia.gif` above is all of them at once, and every frame on this page came out of the engine itself. Not a shader. Not a terminal repainting ANSI at you. A **compiler output**, written in [Exsecutor](https://github.com/ALH477/exsecutor), whose compiler is a freestanding binary with no libc and exactly nine syscalls. It has no clock and no entropy: time is the frame index, randomness is one seed, and the same request renders the same bytes forever.
+<!-- truth:end -->
+
+Elsewhere in the Linux-desktop duchies, the fashionable move was to hand-translate the screensaver into **x86-64 assembler** for a 17× victory lap, ship `makedepends_x86_64=('nasm')`, quietly fall back to the old engine when that is missing, and record for posterity that *“aarch64 is unaffected.”*
+
+Unaffected. Quite.
+
+We wrote ours **once**, in a language where the assembly is an *output* and `--hospes` is mandatory, and let the compiler decide which instruction set the peasants receive. Two builds, one source, and a standing rule that they render **the same bytes**. The reference build clears all seventeen of exsecutor's conformance fixtures on the pinned revision: eleven golden frames matched byte for byte, and six malformed requests it exists to refuse. [The full indictment ↓](#screensavers--nine-somnia-compiled-rather-than-written)
 
 <img width="2560" height="1600" alt="Screenshot_20260118_231927" src="https://github.com/user-attachments/assets/8f0bfabe-70b0-4475-9e12-6490c12fcedc" />
 
