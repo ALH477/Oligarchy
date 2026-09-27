@@ -260,6 +260,34 @@
     # exsecutor's main, `nix flake update exsecutor` moves to a main with no
     # packages.somnium and evaluation fails loudly naming it.
     exsecutor.url = "github:ALH477/exsecutor";
+
+    # Velocitty (github:valvesky/velocitty) — the CPU-rendered X11 terminal
+    # behind custom.terminal.system, the terminal that gets a window when a
+    # system/admin command needs to be visible (modules/terminal/). Kitty stays
+    # the interactive default; see modules/terminal/README.md.
+    #
+    # Source-only (`flake = false`): upstream ships no flake outputs, so
+    # modules/terminal/velocitty.nix builds it from this tree. Pinned by
+    # rev + narHash like every other external source here. Lazy: nothing
+    # fetches it unless custom.terminal.velocitty is enabled or .#velocitty /
+    # .#velocitty-tests is built.
+    velocitty = {
+      url = "github:valvesky/velocitty";
+      flake = false;
+    };
+
+    # Zig 0.16 for the velocitty build, and for nothing else. Velocitty's
+    # build.zig.zon sets `minimum_zig_version = 0.16.0`, and zig refuses a
+    # build outright below it. Our nixos-25.11 pin and the nixpkgs-unstable
+    # pin BOTH cap at zig 0.15.2, so neither can build it.
+    #
+    # A third, narrowly-scoped nixpkgs is cheaper than moving the
+    # nixpkgs-unstable input, which configuration.nix's `unstable` overlay
+    # cherry-picks from all over the tree — bumping it to reach one compiler
+    # would move every one of those packages too. This pin is reached ONLY as
+    # `inputs.nixpkgs-zig` from modules/terminal/, for zig_0_16 and its setup
+    # hook, and zig is a nativeBuildInput: it never enters a system closure.
+    nixpkgs-zig.url = "github:NixOS/nixpkgs/e158d9ed9b51c98974c5e66e1ba1c9e0255fecaa";
   };
 
   outputs =
@@ -458,6 +486,25 @@
         # home/hyprland/default.nix adds no listener, so no ISO mkForce. See
         # modules/screensaver/README.md.
         ./modules/screensaver
+
+        # custom.terminal — the interactive terminal (kitty, unchanged) and the
+        # SYSTEM terminal, the one an admin action pops when it needs a visible
+        # window: the GUI path that runs `sudo nixos-rebuild switch`. One
+        # wrapper, `oligarchy-system-term`, is the single interposition point
+        # for the ~20 call sites that each used to name kitty in one of four
+        # languages. custom.terminal.velocitty.enable (opt-in, default OFF) is
+        # what moves where the wrapper points.
+        #
+        # The wrapper is UNCONDITIONAL on purpose: with velocitty off,
+        # custom.terminal.system.package defaults to
+        # custom.terminal.user.package (kitty), so this adds one ~1 KB script
+        # over a package already in the image, no unit and no timer -- hence no
+        # ISO mkForce. The velocitty and nixpkgs-zig inputs are reached only
+        # from custom.terminal.velocitty.package's option default, the pattern
+        # modules/screensaver uses for exsecutor, so a disabled host fetches
+        # neither. .#terminal-contract proves both halves.
+        # See modules/terminal/README.md.
+        ./modules/terminal
 
         ./modules/secure-boot.nix
         ./modules/agentic-local-ai.nix
@@ -966,6 +1013,539 @@
           format = "qcow-efi";
           modules = [ ./modules/dsp-guest.nix ];
         };
+
+        # velocitty — the X11 terminal behind custom.terminal.system. Built
+        # here rather than in the module so `nix build .#velocitty` is a gate
+        # in its own right: it proves the zig 0.16 toolchain resolves, that
+        # build.zig's hardcoded /usr/{include,lib} were successfully redirected
+        # at the X11 tree, and that the install layout upstream declares
+        # (bin + .desktop + icon + man page) actually lands.
+        #
+        # zig comes from the `nixpkgs-zig` input and nowhere else — velocitty
+        # needs 0.16.0 and both of our other nixpkgs cap at 0.15.2. It is a
+        # nativeBuildInput, so it never reaches a system closure.
+        velocitty = pkgs.callPackage ./modules/terminal/velocitty.nix {
+          inherit (inputs.nixpkgs-zig.legacyPackages.${system}) zig_0_16;
+          src = inputs.velocitty;
+        };
+
+        # ════════════════════════════════════════════════════════════════════
+        # velocitty-tests -- the runtime gate for the system terminal.
+        #
+        # This exists because velocitty's worst failure mode is INVISIBLE to
+        # every structural check, and CLAUDE.md's windscribe rule says a gate
+        # must exercise what the subsystem DOES.
+        #
+        # Font discovery is `fc-match` plus a fallback list of hardcoded Arch
+        # paths under /usr/share/fonts that do not exist on NixOS. When both
+        # legs miss, velocitty opens its window, spawns its -e child, renders
+        # NOTHING, and exits 0.
+        #
+        # And there is no log line to catch it by: the "no fonts found;
+        # drawing without glyphs" message goes through `Debug.log`, which is
+        # `if (builtin.mode == .Debug)` in src/debug.zig -- compiled out of the
+        # ReleaseFast build we ship. Grepping stderr for it, the obvious gate,
+        # is therefore VACUOUS: it can never fire in a release build. Measured,
+        # not assumed: a font-starved release velocitty prints nothing at all.
+        #
+        # So the only observable is the rendered pixels, and that is what
+        # check 4 measures -- with check 5 deliberately breaking the
+        # guarantee and asserting the measurement notices, the discipline
+        # .#p2p-selftest uses. The numbers behind the thresholds, on a
+        # 640x400 root: an empty root has 1 distinct pixel value, a
+        # font-starved velocitty 4, and a working one 166.
+        #
+        # There is also no --help and no --version, so no cheap smoke test
+        # exists: the gate has to start a real X server and a real PTY child.
+        #
+        # UNMEASURED here, deliberately named rather than implied: keyboard
+        # and XInput2 input (nothing sends a key); the `hyprctl monitors -j`
+        # scale query, which has no hyprctl here and falls back to 60 Hz; the
+        # TOML config at ~/.config/velocitty/config.toml; the kitty graphics
+        # protocol; glyph SHAPES (check 4 proves non-blank, not correct);
+        # XWayland, since this is a bare X server and not a Hyprland session;
+        # and the real-session font path, because here fc-match reads a
+        # generated fonts.conf rather than NixOS's /etc/fonts. Upstream's
+        # golden-PNG tests under tests/ are not reachable -- build.zig declares
+        # no `test` step, and upstream's own font tests open the same dead Arch
+        # paths with `catch return` -- so pixel-EXACT rasterisation is the
+        # named follow-up, not something this gate covers.
+        #
+        # Run on demand:  nix build .#velocitty-tests
+        # ════════════════════════════════════════════════════════════════════
+        velocitty-tests =
+          let
+            velocitty = self.packages.${system}.velocitty;
+            fontsConf = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
+            # Adversary build for check 6: the SAME patched source, with the
+            # font-path pins from velocitty.nix's postPatch deliberately NOT
+            # applied. If patches/0002 does its job the five font tests skip
+            # and PRINT why -- and that printed line is exactly what
+            # velocitty.nix's checkPhase greps for in order to refuse a silent
+            # skip. Building it here is what proves that grep has something to
+            # find: a check nothing can trip is not a check.
+            unpinnedSuite = pkgs.runCommand "velocitty-unpinned-suite"
+              {
+                nativeBuildInputs = [
+                  inputs.nixpkgs-zig.legacyPackages.${system}.zig_0_16
+                  pkgs.gnupatch
+                  pkgs.coreutils
+                ];
+              } ''
+              mkdir -p src-tree $out
+              cp -r --no-preserve=mode,ownership ${inputs.velocitty}/. src-tree/
+              cd src-tree
+              patch -p1 < ${./modules/terminal/patches/0001-build-add-a-test-step-so-zig-build-test-runs-the-tes.patch}
+              patch -p1 < ${./modules/terminal/patches/0002-src-font-tests-must-skip-loudly-not-pass-silently.patch}
+              export ZIG_GLOBAL_CACHE_DIR=$(mktemp -d) HOME=$TMPDIR
+              # Expected to SUCCEED with skips -- that is the point.
+              TERM=dumb zig build test --summary all -Dcpu=baseline > $out/log 2>&1 || true
+              cat $out/log
+            '';
+
+            # No font directories at all, so fc-match resolves nothing and
+            # velocitty falls all the way through to its dead FHS list.
+            starvedConf = pkgs.writeText "velocitty-starved-fonts.conf" ''
+              <?xml version="1.0"?>
+              <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+              <fontconfig><cachedir>/tmp/velocitty-gate-fc</cachedir></fontconfig>
+            '';
+          in
+          pkgs.runCommand "velocitty-tests"
+            {
+              nativeBuildInputs = [
+                velocitty
+                pkgs.xorg.xorgserver
+                pkgs.xorg.xwd
+                pkgs.fontconfig
+                pkgs.coreutils
+                pkgs.gnugrep
+              ];
+              meta = with nixpkgs.lib; {
+                description = "Assert velocitty starts, -e runs a real PTY child, and it actually draws glyphs";
+                license = licenses.mit;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out work/home work/cfg /tmp/velocitty-gate-fc
+              cd work
+              export HOME=$PWD/home
+              export XDG_CONFIG_HOME=$PWD/cfg
+
+              fail=0
+              checks=0
+              ok()  { echo "  ok   $1"; }
+              bad() { echo "  FAIL $1" >&2; fail=1; }
+
+              # Start an X server, run velocitty against it with the given
+              # fontconfig, and report how many DISTINCT pixel values the root
+              # window ends up holding. Blank window -> a handful; real glyphs
+              # -> antialiasing puts it in the hundreds.
+              draw_and_count() { # $1 label  $2 FONTCONFIG_FILE  $3 display
+                Xvfb "$3" -screen 0 640x400x24 >/dev/null 2>&1 &
+                xpid=$!
+                for _ in $(seq 1 50); do
+                  DISPLAY=$3 xwd -root >/dev/null 2>&1 && break
+                  sleep 0.2
+                done
+                # The marker path is built HERE and handed to `sh -c` as $0:
+                # interpolating it into the single-quoted inner script would
+                # leave $1 to be expanded by that inner shell, not this one.
+                marker="$PWD/$1-child-ran"
+                FONTCONFIG_FILE=$2 DISPLAY=$3 \
+                  velocitty --class gate --title gate \
+                    -e sh -c 'printf "ABCDEFGHIJ abcdefghij 0123456789\n"; touch "$0"; sleep 6' \
+                    "$marker" \
+                    > "$1.out" 2>&1 &
+                vpid=$!
+                sleep 4
+                DISPLAY=$3 xwd -root > "$1.xwd" 2>/dev/null
+                kill $vpid 2>/dev/null || true; wait $vpid 2>/dev/null || true
+                kill $xpid 2>/dev/null || true; wait $xpid 2>/dev/null || true
+                # Skip the xwd header + colormap, then count unique 4-byte pixels.
+                tail -c +3200 "$1.xwd" | od -An -tx4 -w4 -v | sort -u | wc -l
+              }
+
+              # ── 1. the loader ─────────────────────────────────────────────
+              # With no DISPLAY velocitty must fail to CONNECT, not fail to
+              # LOAD. Dynamic linking completes before the X connect, so "it
+              # got far enough to complain about X" proves libX11, libXi and
+              # the STUB-linked libxkbcommon all resolved -- and that rpath is
+              # the only thing resolving libxkbcommon, since the stub velocitty
+              # links against is never installed.
+              checks=$((checks + 1))
+              set +e
+              env -u DISPLAY -u WAYLAND_DISPLAY timeout 20 velocitty -e true >loader.out 2>&1
+              rc=$?
+              set -e
+              echo "--- no-DISPLAY run (exit $rc) ---"; cat loader.out || true
+              if [ "$rc" -eq 124 ]; then
+                bad "velocitty hung with no DISPLAY instead of failing"
+              elif grep -qi "cannot open shared object\|error while loading shared libraries" loader.out; then
+                bad "velocitty died in the dynamic loader -- the rpath is broken"
+              else
+                ok "dynamic linking resolves (failed at the X connect, not at load)"
+              fi
+
+              # ── 2. the harness itself ────────────────────────────────────
+              # Checked before check 4 so a broken harness cannot masquerade
+              # as a broken terminal.
+              checks=$((checks + 1))
+              got=$(FONTCONFIG_FILE=${fontsConf} fc-match -f '%{file}' monospace)
+              case "$got" in
+                ${pkgs.dejavu_fonts}*) ok "fc-match resolves monospace to the font this gate provides" ;;
+                *) bad "harness broken: fc-match gave '$got', not a dejavu path" ;;
+              esac
+
+              # ── 3. THE assertion: -e really spawns and runs the child ─────
+              # The exact path every rewired call site depends on -- window
+              # created, PTY allocated, command after -e exec'd. The pass
+              # condition is the SIDE-EFFECT FILE, not the exit status:
+              # main.zig runs a DebugAllocator that reports leaks at shutdown,
+              # so a non-zero exit can mean something unrelated to what is
+              # being measured.
+              checks=$((checks + 1))
+              good=$(draw_and_count good ${fontsConf} :91)
+              echo "--- good run output ---"; cat good.out || true
+              if [ -f good-child-ran ]; then
+                ok "-e spawned a real PTY child and the child ran"
+              else
+                bad "-e did not run the command: no side effect from the child"
+              fi
+
+              # ── 4. it is actually drawing glyphs ─────────────────────────
+              # Closes the silent failure: checks 1-3 are ALL satisfied by a
+              # terminal rendering an empty rectangle.
+              checks=$((checks + 1))
+              if [ "$good" -ge 32 ]; then
+                ok "velocitty drew glyphs ($good distinct pixel values)"
+              else
+                bad "velocitty drew a blank window ($good distinct pixel values, want >= 32)"
+              fi
+
+              # ── 5. and the measurement has teeth ─────────────────────────
+              # Break the guarantee on purpose and assert check 4 notices. A
+              # check that cannot fail is not a check; this is what stops
+              # check 4 quietly becoming scenery.
+              checks=$((checks + 1))
+              starved=$(draw_and_count starved ${starvedConf} :92)
+              if [ "$starved" -le 8 ]; then
+                ok "a font-starved velocitty measures blank ($starved values) -- check 4 can fail"
+              else
+                bad "font starvation still measured $starved distinct values: check 4 is vacuous"
+              fi
+
+              # ── 6. the unit suite's skip is visible, not silent ──────────
+              # velocitty.nix's checkPhase refuses a test run that SKIPPED,
+              # because a skipped font test is the vacuity patches/0002 exists
+              # to kill. This asserts that refusal has teeth: the same source,
+              # built WITHOUT the font pins, must both skip and say so.
+              checks=$((checks + 1))
+              if grep -q "SKIP: font not installed" ${unpinnedSuite}/log \
+                && grep -qE "[0-9]+ skip" ${unpinnedSuite}/log; then
+                n=$(grep -c "SKIP: font not installed" ${unpinnedSuite}/log)
+                ok "without the font pins the suite skips loudly ($n printed), so checkPhase can refuse it"
+              else
+                sed -n "1,40p" ${unpinnedSuite}/log >&2
+                bad "an unpinned build reported no skip -- velocitty.nix's skip check is vacuous"
+              fi
+
+              # ── anti-vacuity ─────────────────────────────────────────────
+              if [ "$checks" -lt 6 ]; then
+                echo "  FAIL only $checks checks ran; expected 6" >&2; fail=1
+              else
+                echo "  ok   $checks checks ran"
+              fi
+
+              [ "$fail" -eq 0 ] || { echo "velocitty-tests: FAILED" >&2; exit 1; }
+              echo "velocitty-tests: starts, -e runs its child, and draws real glyphs ($good vs $starved)" \
+                | tee $out/result
+            '';
+
+        # ════════════════════════════════════════════════════════════════════
+        # terminal-contract — custom.terminal's eval-time half.
+        #
+        # The stated contract is two-sided and only one side is obvious:
+        # velocitty becomes the SYSTEM terminal, and kitty STAYS the
+        # interactive default. The second half is the one that rots silently,
+        # because nothing breaks visibly if someone "tidies up" by pointing
+        # $terminal or TERMINAL at velocitty too -- so it is asserted here in
+        # both the on and the off state.
+        #
+        # Also asserted: that the rewired call sites actually reference the
+        # wrapper, so this gate is about THIS change and not merely about
+        # option plumbing; and that the interactive kitty declarations are
+        # still present, which is the tripwire for a blanket sed.
+        #
+        # Eval-only, but NOT input-free: computing the on-state wrapper's
+        # store path evaluates the velocitty derivation, which forces the
+        # `velocitty` and `nixpkgs-zig` inputs to be FETCHED (not built).
+        #
+        # Run on demand:  nix build .#terminal-contract
+        # ════════════════════════════════════════════════════════════════════
+        terminal-contract =
+          let
+            lib' = nixpkgs.lib;
+            base = self.nixosConfigurations.nixos;
+            with' = ms: (base.extendModules { modules = ms; }).config;
+
+            off = base.config;
+            on = with' [{ custom.terminal.velocitty.enable = true; }];
+            # configuration.nix turns the XDG layer ON, so the "disabled"
+            # comparison has to be constructed rather than taken from base.
+            xdgOff = with' [{ custom.terminal.xdg.enable = nixpkgs.lib.mkForce false; }];
+            xdgList = off.environment.etc."xdg/xdg-terminals.list".text;
+            asher = self.nixosConfigurations.nixos-asher.config;
+
+            hmOf = c: c.home-manager.users.asher;
+            desktopOf = c:
+              (hmOf c).home.file.".local/share/applications/oligarchy-update.desktop".text;
+            icewmOf = c: c.environment.etc."icewm/menu".text;
+            hasPkg = c: n: lib'.any (p: lib'.hasPrefix n (p.name or "")) c.environment.systemPackages;
+
+            ctlSrc = builtins.readFile ./home/apps/control-center/oligarchy-ctl.sh;
+            hyprSrc = builtins.readFile ./home/hyprland/default.nix;
+            waybarSrc = builtins.readFile ./home/waybar/default.nix;
+
+            payload = builtins.toJSON {
+              # ── anti-vacuity, first: the toggle must actually DO something.
+              # If a refactor makes velocitty.enable inert, every check below
+              # still passes green, so this is the one that has to fail.
+              wrapperMovesWithToggle =
+                off.custom.terminal.system.command.outPath
+                  != on.custom.terminal.system.command.outPath;
+
+              # ── (a) the off state is today, unchanged. The ISO claim.
+              offSystemIsUserTerminal =
+                off.custom.terminal.system.package.outPath
+                  == off.custom.terminal.user.package.outPath;
+              offSystemIsKitty = lib'.hasPrefix "kitty" off.custom.terminal.system.package.name;
+              offInstallsNoVelocitty = !(hasPkg off "velocitty");
+              offHasWrapper = hasPkg off "oligarchy-system-term";
+
+              # ── (b) the on state moves the SYSTEM terminal only.
+              onSystemIsVelocitty = lib'.hasPrefix "velocitty" on.custom.terminal.system.package.name;
+              onInstallsVelocitty = hasPkg on "velocitty";
+              # The user's literal requirement, in both states.
+              onUserStillKitty = lib'.hasPrefix "kitty" on.custom.terminal.user.package.name;
+              offUserStillKitty = lib'.hasPrefix "kitty" off.custom.terminal.user.package.name;
+              onTerminalEnvStillKitty = (hmOf on).home.sessionVariables.TERMINAL == "kitty";
+              offTerminalEnvStillKitty = (hmOf off).home.sessionVariables.TERMINAL == "kitty";
+
+              # ── (c) the host opt-in landed.
+              asherSystemIsVelocitty = lib'.hasPrefix "velocitty" asher.custom.terminal.system.package.name;
+              asherUserStillKitty = lib'.hasPrefix "kitty" asher.custom.terminal.user.package.name;
+
+              # ── (d) the rewires are real, in the RENDERED config.
+              updateDesktopUsesWrapper = lib'.hasInfix "oligarchy-system-term" (desktopOf on);
+              updateDesktopDropsKitty = !(lib'.hasInfix "/bin/kitty" (desktopOf on));
+              icewmRebuildUsesWrapper = lib'.hasInfix "oligarchy-system-term" (icewmOf on);
+              # The stale entry this replaced: `nixos-rebuild switch` with no
+              # --flake, which read an /etc/nixos this distro never maintained.
+              icewmDropsFlaglessRebuild = !(lib'.hasInfix "kitty -e sudo nixos-rebuild" (icewmOf on));
+              ctlHasSystemTerminal = lib'.hasInfix "visible_system" ctlSrc;
+              ctlRoutesSecuritySweeps = lib'.hasInfix "visible_system oligarchy-security status" ctlSrc;
+              hyprUpdateBindHasTerminal = lib'.hasInfix
+                "$mod SHIFT, U, exec, /run/current-system/sw/bin/oligarchy-system-term"
+                hyprSrc;
+              waybarUpdateUsesWrapper = lib'.hasInfix
+                "oligarchy-system-term --class oligarchy-update"
+                waybarSrc;
+
+              # ── (d2) the XDG layer. Anti-vacuity first: if the toggle is
+              # inert, everything below it is free.
+              xdgListMovesWithToggle =
+                (off.environment.etc ? "xdg/xdg-terminals.list")
+                  && !(xdgOff.environment.etc ? "xdg/xdg-terminals.list");
+              xdgOffInstallsNothing = !(hasPkg xdgOff "xdg-terminal-exec");
+              xdgPackageInstalled = hasPkg off "xdg-terminal-exec";
+              xdgListNamesUserTerminal =
+                lib'.head (lib'.splitString "\n" xdgList) == off.custom.terminal.user.desktopId;
+              # A desktop-scoped list OUTRANKS the default one, so leaving it
+              # unset would let a stray Hyprland list elsewhere win.
+              xdgHyprlandListAgrees =
+                off.environment.etc."xdg/hyprland-xdg-terminals.list".text == xdgList;
+              xdgListNeverNamesVelocitty =
+                !(lib'.hasInfix "velocitty" xdgList)
+                  && !(lib'.hasInfix "velocitty" (on.environment.etc."xdg/xdg-terminals.list".text));
+
+              # ── (e) tripwires. These fail if someone rewrites every kitty
+              # in the tree, which breaks the contract in the OTHER direction.
+              #
+              # Read from the RENDERED config, not by grepping the source for
+              # `"$terminal" = "kitty"`. That literal is gone now that the three
+              # declarations derive from custom.terminal.user.package, and a
+              # grep for it would have gone red for the wrong reason -- the
+              # exact failure mode this gate exists to prevent. The rendered
+              # read is also strictly stronger: it survives any refactor that
+              # keeps the value correct.
+              hyprTerminalStillKitty =
+                (hmOf on).wayland.windowManager.hyprland.settings."$terminal" == "kitty";
+              hyprTerminalStillKittyOff =
+                (hmOf off).wayland.windowManager.hyprland.settings."$terminal" == "kitty";
+              icewmTerminalStillKitty = lib'.hasInfix
+                ''prog Terminal terminal "/run/current-system/sw/bin/kitty"''
+                (icewmOf on);
+              hyprScratchpadsStillKitty = lib'.hasInfix "kitty --class scratch-term" hyprSrc;
+
+              # ── (f) read-write, so it stays off the MCP surface.
+              notInMcp = !(lib'.hasInfix "oligarchy-system-term" (builtins.readFile ./.mcp.json));
+
+              assertionCount = builtins.length on.assertions;
+            };
+            data = pkgs.writeText "terminal-contract.json" payload;
+            offDesktopId = off.custom.terminal.user.desktopId;
+            offXdgList = pkgs.writeText "xdg-terminals.list" xdgList;
+            onSystemPkg = on.custom.terminal.system.package;
+          in
+          pkgs.runCommand "terminal-contract"
+            {
+              # kitty is on PATH deliberately: kitty.desktop carries
+              # TryExec=kitty, and an entry whose TryExec does not resolve is
+              # INVALID, so without it the resolver silently falls through to
+              # the decoy and this gate would measure the harness.
+              nativeBuildInputs = [ pkgs.jq pkgs.xdg-terminal-exec pkgs.kitty pkgs.coreutils pkgs.gnugrep ];
+              meta = with nixpkgs.lib; {
+                description = "Assert velocitty is the system terminal, kitty stays the user default, the rewired call sites name the wrapper, and xdg-terminal-exec resolves kitty";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              j=${data}; cp "$j" $out/contract.json
+
+              n=$(jq -r '.assertionCount' "$j")
+              if [ "$n" -eq 0 ]; then
+                echo "terminal-contract: the enabled config declares no assertions; inspected nothing" >&2
+                exit 1
+              fi
+
+              fail=0
+              want() {
+                if [ "$(jq -r ".$1" "$j")" = true ]; then
+                  echo "PASS  $1" | tee -a $out/report.txt
+                else
+                  echo "FAIL  $1 = $(jq -c ".$1" "$j")" | tee -a $out/report.txt >&2
+                  fail=1
+                fi
+              }
+
+              # If this one fails, every check under it is meaningless.
+              want wrapperMovesWithToggle
+
+              want offSystemIsUserTerminal
+              want offSystemIsKitty
+              want offInstallsNoVelocitty
+              want offHasWrapper
+
+              want onSystemIsVelocitty
+              want onInstallsVelocitty
+              want onUserStillKitty
+              want offUserStillKitty
+              want onTerminalEnvStillKitty
+              want offTerminalEnvStillKitty
+
+              want asherSystemIsVelocitty
+              want asherUserStillKitty
+
+              want updateDesktopUsesWrapper
+              want updateDesktopDropsKitty
+              want icewmRebuildUsesWrapper
+              want icewmDropsFlaglessRebuild
+              want ctlHasSystemTerminal
+              want ctlRoutesSecuritySweeps
+              want hyprUpdateBindHasTerminal
+              want waybarUpdateUsesWrapper
+
+              want xdgListMovesWithToggle
+              want xdgOffInstallsNothing
+              want xdgPackageInstalled
+              want xdgListNamesUserTerminal
+              want xdgHyprlandListAgrees
+              want xdgListNeverNamesVelocitty
+
+              want hyprTerminalStillKitty
+              want hyprTerminalStillKittyOff
+              want icewmTerminalStillKitty
+              want hyprScratchpadsStillKitty
+
+              want notInMcp
+
+              # ── The half of the XDG contract that eval cannot see ─────────
+              # A desktop id that names nothing fails SILENTLY: the resolver
+              # just falls through to scanning every TerminalEmulator entry.
+              # So check the file is really there, in the package, rather than
+              # trusting the string. Done here and not in an assertion because
+              # builtins.pathExists on a store path is import-from-derivation.
+              kittyEntry=${pkgs.kitty}/share/applications/${offDesktopId}
+              check() {
+                if eval "$2"; then echo "PASS  $1" | tee -a $out/report.txt
+                else echo "FAIL  $1" | tee -a $out/report.txt >&2; fail=1; fi
+              }
+              check xdgIdResolvesToARealEntry 'test -f "$kittyEntry"'
+              check xdgEntryIsATerminalEmulator 'grep -q "TerminalEmulator" "$kittyEntry"'
+
+              # The --hold asymmetry, machine-checked, because it is the whole
+              # reason oligarchy-system-term cannot delegate to the spec: the
+              # resolver honours --hold only via X-TerminalArgHold=, and when
+              # the key is absent it reports that through a debug function
+              # which is a no-op unless XTE__DEBUG is set.
+              check xdgHoldWorksForUserTerminal \
+                'grep -q "X-TerminalArgHold" "$kittyEntry"'
+              check xdgHoldWouldSilentlyDropForSystem \
+                '! grep -q "X-TerminalArgHold" ${onSystemPkg}/share/velocitty/velocitty.desktop'
+
+              # ── And that the mechanism actually answers kitty ─────────────
+              # Structural checks alone are what the windscribe rule forbids,
+              # so run the real resolver. A DECOY entry sorts before kitty's,
+              # so the adversary leg below can prove the LIST decided it and
+              # not alphabetical luck -- which is exactly how kitty was
+              # "winning" before this layer existed.
+              mkdir -p xdg/applications xdg/etc
+              cp "$kittyEntry" xdg/applications/
+              cat > xdg/applications/aaa-decoy.desktop <<'EOF'
+              [Desktop Entry]
+              Type=Application
+              Name=Decoy
+              Exec=false
+              Categories=System;TerminalEmulator;
+              X-TerminalArgExec=-e
+              EOF
+              sed -i 's/^              //' xdg/applications/aaa-decoy.desktop
+              cp ${offXdgList} xdg/etc/xdg-terminals.list
+
+              export XDG_DATA_HOME=$PWD/xdg XDG_DATA_DIRS=$PWD/xdg
+              export XDG_CONFIG_HOME=$PWD/empty XDG_CONFIG_DIRS=$PWD/xdg/etc
+              export HOME=$PWD/home XDG_CACHE_HOME=$PWD/cache
+              mkdir -p "$HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME"
+
+              got=$(xdg-terminal-exec --print-id || true)
+              if [ "$got" = "${offDesktopId}" ]; then
+                echo "PASS  xdgResolverAnswersUserTerminal ($got)" | tee -a $out/report.txt
+              else
+                echo "FAIL  xdgResolverAnswersUserTerminal: got '$got'" | tee -a $out/report.txt >&2
+                fail=1
+              fi
+
+              # Adversary leg: take the list away and the decoy must win. If
+              # this does NOT change the answer, the check above was measuring
+              # alphabetical order, not the registration.
+              rm -rf "$XDG_CACHE_HOME" xdg/etc/xdg-terminals.list; mkdir -p "$XDG_CACHE_HOME"
+              got2=$(xdg-terminal-exec --print-id || true)
+              if [ "$got2" != "${offDesktopId}" ]; then
+                echo "PASS  xdgResolverWithoutTheListPicksSomethingElse ($got2)" | tee -a $out/report.txt
+              else
+                echo "FAIL  xdgResolverWithoutTheListPicksSomethingElse: still '$got2' -- the list is not what decided it" \
+                  | tee -a $out/report.txt >&2
+                fail=1
+              fi
+
+              [ "$fail" -eq 0 ] || { echo "terminal-contract: FAILED" >&2; exit 1; }
+              echo "terminal-contract: velocitty is the system terminal; kitty is still the user default" \
+                | tee $out/result
+            '';
 
         iso = nixos-generators.nixosGenerate {
           inherit system;

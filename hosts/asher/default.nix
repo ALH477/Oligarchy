@@ -137,6 +137,15 @@ in
   custom.terminus-dev.enable = true;
   custom.vm.dsp.enable = true;
 
+  # The system/admin terminal -- the window a GUI-launched
+  # `sudo nixos-rebuild switch` draws in, plus the security sweeps and the
+  # repo update checks. kitty stays the interactive default everywhere:
+  # $mod+Return, the scratchpads, TERMINAL and Hyprland's $terminal are all
+  # untouched, and .#terminal-contract asserts they stay that way.
+  # Velocitty is an X11 client, so these windows go through XWayland.
+  # See modules/terminal/README.md.
+  custom.terminal.velocitty.enable = true;
+
   # Window restore ONLY. autoLogin is deliberately OFF: it sets greetd's
   # initial_session, which skips tuigreet entirely and lands the boot on
   # hyprlock instead of the greeter (modules/session-resume.nix:178, and

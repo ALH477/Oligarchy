@@ -98,6 +98,17 @@ let
   # `osConfig` itself is `{ }` when home.nix is evaluated standalone.
   session = osConfig.custom.session or { };
 
+  # The interactive terminal's NAME, from the one option that declares it
+  # (custom.terminal.user.package, modules/terminal/). The name and not
+  # `lib.getExe`: a store path here would pin a specific generation into every
+  # child environment and would point at a garbage-collected path after a
+  # switch the session has not picked up.
+  #
+  # `or "kitty"` because osConfig is { } when this evaluates standalone via
+  # home/flake.nix -- the same fallback custom.platform / custom.session /
+  # custom.vpn already use at every hop.
+  userTerminal = osConfig.custom.terminal.user.package.meta.mainProgram or "kitty";
+
   # custom.vpn (modules/vpn.nix). Same `or` discipline as `session` above --
   # osConfig is `{ }` when home.nix is evaluated standalone, and the NixOS
   # module declaring this option is absent on a fresh clone.
@@ -403,7 +414,7 @@ in
 
       # Variable definitions
       "$mod" = "SUPER";
-      "$terminal" = "kitty";
+      "$terminal" = userTerminal;
       "$menu" = "wofi --show drun -I";
       "$browser" = "brave";
 
@@ -588,8 +599,12 @@ in
         "$mod, period, exec, audio-dev next sink"
         "$mod SHIFT, period, exec, audio-dev next source"
         # Quick-access system commands
-        "$mod SHIFT, U, exec, oligarchy-update"
-        "$mod CTRL, S, exec, oligarchy-security status"
+        # Both of these used to `exec` bare, with no terminal: the guided
+        # rebuild had nowhere to draw and no tty to take the sudo password
+        # on, and the security sweep printed into the void. They are admin
+        # actions, so they go through the system terminal, not $terminal.
+        "$mod SHIFT, U, exec, /run/current-system/sw/bin/oligarchy-system-term --class oligarchy-update --hold -- oligarchy-update"
+        "$mod CTRL, S, exec, /run/current-system/sw/bin/oligarchy-system-term --class oligarchy-security --hold -- oligarchy-security status"
       ];
 
       # Volume/Brightness (with waybar reload)

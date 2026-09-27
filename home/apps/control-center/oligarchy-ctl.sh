@@ -34,6 +34,13 @@ HOST="${OLIGARCHY_HOST:-nixos}"
 LOCAL_FILE="${OLIGARCHY_STATE_NIX:-$HOME/.config/oligarchy/state.nix}"
 STATE="$HOME/.config/oligarchy/state.json"
 TERM_CMD="${TERMINAL:-kitty}"
+# The SYSTEM terminal (custom.terminal.system, modules/terminal/). Admin
+# actions -- the security sweeps, the repo update checks -- pop this one
+# instead of $TERMINAL, and it carries its own --hold so the press-any-key
+# pause stops being open-coded at each call site. The ABSOLUTE path is
+# deliberate: this script is also driven by modules/hypr-controller's
+# hypr_bridge.py, a daemon with neither $TERMINAL nor a login PATH.
+SYS_TERM="${OLIGARCHY_SYSTEM_TERM:-/run/current-system/sw/bin/oligarchy-system-term}"
 
 mkdir -p "$(dirname "$STATE")"
 [ -f "$STATE" ] || echo '{}' > "$STATE"
@@ -54,6 +61,20 @@ visible() {
 
 # Open a long-running interactive command in its own terminal.
 in_term() { setsid -f "$TERM_CMD" -e "$@" >/dev/null 2>&1; }
+
+# visible(), but in the SYSTEM terminal. Falls back to visible() when the
+# wrapper is not on disk -- running this script straight out of a checkout,
+# before the generation that installs it has been switched to, must not
+# silently open nothing.
+visible_system() {
+  if [ -t 1 ]; then
+    "$@"; echo; read -rn1 -p "— done, press any key —"; echo
+  elif [ -x "$SYS_TERM" ]; then
+    setsid -f "$SYS_TERM" --class oligarchy-system --hold -- "$@" >/dev/null 2>&1
+  else
+    visible "$@"
+  fi
+}
 
 status() {
   echo "Kernel : $(uname -r)"
@@ -397,13 +418,13 @@ run() {
     vpn-status)     if command -v oligarchy-vpn >/dev/null 2>&1; then visible oligarchy-vpn status
                     else note "custom.vpn is not enabled on this host"; fi ;;
 
-    sec-status)         visible oligarchy-security status ;;
-    sec-scan-quick)     visible oligarchy-security scan quick ;;
-    sec-scan-full)      visible oligarchy-security scan full ;;
-    sec-egress)         visible oligarchy-security egress status ;;
-    sec-egress-resolve) visible oligarchy-security egress resolve ;;
-    sec-events)         visible oligarchy-security events ;;
-    sec-quarantine)     visible oligarchy-security quarantine list ;;
+    sec-status)         visible_system oligarchy-security status ;;
+    sec-scan-quick)     visible_system oligarchy-security scan quick ;;
+    sec-scan-full)      visible_system oligarchy-security scan full ;;
+    sec-egress)         visible_system oligarchy-security egress status ;;
+    sec-egress-resolve) visible_system oligarchy-security egress resolve ;;
+    sec-events)         visible_system oligarchy-security events ;;
+    sec-quarantine)     visible_system oligarchy-security quarantine list ;;
 
     power-perf)     powerprofilesctl set performance && note "Power → performance" ;;
     power-balanced) powerprofilesctl set balanced && note "Power → balanced" ;;
@@ -419,8 +440,8 @@ run() {
     gpu-intel)      set_local gpu intel ;;
     gpu-optimus)    set_local gpu nvidia-optimus ;;
     rebuild-cmd)    rebuild_cmd_copy ;;
-    repo-check)     visible repo-update-check ;;
-    repo-pull)      visible git -C "$FLAKE_DIR" pull --ff-only ;;
+    repo-check)     visible_system repo-update-check ;;
+    repo-pull)      visible_system git -C "$FLAKE_DIR" pull --ff-only ;;
 
     dsp-bench)       visible dsp-bench ;;
     persona-menu)    persona_menu ;;

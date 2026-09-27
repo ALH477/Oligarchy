@@ -479,6 +479,7 @@ in
           "(.*) - Brave" = "󰖟 $1";
           "(.*) - Visual Studio Code" = "󰨞 $1";
           "(.*)kitty" = " Terminal";
+          "(.*)velocitty" = " Terminal";
           "" = " Desktop";
         };
       };
@@ -651,7 +652,7 @@ in
         return-type = "json";
         interval = 300;
         tooltip = true;
-        on-click = "kitty --class floating-term -e bash -c 'repo-update-check --log; echo; read -n1 -p \"press any key\"'";
+        on-click = "/run/current-system/sw/bin/oligarchy-system-term --class oligarchy-update --hold -- repo-update-check --log";
       };
 
       "custom/dsp" = {

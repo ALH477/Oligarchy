@@ -27,6 +27,17 @@ let
   # local override outside the repo restores the real setup on the
   # maintainer's own machine (see configuration.nix's local-override import).
   desktopFeatures = osConfig.custom.desktopFeatures or { };
+
+  # The interactive terminal's NAME, from the one option that declares it
+  # (custom.terminal.user.package, modules/terminal/). The name and not
+  # `lib.getExe`: a store path here would pin a specific generation into every
+  # child environment and would point at a garbage-collected path after a
+  # switch the session has not picked up.
+  #
+  # `or "kitty"` because osConfig is { } when this evaluates standalone via
+  # home/flake.nix -- the same fallback custom.platform / custom.session /
+  # custom.vpn already use at every hop.
+  userTerminal = osConfig.custom.terminal.user.package.meta.mainProgram or "kitty";
   features = {
     hasBattery = true;
     hasTouchpad = true;
@@ -42,7 +53,8 @@ let
     sessionType = "wayland";
     x11Wm = "icewm";
   };
-in {
+in
+{
   # ── Module wiring ──────────────────────────────────────────────────────────
   # This is what makes the modular tree LIVE. Before this, home.nix imported
   # nothing and the entire packages/hyprland/waybar/apps/scripts tree was
@@ -78,7 +90,7 @@ in {
     sessionVariables = {
       EDITOR = "nvim";
       BROWSER = "brave";
-      TERMINAL = "kitty";
+      TERMINAL = userTerminal;
       # Default agent command for oligarchy-ctl's "Launch coding agent" menu
       # entry (oligarchy-forge run -- $OLIGARCHY_FORGE_AGENT). Override here
       # rather than in the script, e.g. to "aider" or "omp".
