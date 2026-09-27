@@ -225,6 +225,21 @@ in
       uuid = "a82fcfcf-e913-413e-ab4f-4a3b104b2de0";
       fsType = "btrfs";
       where = "/mnt/data";
+      # gvfs hides every filesystem listed in /etc/fstab from its volume
+      # monitor unless the mount options say otherwise, so this drive was
+      # mounted, readable and completely absent from Thunar's sidebar --
+      # indistinguishable, from the desktop, from a disk that never came up.
+      # `x-gvfs-show` is the documented opt-back-in. It is a USERSPACE mount
+      # option: mount(8) strips the `x-` prefix set rather than handing it to
+      # the kernel, so btrfs never sees it and nothing here depends on it.
+      #
+      # Ownership of the mountpoint is deliberately NOT set from here. It is
+      # filesystem state on the btrfs top level, so one chown outlives every
+      # reboot and every rebuild, and modules/mounts.nix explains why the
+      # tmpfiles rule leaves mode/owner as `-`: `nofail` is unconditional, so
+      # systemd-tmpfiles is not ordered after this mount and would chown the
+      # empty mountpoint underneath it instead -- a silent no-op.
+      extraOptions = [ "x-gvfs-show" ];
       swapfile = {
         enable = true;
         sizeGB = 32;
