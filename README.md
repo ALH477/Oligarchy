@@ -35,7 +35,7 @@ Elsewhere in the Linux-desktop duchies, the fashionable move was to hand-transla
 
 Unaffected. Quite.
 
-We wrote ours **once**, in a language where the assembly is an *output* and `--hospes` is mandatory, and let the compiler decide which instruction set the peasants receive. Two builds, one source, and a standing rule that they render **the same bytes**. The reference build clears all seventeen of exsecutor's conformance fixtures on the pinned revision: eleven golden frames matched byte for byte, and six malformed requests it exists to refuse. [The full indictment ↓](#screensavers--nine-somnia-compiled-rather-than-written)
+We wrote ours **once**, in a language where the assembly is an *output* and `--hospes` is mandatory, and let the compiler decide which instruction set the peasants receive. Two builds, one source, and **the same bytes** out of both — measured, not asserted: `nix build .#screensaver-tests` holds each build to exsecutor's golden frames and makes each one refuse the same six malformed requests. The slow one, the libc-free build that writes a byte per syscall, still outruns the frame rate it is asked for. [The full indictment ↓](#screensavers--nine-somnia-compiled-rather-than-written)
 
 <img width="2560" height="1600" alt="Screenshot_20260118_231927" src="https://github.com/user-attachments/assets/8f0bfabe-70b0-4475-9e12-6490c12fcedc" />
 
@@ -286,7 +286,7 @@ pattern: reference
 And the two builds are not permitted to drift. `backend`, in `modules/screensaver/default.nix`, picks between them. `backend = "c"` is exsc's C backend, compiled `-march=x86-64-v3` with contraction pinned off so an FMA-capable target cannot change a float effect's bits. `backend = "reference"` is the freestanding fasmg build — no libc, one `write(2)` per byte, 48,000 syscalls a frame, gloriously slow, and the build Exsecutor's purity claims are actually about. They must render **the same bytes**.
 <!-- truth:end -->
 
-That is not a slogan. Against Exsecutor's own conformance corpus, the reference build renders **11 golden frames byte-identical** — plasma, fire, Life, rain, stars, tunnel, the f64 Mandelbrot, the title card and the 3D logo among them — and **refuses all 6 malformed requests** with exit 1 and zero bytes written. Seventeen fixtures, seventeen passes, on the revision pinned above.
+That is not a slogan, and it is not a promise — it is a passing gate. Against Exsecutor's own conformance corpus, **both** builds render every effect fixture byte-identical to the goldens — plasma, fire, Life, rain, stars, tunnel, the `f64` Mandelbrot, the title card and the 3D logo — and **both** refuse every malformed request with exit 1 and zero bytes written. The C build clears 4,285 fps on the title card; the freestanding one, writing a single byte per system call, manages 40, and 21 on the 3D logo. Both of those beat the 20 fps the screensaver actually asks for, which means the purist build is not a museum piece.
 
 ### The nine somnia
 

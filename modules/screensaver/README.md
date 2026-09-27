@@ -166,7 +166,35 @@ exists for the layer the gate explicitly cannot reach — the compositor, the
 window rules, and hypridle itself. It is not reproducible in CI and does not
 substitute for one.
 
-What still has **not** run: the `c` backend build, `mpv` under the gate's
-`--vo=null` harness, and `.#screensaver-tests` itself. That gate remains the
-first *reproducible* measurement of the pipeline, and the only thing that
-tests the two backends against each other, which the run above does not.
+**`.#screensaver-tests` has now run, and passes.** That is the reproducible
+measurement this document was waiting for. Both builds -- the freestanding
+reference and the C backend -- render every effect fixture byte-identical to
+exsecutor's goldens and refuse every bad request; the bash request encoder
+matches exsecutor's fixture requests; and the real pipeline through the real
+`mpv` reports `160x100 rgb24` and exits when the viewer does, on both the
+plain and the 3D-model paths.
+
+Its frames-per-second report, on a Framework 16 (Ryzen 7040), 60 frames per
+effect:
+
+| somnium | `reference` | `c` |
+|---|---|---|
+| `plasma` | 40 fps | 2857 fps |
+| `ignis` | 40 fps | 4285 fps |
+| `vita` | 39 fps | 3157 fps |
+| `pluvia` | 40 fps | 3750 fps |
+| `stellae` | 40 fps | 4285 fps |
+| `cuniculus` | 39 fps | 3750 fps |
+| `abyssus` | 23 fps | 384 fps |
+| `titulus` | 40 fps | 4285 fps |
+| `signum` | 21 fps | 147 fps |
+
+Two things to read off that. The C backend is roughly two orders of magnitude
+faster, which is what `backend = "c"` is the default for. And the reference
+build still clears the default `fps = 20` on every effect -- its worst case,
+`signum` at 21 fps, is the 3D engine rendering 512x512 per frame through one
+`write(2)` per byte. The freestanding build is a viable screensaver, not only
+a proof.
+
+What still has **not** run: anything involving a compositor or a GPU -- see
+the gate's own list above.
