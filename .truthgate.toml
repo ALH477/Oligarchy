@@ -37,5 +37,5 @@ require_bound_fences = true
 # only the real paths near the bottom are claimed.
 [[docs]]
 path = "README.md"
-required_headings = ["Building – Forge Your Empire", "Maintenance"]
+required_headings = ["Building – Forge Your Empire", "Maintenance", "Screensavers — Nine Somnia, Compiled Rather Than Written"]
 require_bound_fences = false

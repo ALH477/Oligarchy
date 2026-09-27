@@ -211,12 +211,112 @@ Volume/brightness keys show a **swayosd** on-screen display; the waybar carries 
 
 ## Idle Management – Power Discipline
 
-| Timeout | Action                     |
-|---------|----------------------------|
-| 5 min   | Dim screen to 10%          |
-| 10 min  | Lock screen                |
-| 11 min  | Turn off display           |
-| 30 min  | Suspend system             |
+| Timeout | Action                                             |
+|---------|----------------------------------------------------|
+| 5 min   | Dim screen to 10%                                  |
+| 7 min   | Screensaver (`custom.screensaver`, opt-in — below) |
+| 10 min  | Lock screen                                        |
+| 11 min  | Turn off display; stop the screensaver             |
+| 30 min  | Suspend system                                     |
+
+## Screensavers — Nine Somnia, Compiled Rather Than Written
+
+![all nine somnia at once: the title card, the logo, digital rain, the warp starfield, the XOR tunnel, the Mandelbrot zoom, plasma, fire, and Conway's Life](./assets/screensaver-somnia.gif)
+
+<!-- truth:claim
+id: screensaver-module
+kind: file_exists
+path: modules/screensaver/default.nix
+-->
+`custom.screensaver` (`modules/screensaver/default.nix`) is opt-in and **off by default**. Enabled, it hangs off a hypridle listener at seven minutes — three minutes ahead of the locker, because hyprlock is an `ext-session-lock` surface that covers everything, so a screensaver that starts *after* the lock is just a space heater with opinions. Full design: [`modules/screensaver/README.md`](modules/screensaver/README.md).
+<!-- truth:end -->
+
+<!-- truth:claim
+id: screensaver-engine-pin
+kind: json_pointer
+path: flake.lock
+pointer: /nodes/exsecutor/locked/rev
+equals: d581c64a1dacb3e22e9f4de9768a4043793905d8
+-->
+The engine is **`somnium`**, written in [Exsecutor](https://github.com/ALH477/exsecutor) — the capability-typed systems language whose own compiler is a freestanding x86-64 binary with no libc and a closed allowlist of nine syscalls. Every GIF on this page was rendered by the exact revision `flake.lock` pins, `d581c64`, and nothing else touched the pixels.
+<!-- truth:end -->
+
+The engine has **no clock and no entropy**. Time is the frame index. Randomness is one 32-bit seed the host hands it on stdin. The screen differs night to night because the host picks a fresh seed — but the same request renders the same bytes until the heat death of the Framework 16.
+
+### Concerning Omarchy's screensaver
+
+Basecamp's Omarchy has a screensaver too, and credit where it is owed: its engine `ttfx` was ported from Rust to **x86-64 assembler**, a one-shot machine translation its author measured at up to 17× faster. That is a real win, honestly taken, and the port is held byte-for-byte against the Rust engine it replaced. We are not here to pretend otherwise.
+
+We are here to read the packaging.
+
+`makedepends_x86_64=('nasm')`. Without NASM the build *falls back to the Rust engine and only prints a warning* — and, in the maintainer's own words, **"aarch64 is unaffected."** Unaffected. The 17× is an x86-64 amenity. Everywhere else the screensaver is still the program the assembly was written to replace, and the only thing the second architecture inherited was the warning.
+
+So Omarchy keeps **two engines** and the discipline to hold them level. That is genuine engineering, and it is also a standing tax: two implementations of the same behaviour must be kept in agreement forever, and only one of them is fast, and it is fast in exactly one instruction set.
+
+Oligarchy's engine was never written in an instruction set to begin with.
+
+`somnium` is **one `.exsc` source**. The x86-64 assembly is an *output*. So is the C. Exsecutor's `--hospes` is **mandatory** — there is no default-to-build-platform, by specification — and the compiler already emits `mips64-none-o64`: big-endian MIPS-III with 32-bit addresses, cross-compiled and run under emulation, which is how a language demonstrates that its emitted text assumes nothing whatsoever about byte order. When your screensaver is a rewrite, a second architecture is a second rewrite. When your screensaver is a compilation, a second architecture is a **flag**.
+
+One source. Two builds. Zero implementations to keep in sync.
+
+<!-- truth:claim
+id: screensaver-two-backends
+kind: file_contains
+path: modules/screensaver/default.nix
+pattern: reference
+-->
+And the two builds are not permitted to drift. `backend`, in `modules/screensaver/default.nix`, picks between them. `backend = "c"` is exsc's C backend, compiled `-march=x86-64-v3` with contraction pinned off so an FMA-capable target cannot change a float effect's bits. `backend = "reference"` is the freestanding fasmg build — no libc, one `write(2)` per byte, 48,000 syscalls a frame, gloriously slow, and the build Exsecutor's purity claims are actually about. They must render **the same bytes**.
+<!-- truth:end -->
+
+That is not a slogan. Against Exsecutor's own conformance corpus, the reference build renders **11 golden frames byte-identical** — plasma, fire, Life, rain, stars, tunnel, the f64 Mandelbrot, the title card and the 3D logo among them — and **refuses all 6 malformed requests** with exit 1 and zero bytes written. Seventeen fixtures, seventeen passes, on the revision pinned above.
+
+### The nine somnia
+
+![titulus: digital rain flies together into OLIGARCHY, then the two Latin inscriptions type in beneath](./assets/screensaver-titulus.gif) ![signum: the Exsecutor logo turning in a starfield, rendered by Exsecutor's own 3D engine](./assets/screensaver-signum.gif)
+
+<!-- truth:claim
+id: screensaver-gifs
+kind: glob_count
+glob: assets/screensaver-*.gif
+min: 3
+-->
+Every animation on this page is real `somnium` output — `assets/screensaver-*.gif`, rendered at the engine's native 160×100 and scaled up nearest-neighbour, exactly as `pixelated = true` presents it on the panel. Nothing here was drawn by hand, mocked up, or re-recorded off a screen.
+<!-- truth:end -->
+
+| name | what it does |
+|---|---|
+| `titulus` | the title card — rain flies together into **OLIGARCHY**, then *EXSECVTOR PINXIT* ("Exsecutor painted it") and *PVNCTIM CECINIT* ("Punctim sang it") type in beneath |
+| `signum` | the Exsecutor sigil turning in the starfield, drawn by **Exsecutor's own 3D engine**, 512×512 per frame, unmodified |
+| `pluvia` | digital rain, glyphs and all |
+| `stellae` | warp starfield |
+| `cuniculus` | the demoscene XOR tunnel, in the sigil's crimson and navy |
+| `abyssus` | Mandelbrot deep zoom into the Seahorse Valley, `f64` |
+| `plasma` | four summed sine waves through a three-phase palette |
+| `ignis` | heat-diffusion fire |
+| `vita` | Conway's Life, coloured by age, with fading trails |
+
+The default order is deliberate: the rain resolves into the title, and the stars lead into the sigil.
+
+```nix
+custom.screensaver = {
+  enable = true;
+  # somnia = [ "titulus" "signum" ];   # the Oligarchy/Exsecutor pair alone
+  # period = 45;                       # seconds per effect when cycling
+  # timeout = 420;                     # idle seconds; must beat the 600 s lock
+  # backend = "c";                     # "c" (fast) or "reference" (freestanding)
+};
+```
+
+<!-- truth:claim
+id: screensaver-gate
+kind: file_contains
+path: flake.nix
+pattern: screensaver-tests
+-->
+`nix build .#screensaver-tests` — declared in `flake.nix` — is the gate, and it runs what the subsystem actually **does**: both builds against every golden frame and every bad request, the bash request encoder byte-compared to exsecutor's own fixtures, and the real pipeline through the real `mpv` — which must report `160x100 rgb24` and must *exit* when the viewer does. It reports frames per second per effect as a measurement, not an assertion.
+<!-- truth:end -->
+
+**What the gate does not measure, stated plainly:** anything a compositor or a GPU does — the window rules, which monitor takes the fullscreen surface, mpv's scaling, and hypridle actually firing the listener. Those need a live Hyprland session. And while Exsecutor emits `mips64-none-o64` and proves big-endian execution on its own corpus, *this tree* builds `somnium` for x86-64 only; a big-endian screensaver is a claim the compiler earns, not one Oligarchy has measured.
 
 ## Why Oligarchy NixOS is Optimized and Supreme
 

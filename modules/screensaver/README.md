@@ -143,6 +143,22 @@ This module and the exsecutor side were written in an environment with no
   - the C host was exercised with a stand-in program: one `write(2)` per
     frame, SIGPIPE on close.
 
-What has **not** run: `nix build` of anything here, either somnium binary,
-mpv on this stream, the gate. `.#screensaver-tests` is the first real
-measurement.
+Since then, the **reference build has been built and run** (for the README
+animations, `assets/screensaver-*.gif`):
+
+- `nix build github:ALH477/exsecutor/<the rev in flake.lock>#somnium` succeeds,
+  producing the freestanding binary and `share/somnium/signaculum_mesh.bin`.
+- Driven straight over stdin with the 17-byte request this module's
+  `script.nix` encodes, it renders all nine somnia. All **17** of exsecutor's
+  `tests/programs/somnium_*` fixtures pass against that binary: 11 render
+  `expected.out` byte-identical (including `abyssus`'s `f64` zoom and the
+  `signum` model path), and 6 malformed requests are refused with exit 1 and
+  zero bytes.
+
+So the engine is no longer `[UNTESTED]`: it compiles, it runs, and it agrees
+with the oracle that wrote the goldens.
+
+What still has **not** run: the `c` backend build, `mpv` on this stream, and
+the gate itself. `.#screensaver-tests` remains the first measurement of the
+*pipeline* — and of the two backends agreeing with each other, which the run
+above does not test.
