@@ -922,15 +922,16 @@ tree-wide.
 | `docs/secure-boot-enrollment.md` | secure-boot enrollment procedure |
 | `docs/dcf-mesh-agent.md` | DCF mesh agent design |
 | `docs/vpn-windscribe.md` | Windscribe setup, the Discord/Steam egress story, and the DNS tie-break |
+| `docs/exsecutor-kernel-roadmap.md` | the Exsecutor/ring-0 agent-sandbox assessment and its dependency-ordered roadmap |
 | `README.md` | the in-character satire (technical tables near the bottom are the source of truth) |
 
 <!-- truth:claim
 id: docs-count
 kind: glob_count
 glob: docs/*.md
-min: 13
+min: 14
 -->
-`docs/` holds **at least** thirteen Markdown files, which is what the gate
+`docs/` holds **at least** fourteen Markdown files, which is what the gate
 checks: a floor, not an exact count, so adding a document never fails the
 build and deleting one below the floor does. Raise the floor when you add a
 doc that this table should never lose.
