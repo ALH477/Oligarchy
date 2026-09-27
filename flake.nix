@@ -216,7 +216,16 @@
     # no help either — it is on 0.11.6. Forcing a follow fails eval outright.
     # The nixosModule resolves the package from nnnvim's OWN nixpkgs, so this
     # costs one extra nixpkgs eval and nothing else.
-    nnnvim.url = "github:ALH477/nnnvim";
+    #
+    # The BRANCH is load-bearing. nnnvim's default branch is `master`, which
+    # carries the Neovim config and no `flake.nix`; the packaging lives on
+    # `nix-flake`. A bare `github:ALH477/nnnvim` therefore resolves to a
+    # revision with no flake in it and fails with `path '...flake.nix' does not
+    # exist` — and because that is an input-resolution failure, it takes out
+    # EVERY flake command in this repo, `nix flake show`, `nix flake lock` and
+    # the whole eval lane included, not just the editor. Drop the ref only once
+    # the packaging is on the default branch.
+    nnnvim.url = "github:ALH477/nnnvim/nix-flake";
 
     # Community YARA ruleset — pinned so the Malware Shield build gate
     # (packages.malwareScan) scans the closure with deterministic, offline
