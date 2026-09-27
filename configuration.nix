@@ -1657,31 +1657,24 @@
       };
 
       # ──────────────────────────────────────────────────────────────────────────
-      # System Maintenance (unchanged)
+      # System Maintenance
       # ──────────────────────────────────────────────────────────────────────────
-      systemd.timers.nix-gc-generations = {
-        wantedBy = [ "timers.target" ];
-        timerConfig = {
-          OnCalendar = "weekly";
-          Persistent = true;
-        };
-      };
-      systemd.services.nix-gc-generations = {
-        script = ''
-          generations_to_delete=$(${pkgs.nix}/bin/nix-env -p /nix/var/nix/profiles/system --list-generations | \
-            ${pkgs.gawk}/bin/awk '{print $1}' | \
-            ${pkgs.coreutils}/bin/head -n -5 | \
-            ${pkgs.coreutils}/bin/tr '\n' ' ')
-
-          if [ -n "$generations_to_delete" ]
-          then
-            ${pkgs.nix}/bin/nix-env -p /nix/var/nix/profiles/system --delete-generations $generations_to_delete
-          fi
-
-          ${pkgs.nix}/bin/nix-collect-garbage
-        '';
-        serviceConfig.Type = "oneshot";
-      };
+      # The weekly `nix-gc-generations` timer that used to live here is gone;
+      # `custom.gc` (modules/gc.nix) replaces it and does strictly more.
+      #
+      # It is worth recording WHY, because the old one looked fine and ran for
+      # months on a machine that still reached 94% disk. It pruned
+      # /nix/var/nix/profiles/system to the last 5 generations and then ran
+      # nix-collect-garbage — and neither half could touch what was actually
+      # holding the store. User profiles were never named, so
+      # ~/.local/state/nix/profiles grew without bound (eleven generations
+      # live). And 122 gcroots were live, 49 of them stray `result*` symlinks
+      # in project directories: a gcroot PINS its closure, so collecting more
+      # often reclaimed nothing. It was also unconditional — no `enable`, no
+      # `mkIf` — with no dry-run and no gate.
+      #
+      # custom.gc is opt-in, defaults to dryRun, and is gated by
+      # `.#gc-contract` and `.#test-gc`.
 
       # ──────────────────────────────────────────────────────────────────────────
       # System Packages (removed legacy audio tools)

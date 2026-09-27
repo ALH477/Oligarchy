@@ -1314,8 +1314,107 @@ let
       print("captive-vm: signed reference -> verity guest -> VT viewer -> login -> discard verified")
     '';
   };
+  # ── custom.gc: it deletes what it promised, and spares everything else ─────
+  # The deletion leg, which .#gc-contract deliberately does not cover. An
+  # eval-only gate over a deleter is the windscribe-app failure mode: eight
+  # green structural assertions over a subsystem that did not work. So this
+  # plants real files and asserts BOTH directions — the things that must go
+  # are gone, and every protected thing is still there afterwards.
+  #
+  # The Nix-side collectors (generations, nix-collect-garbage) are OFF here,
+  # deliberately: a test VM's store is the host's, so exercising them would
+  # prove nothing about this module and could only do harm. What is measured
+  # is the part this module actually decides — which paths are in scope.
+  gc = pkgs.testers.runNixOSTest {
+    name = "gc";
+
+    nodes.machine = { ... }: {
+      imports = [ ../modules/gc.nix ];
+      environment.systemPackages = [ pkgs.jq ];
+      custom.gc = {
+        enable = true;
+        dryRun = true; # flipped mid-test through the config the CLI reads
+        roots = [ "/srv/work" ];
+        extraDeny = [ "/srv/work/keep" ];
+        workspace = { enable = true; patterns = [ "target" ]; minAgeDays = 30; };
+        nix.roots = { enable = true; minAgeDays = 30; };
+        nix.generations.enable = false;
+        nix.collectGarbage = false;
+      };
+    };
+
+    testScript = ''
+      machine.wait_for_unit("multi-user.target")
+
+      # ── the fixture ────────────────────────────────────────────────────────
+      # aged + inside a root + not denied -> must be collected
+      # everything else                   -> must survive
+      machine.succeed("mkdir -p /srv/work/proj/target /srv/work/keep/target /srv/outside/target")
+      for d in ["/srv/work/proj", "/srv/work/keep", "/srv/outside"]:
+          machine.succeed(f"dd if=/dev/zero of={d}/target/blob bs=1M count=4")
+      for l in ["/srv/work/proj/result", "/srv/work/proj/result-fresh",
+                "/srv/work/keep/result", "/srv/outside/result"]:
+          machine.succeed(f"ln -s /run/current-system {l}")
+      for p in ["/srv/work/proj/target", "/srv/work/keep/target", "/srv/outside/target"]:
+          machine.succeed(f"touch -d '90 days ago' {p}")
+      # -h, or touch follows the link into the read-only store and fails.
+      for p in ["/srv/work/proj/result", "/srv/work/keep/result", "/srv/outside/result"]:
+          machine.succeed(f"touch -h -d '90 days ago' {p}")
+
+      collected = ["/srv/work/proj/target", "/srv/work/proj/result"]
+      protected = [
+          "/srv/work/proj/result-fresh",  # newer than minAgeDays
+          "/srv/work/keep/target",        # inside extraDeny
+          "/srv/work/keep/result",        # inside extraDeny
+          "/srv/outside/target",          # outside every declared root
+          "/srv/outside/result",          # outside every declared root
+      ]
+      exists = lambda p: f"test -e {p} || test -L {p}"
+
+      with subtest("status reports DRY-RUN"):
+          machine.succeed("oligarchy-gc status | grep -q 'Mode.*: DRY-RUN'")
+
+      with subtest("the plan names the collectable paths and no others"):
+          plan = machine.succeed("oligarchy-gc plan 2>/dev/null")
+          for p in collected:
+              assert p in plan, f"plan omitted {p}"
+          for p in protected:
+              assert p not in plan, f"plan wrongly included protected {p}"
+
+      with subtest("planning deletes nothing"):
+          for p in collected + protected:
+              machine.succeed(exists(p))
+
+      with subtest("run refuses while dryRun is true"):
+          machine.fail("oligarchy-gc run")
+          for p in collected:
+              machine.succeed(exists(p))
+
+      # Flip dryRun in the config the CLI reads rather than rebuilding the VM;
+      # the refusal above already proved the option is load-bearing. The path
+      # is the compiled-in default of $OLIGARCHY_GC_CONF.
+      with subtest("with dryRun off it collects exactly what it planned"):
+          conf = machine.succeed(
+              "grep -oE '/nix/store/[a-z0-9]+-oligarchy-gc\\.json' "
+              "$(readlink -f $(command -v oligarchy-gc)) | head -1"
+          ).strip()
+          machine.succeed(f"jq '.dryRun = false' {conf} > /tmp/gc-run.json")
+          machine.succeed("OLIGARCHY_GC_CONF=/tmp/gc-run.json oligarchy-gc run")
+
+      with subtest("the collectable paths are gone"):
+          for p in collected:
+              machine.fail(exists(p))
+
+      with subtest("every protected path survived"):
+          for p in protected:
+              machine.succeed(exists(p))
+          machine.succeed("test -f /srv/work/keep/target/blob")
+
+      print("gc: plan, dry-run refusal, collection and every refusal verified")
+    '';
+  };
 in
 {
-  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app captive-portal mdns-single-responder network-profiles captive-vm-policy;
+  inherit strict-egress malware-shield hardening dcf-spa-gate ip-blocklists vpn windscribe-app captive-portal mdns-single-responder network-profiles captive-vm-policy gc;
 }
   // lib.optionalAttrs (microvm != null) { inherit captive-vm; }

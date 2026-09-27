@@ -403,6 +403,17 @@
         # modules/mounts.nix for the two things it cannot do.
         ./modules/mounts.nix
 
+        # custom.gc — the garbage collector. A plain path module: no package,
+        # no source tree. Opt-in, defaults OFF, and with `enable = false` it
+        # emits no unit, no timer and no package, so no ISO mkForce is needed.
+        # It REPLACES the unconditional weekly `nix-gc-generations` timer that
+        # used to sit in configuration.nix: that one named the system profile
+        # only, so it could never reach the user generations or the `result*`
+        # gcroots that were actually pinning the store. `dryRun` defaults TRUE
+        # and `oligarchy-gc run` refuses until it is turned off. Deliberately
+        # kept off the MCP surface — see the banner in modules/gc.nix.
+        ./modules/gc.nix
+
         ./modules/secure-boot.nix
         ./modules/agentic-local-ai.nix
         # oligarchy-mcp.nix removed — replaced by mcp-servers.nixosModules.default
@@ -1421,6 +1432,161 @@
         # No KVM, no closure — but it does evaluate the whole system config.
         # Run on demand:  nix build .#session-survives-switch
         # ════════════════════════════════════════════════════════════════════
+
+        # ════════════════════════════════════════════════════════════════════
+        # gc-contract — custom.gc's eval-time half.
+        #
+        # Two things only an eval gate can establish, and one it must not be
+        # mistaken for. It proves (a) the disabled state is genuinely inert,
+        # which is the claim that lets the ISO skip a mkForce, and (b) every
+        # refusal in the option set actually refuses — each bad configuration
+        # is evaluated and its assertion must come back FALSE.
+        #
+        # What it explicitly does NOT prove is that the collector deletes the
+        # right things: that lives in .#test-gc, because an eval-only gate
+        # over a deleter is exactly the windscribe-app failure mode — eight
+        # green structural assertions over a subsystem that did not work.
+        #
+        # Like session-survives-switch this must extendModules the subsystem
+        # ON: custom.gc defaults off, so a gate reading the bare host config
+        # would inspect no unit and pass green. The anti-vacuity checks below
+        # are what stop that happening quietly.
+        #
+        # Single host, one evaluation, so it belongs in `packages` rather than
+        # legacyPackages — it costs roughly what `nix flake check` already pays.
+        # Run on demand:  nix build .#gc-contract
+        # ════════════════════════════════════════════════════════════════════
+        gc-contract =
+          let
+            lib' = nixpkgs.lib;
+            base = self.nixosConfigurations.nixos;
+            with' = ms: (base.extendModules { modules = ms; }).config;
+
+            off = base.config;
+            on = with' [{ custom.gc.enable = true; }];
+            onRun = with' [{ custom.gc = { enable = true; dryRun = false; }; }];
+            onTimer = with' [{ custom.gc = { enable = true; timer.enable = true; }; }];
+
+            # Each entry is a configuration that MUST be refused, and the
+            # number of its assertions that come back false. Anything other
+            # than exactly one means the wrong rule fired, or two did.
+            refusals = {
+              relativeRoot = [{ custom.gc = { enable = true; roots = [ "relative/path" ]; }; }];
+              slashRoot = [{ custom.gc = { enable = true; roots = [ "/" ]; }; }];
+              rootInsideDeny = [{ custom.gc = { enable = true; roots = [ "/var/lib/oligarchy/plugins/x" ]; }; }];
+              workspaceNoRoots = [{ custom.gc = { enable = true; workspace.enable = true; }; }];
+              preserveNonEmpty = [{ custom.gc = { enable = true; preserve = [ "/tmp/x" ]; }; }];
+            };
+            failedCount = ms:
+              builtins.length (builtins.filter (a: !a.assertion) (with' ms).assertions);
+
+            # A clean configuration must fail nothing, or the refusals above
+            # prove only that the module refuses everything.
+            good = with' [{ custom.gc = { enable = true; roots = [ "/home/asher/Documents/oligarchy2" ]; }; }];
+
+            denyOf = (on.custom.gc.extraDeny or [ ]);
+            execStart = onRun.systemd.services.oligarchy-gc.serviceConfig.ExecStart;
+
+            payload = builtins.toJSON {
+              # (a) the disabled state — the ISO claim
+              disabledNoUnit = !(off.systemd.services ? oligarchy-gc);
+              disabledNoTimer = !(off.systemd.timers ? oligarchy-gc);
+              disabledNoPackage =
+                !(lib'.any (p: (p.name or "") == "oligarchy-gc") off.environment.systemPackages);
+
+              # the enabled state, and that the timer stays opt-in on top
+              enabledHasUnit = on.systemd.services ? oligarchy-gc;
+              enabledTimerStillOff = !(on.systemd.timers ? oligarchy-gc);
+              timerAppearsWhenAsked = onTimer.systemd.timers ? oligarchy-gc;
+
+              # dryRun is the default, and the unit runs `gate` rather than
+              # `run` so enabling it before soaking cannot delete anything.
+              dryRunDefaultsTrue = on.custom.gc.dryRun;
+              unitRunsGate = lib'.hasSuffix " gate" execStart;
+
+              # the collector is never reachable from the read-only MCP surface
+              notInMcp = !(lib'.hasInfix "oligarchy-gc" (builtins.readFile ./.mcp.json));
+
+              # (b) the refusals
+              goodConfigFailsNothing = failedCount [{ custom.gc = { enable = true; roots = [ "/home/asher/Documents/oligarchy2" ]; }; }] == 0;
+
+              # A root is ALLOWED to contain a denied path — that is what
+              # extraDeny is for ("collect under /srv/work but never
+              # /srv/work/keep"), and ~/Documents containing the two private
+              # DeMoD Secure Protocol trees is the real-world case. The
+              # traversal prunes them; .#test-gc proves the denied subtree
+              # survives a real collection.
+              rootMayContainDeny = failedCount [{ custom.gc = { enable = true; roots = [ "/home/asher/Documents" ]; }; }] == 0;
+              refusals = lib'.mapAttrs (_: ms: failedCount ms) refusals;
+
+              # anti-vacuity: the gate must actually be looking at something
+              assertionCount = builtins.length good.assertions;
+              inspected = builtins.attrNames refusals;
+            };
+            data = pkgs.writeText "gc-contract.json" payload;
+          in
+          pkgs.runCommand "gc-contract"
+            {
+              nativeBuildInputs = [ pkgs.jq ];
+              meta = with nixpkgs.lib; {
+                description = "Assert custom.gc is inert when off and refuses every unsafe configuration";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              j=${data}; cp "$j" $out/contract.json
+
+              # A gate that inspected nothing is a FAIL — same rule as
+              # session-survives-switch and mcp_self_audit. custom.gc defaults
+              # off, so this is the check that catches an extendModules that
+              # stopped reaching the module.
+              n=$(jq -r '.assertionCount' "$j")
+              if [ "$n" -eq 0 ]; then
+                echo "gc-contract: the enabled config declares no assertions; inspected nothing" >&2
+                exit 1
+              fi
+
+              fail=0
+              want() {
+                if [ "$(jq -r ".$1" "$j")" = true ]; then
+                  echo "PASS  $1" | tee -a $out/report.txt
+                else
+                  echo "FAIL  $1 = $(jq -c ".$1" "$j")" | tee -a $out/report.txt >&2
+                  fail=1
+                fi
+              }
+
+              want disabledNoUnit
+              want disabledNoTimer
+              want disabledNoPackage
+              want enabledHasUnit
+              want enabledTimerStillOff
+              want timerAppearsWhenAsked
+              want dryRunDefaultsTrue
+              want unitRunsGate
+              want notInMcp
+              want goodConfigFailsNothing
+              want rootMayContainDeny
+
+              # Every named bad configuration must trip EXACTLY ONE assertion.
+              # Zero means the refusal is gone; more than one means the rules
+              # overlap and the message the operator sees is not the one that
+              # describes their mistake.
+              while IFS=$'\t' read -r name count; do
+                if [ "$count" -eq 1 ]; then
+                  echo "PASS  refuses $name" | tee -a $out/report.txt
+                else
+                  echo "FAIL  refuses $name: $count assertions fired, expected 1" | tee -a $out/report.txt >&2
+                  fail=1
+                fi
+              done < <(jq -r '.refusals | to_entries[] | [.key, (.value|tostring)] | @tsv' "$j")
+
+              [ "$fail" -eq 0 ] || { echo "gc-contract: FAILED" >&2; exit 1; }
+              echo "gc-contract: 16 checks passed" | tee -a $out/report.txt
+            '';
+
         session-survives-switch =
           let
             lib' = nixpkgs.lib;
