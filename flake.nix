@@ -1016,10 +1016,10 @@
               # (hydramesh-lisp) and Faust/GCC (hydramodem) builds have no place in
               # the installer image. Drop this mkForce if the ISO must ship them.
               custom.hydramesh.enable = lib.mkForce false;
-              # nnnvim itself stays — editing a config during an install is the
-              # point of having an editor on the installer. Its language servers
-              # do not: clang-tools, gopls and friends are ~2.1 GiB of closure
-              # that nothing on a live ISO will ever attach to a buffer.
+              # configuration.nix (via commonModules) turns custom.nnnvim.enable
+              # on for installed hosts. The installer must not inherit that:
+              # Rule 9, ISO stays light. vim remains in systemPackages.
+              custom.nnnvim.enable = lib.mkForce false;
               custom.nnnvim.withLsp = lib.mkForce false;
               # Rule 9 says the ISO stays light *by default*, not merely when a
               # module's `enable` default happens to be false. Personal apps
