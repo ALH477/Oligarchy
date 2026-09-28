@@ -1516,6 +1516,8 @@
               sed -i 's/^              //' xdg/applications/aaa-decoy.desktop
               cp ${offXdgList} xdg/etc/xdg-terminals.list
 
+              unset XDG_CURRENT_DESKTOP
+              unset XDG_DATA_DIRS
               export XDG_DATA_HOME=$PWD/xdg XDG_DATA_DIRS=$PWD/xdg
               export XDG_CONFIG_HOME=$PWD/empty XDG_CONFIG_DIRS=$PWD/xdg/etc
               export HOME=$PWD/home XDG_CACHE_HOME=$PWD/cache
