@@ -151,9 +151,9 @@ Neovim version. The `unstable` overlay is no escape hatch either: the
 nnnvim's own nixpkgs (the `hydramesh` pattern, §2 layer 1), so the cost is
 one extra nixpkgs evaluation.
 
-The ISO forces `custom.nnnvim.withLsp = false`: clang-tools, gopls and the
-rest are ~2.1 GiB of closure (2.6 GiB against 530 MiB) that nothing on a
-live installer will attach to a buffer. `vim` stays in
+The ISO forces `custom.nnnvim.enable = false` (configuration.nix turns it
+on for installed hosts, and the ISO imports `commonModules`) and
+`custom.nnnvim.withLsp = false`. `vim` stays in
 `environment.systemPackages` as the fallback for a config or plugin that
 fails to evaluate.
 <!-- truth:end -->
@@ -991,10 +991,9 @@ cd modules/mcp-servers && cargo test --workspace
 
 `AGENTS.md`, this file and `README.md` are **claim-gated**: each carries hidden
 `truth:claim` blocks binding a sentence to something checkable in the tree, and
-`nix build .#truthgate-docs` fails the moment the tree stops matching the
+`nix build .#trvthnvke-docs` fails the moment the tree stops matching the
 sentence. Upstream is [TrvthNvke](https://github.com/ALH477/TrvthNvke); this
-tree still pins the input, the package and the policy file under the project's
-former name, `truthgate`, which GitHub redirects.
+tree pins the input, the package and the policy file as `trvthnvke`.
 
 <!-- truth:claim
 id: trvthnvke-badge
@@ -1025,10 +1024,10 @@ Hosts in `flake.nix`: `nixos` (primary), `nixos-asher` …
 <!-- truth:claim
 id: docs-gate-entailment
 kind: file_contains
-path: .truthgate.toml
+path: .trvthnvke.toml
 pattern: require_entailment
 -->
-Four properties of the policy in `.truthgate.toml` are easy to get wrong:
+Four properties of the policy in `.trvthnvke.toml` are easy to get wrong:
 
 - **`command_mode = "off"`.** No Markdown in this repo may execute anything.
   Every claim is a file, directory, string, glob, heading or structured-data
@@ -1039,8 +1038,8 @@ Four properties of the policy in `.truthgate.toml` are easy to get wrong:
   value it binds. You cannot bind a sentence to `flake.nix` and then write a
   sentence that never says `flake.nix`; the gate rejects it. This is what keeps
   a claim from decaying into a green checkbox with unrelated text above it.
-- **`require_lock = true`.** Editing the policy invalidates `.truthgate.lock`.
-  Re-pin with `truthgate lock` in the same change, or the gate refuses to run
+- **`require_lock = true`.** Editing the policy invalidates `.trvthnvke.lock`.
+  Re-pin with `trvthnvke lock` in the same change, or the gate refuses to run
   at all rather than running against an unpinned policy.
 - **`coverage = "off"`, deliberately.** These are dense prose documents about a
   large tree, so the useful facts are bound *explicitly* rather than inferred
