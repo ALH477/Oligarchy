@@ -1505,15 +1505,7 @@
               # "winning" before this layer existed.
               mkdir -p xdg/applications xdg/etc
               cp "$kittyEntry" xdg/applications/
-              cat > xdg/applications/aaa-decoy.desktop <<EOF
-              [Desktop Entry]
-              Type=Application
-              Name=Decoy
-              Exec=${pkgs.coreutils}/bin/true
-              Categories=System;TerminalEmulator;
-              X-TerminalArgExec=-e
-              EOF
-              sed -i 's/^              //' xdg/applications/aaa-decoy.desktop
+              cp "$kittyEntry" xdg/applications/aaa-decoy.desktop
               cp ${offXdgList} xdg/etc/xdg-terminals.list
 
               unset XDG_CURRENT_DESKTOP
