@@ -48,5 +48,5 @@ HyprController-bundle.zip
 ~/.local/
 audit.log
 
-# Truthgate last-run receipt (runtime output of `truthgate verify --receipt`)
-.truthgate/receipt.json
+# TrvthNvke last-run receipt (runtime output of `trvthnvke verify --receipt`)
+.trvthnvke/receipt.json

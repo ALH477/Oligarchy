@@ -206,6 +206,27 @@
     # nixos-25.11. Forcing a follow breaks its Faust/SBCL builds.
     hydramesh.url = "github:ALH477/HydraMesh";
 
+    # nnnvim — the maintainer's Neovim configuration, packaged (custom.nnnvim.*).
+    #
+    # Consumed as a real flake (packages + nixosModules). Deliberately NOT
+    # `follows`-ing our nixpkgs, same reasoning as hydramesh above: nnnvim needs
+    # neovim 0.12 for `vim.pack`, `vim._core.ui2`, `:restart` and the
+    # runtime-bundled `nvim.undotree`, and nixos-25.11 ships 0.11.7 and has no
+    # `vimPlugins.eldritch-nvim` attribute at all. Our `nixpkgs-unstable` pin is
+    # no help either — it is on 0.11.6. Forcing a follow fails eval outright.
+    # The nixosModule resolves the package from nnnvim's OWN nixpkgs, so this
+    # costs one extra nixpkgs eval and nothing else.
+    #
+    # The BRANCH is load-bearing. nnnvim's default branch is `master`, which
+    # carries the Neovim config and no `flake.nix`; the packaging lives on
+    # `nix-flake`. A bare `github:ALH477/nnnvim` therefore resolves to a
+    # revision with no flake in it and fails with `path '...flake.nix' does not
+    # exist` — and because that is an input-resolution failure, it takes out
+    # EVERY flake command in this repo, `nix flake show`, `nix flake lock` and
+    # the whole eval lane included, not just the editor. Drop the ref only once
+    # the packaging is on the default branch.
+    nnnvim.url = "github:ALH477/nnnvim/nix-flake";
+
     # Community YARA ruleset — pinned so the Malware Shield build gate
     # (packages.malwareScan) scans the closure with deterministic, offline
     # rules. We consume .yar files only, no flake outputs.
@@ -214,14 +235,14 @@
       flake = false;
     };
 
-    # Truthgate — claim-verified Markdown (github:ALH477/truthgate). AGENTS.md,
+    # TrvthNvke — claim-verified Markdown (github:ALH477/TrvthNvke). AGENTS.md,
     # docs/architecture.md and README.md carry hidden `truth:claim` blocks that
     # bind a sentence to a file, directory or string in this tree; the
-    # `truthgate-docs` package fails when the tree stops matching the sentence.
-    # Policy in .truthgate.toml, pinned by .truthgate.lock. Pure stdlib Python,
+    # `trvthnvke-docs` package fails when the tree stops matching the sentence.
+    # Policy in .trvthnvke.toml, pinned by .trvthnvke.lock. Pure stdlib Python,
     # so following our nixpkgs costs nothing and avoids a second closure.
-    truthgate = {
-      url = "github:ALH477/truthgate";
+    trvthnvke = {
+      url = "github:ALH477/TrvthNvke";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -271,8 +292,9 @@
     , demod-voice
     , mcp-servers
     , hydramesh
+    , nnnvim
     , yara-rules
-    , truthgate
+    , trvthnvke
     , # archibaldos,
       ...
     } @ inputs:
@@ -300,6 +322,7 @@
         # Uncomment when archibaldos is available:
         # inherit archibaldos;
         inherit vm-manager dsp-ctl oligarchy-forge mcp-servers hydramesh;
+        inherit nnnvim;
         inherit demod-talk oligarchy-vault reliquary;
       };
 
@@ -481,6 +504,11 @@
 
         # DeMoD Voice - Local TTS and Voice Cloning
         ./modules/demod-voice/nixos-module.nix
+
+        # nnnvim — Neovim 0.12 + the maintainer's config, Nix-pinned
+        # (custom.nnnvim.*). Module defaults off; configuration.nix turns it
+        # on for installed hosts, so the ISO mkForce-disables it.
+        nnnvim.nixosModules.default
 
         # NOT imported: the DSP VM this file used to gesture at is already
         # built, in full, by `vm-manager.nixosModules.dsp-vm` (option
@@ -890,12 +918,12 @@
       # Installation ISO & Tests
       # ════════════════════════════════════════════════════════════════════════
       packages.${system} = {
-        # Docs drift gate — Truthgate. Verifies every `truth:claim` in
+        # Docs drift gate — TrvthNvke. Verifies every `truth:claim` in
         # AGENTS.md, docs/architecture.md and README.md against this source
         # tree: documented files exist, documented strings are still in the
         # files they are attributed to, required headings survive. No KVM, no
         # network, seconds. The eval lane runs it on every push; locally:
-        #   nix build .#truthgate-docs
+        #   nix build .#trvthnvke-docs
         # `command` claims are disabled by policy (command_mode = "off"), so
         # nothing in the docs can execute anything here — it is a pure read of
         # the tree.
@@ -905,12 +933,12 @@
         # — only `--receipt` would write, and we do not pass it. The upstream
         # README's copy-then-verify recipe is for trees that need to be
         # writable; this one does not.
-        truthgate-docs = pkgs.runCommand "truthgate-docs"
+        trvthnvke-docs = pkgs.runCommand "trvthnvke-docs"
           {
-            nativeBuildInputs = [ truthgate.packages.${system}.truthgate ];
+            nativeBuildInputs = [ trvthnvke.packages.${system}.trvthnvke ];
             src = self;
           } ''
-          truthgate --root "$src" verify --fail
+          trvthnvke --root "$src" verify --fail
           touch "$out"
         '';
 
@@ -988,6 +1016,11 @@
               # (hydramesh-lisp) and Faust/GCC (hydramodem) builds have no place in
               # the installer image. Drop this mkForce if the ISO must ship them.
               custom.hydramesh.enable = lib.mkForce false;
+              # configuration.nix (via commonModules) turns custom.nnnvim.enable
+              # on for installed hosts. The installer must not inherit that:
+              # Rule 9, ISO stays light. vim remains in systemPackages.
+              custom.nnnvim.enable = lib.mkForce false;
+              custom.nnnvim.withLsp = lib.mkForce false;
               # Rule 9 says the ISO stays light *by default*, not merely when a
               # module's `enable` default happens to be false. Personal apps
               # (android-mirror udev rules, adbusers, scrcpy) ride a
@@ -3073,7 +3106,7 @@
             nil # Nix LSP
             nixpkgs-fmt
             nixfmt-rfc-style
-            truthgate.packages.${system}.truthgate # docs claim gate (`truthgate verify --fail`)
+            trvthnvke.packages.${system}.trvthnvke # docs claim gate (`trvthnvke verify --fail`)
             nix-tree # Explore Nix store
             nix-diff # Compare Nix derivations
             nvd # NixOS version diff
@@ -3114,7 +3147,7 @@
             echo "║     --flake .#nixos                - fast eval smoke test      ║"
             echo "║   nix build .#iso                  - build installer ISO       ║"
             echo "║   nix build .#malwareScan          - YARA-scan the closure     ║"
-            echo "║   nix build .#truthgate-docs       - docs drift gate           ║"
+            echo "║   nix build .#trvthnvke-docs       - docs drift gate           ║"
             echo "║   nix fmt                          - format Nix sources        ║"
             echo "║   nvd diff /run/current-system ./result - diff closures        ║"
             echo "║   oligarchy-security status        - live security posture     ║"

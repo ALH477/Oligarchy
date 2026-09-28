@@ -1,6 +1,6 @@
-# Truthgate policy — bind the load-bearing docs to the tree.
-# Gate: nix build .#truthgate-docs   (also runs in .github/workflows/eval.yml)
-# Re-pin after editing this file: truthgate lock
+# TrvthNvke policy — bind the load-bearing docs to the tree.
+# Gate: nix build .#trvthnvke-docs   (also runs in .github/workflows/eval.yml)
+# Re-pin after editing this file: trvthnvke lock
 #
 # command claims are OFF: nothing in a Markdown file may execute here. Every
 # claim is a file / directory / string / heading / glob check. Path-token
@@ -11,12 +11,12 @@
 fail_on = "error"
 command_mode = "off"
 require_lock = true
-lock_path = ".truthgate.lock"
+lock_path = ".trvthnvke.lock"
 coverage = "off"
 require_entailment = true
 ignore_requires_reason = true
 strict_ignore = true
-receipt_path = ".truthgate/receipt.json"
+receipt_path = ".trvthnvke/receipt.json"
 
 # The agent contract. Every fence is `truth:ignore` (commands are documentation
 # here) and the facts agents act on — W^X mirrors, the MCP allowlist, hosts,
@@ -47,3 +47,14 @@ require_bound_fences = true
 path = "README.md"
 required_headings = ["Building – Forge Your Empire", "Maintenance", "Screensavers — Nine Somnia, Compiled Rather Than Written"]
 require_bound_fences = false
+
+# The Exsecutor kernel-enforcement roadmap. It joins two projects, and only one
+# of them is in this tree -- so the claims below bind the Oligarchy-side prior
+# art it rests on (the verity pipeline, the plugin microVM tier, the forge's
+# container flags, the option owners it collides with, the channel pin). Its
+# Exsecutor statements are pinned by commit in "Verification status" instead,
+# because nothing here can check them.
+[[docs]]
+path = "docs/exsecutor-kernel-roadmap.md"
+required_headings = ["Summary of findings", "Measured starting point", "E. Roadmap by dependency order", "Verification status"]
+require_bound_fences = true
