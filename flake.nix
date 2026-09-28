@@ -506,8 +506,8 @@
         ./modules/demod-voice/nixos-module.nix
 
         # nnnvim — Neovim 0.12 + the maintainer's config, Nix-pinned
-        # (custom.nnnvim.*). Defaults off, so with enable = false it adds no
-        # package and no session variable and the ISO needs no mkForce for it.
+        # (custom.nnnvim.*). Module defaults off; configuration.nix turns it
+        # on for installed hosts, so the ISO mkForce-disables it.
         nnnvim.nixosModules.default
 
         # NOT imported: the DSP VM this file used to gesture at is already
