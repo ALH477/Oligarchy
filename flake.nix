@@ -1505,11 +1505,11 @@
               # "winning" before this layer existed.
               mkdir -p xdg/applications xdg/etc
               cp "$kittyEntry" xdg/applications/
-              cat > xdg/applications/aaa-decoy.desktop <<'EOF'
+              cat > xdg/applications/aaa-decoy.desktop <<EOF
               [Desktop Entry]
               Type=Application
               Name=Decoy
-              Exec=false
+              Exec=${pkgs.coreutils}/bin/true
               Categories=System;TerminalEmulator;
               X-TerminalArgExec=-e
               EOF
