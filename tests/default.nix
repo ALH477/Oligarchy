@@ -1,4 +1,4 @@
-{ lib, pkgs, microvm ? null, ... }:
+{ lib, pkgs, microvm ? null, hydramesh ? null, ... }:
 
 let
   # ── Strict egress: standalone inet table, static/dyn set matching ──────────
