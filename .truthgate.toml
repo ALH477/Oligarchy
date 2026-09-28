@@ -33,6 +33,14 @@ path = "docs/architecture.md"
 required_headings = ["2. Flake composition", "9. MCP servers — the agent surface", "13. Conventions", "15. Build & verification"]
 require_bound_fences = true
 
+# The file agents actually read before touching anything. Densest claim set in
+# the repo: the landmines are bound in "Bound facts", the rest inline. Every
+# fence is `truth:ignore` — command claims are off, and these are documentation.
+[[docs]]
+path = "CLAUDE.md"
+required_headings = ["What this is", "Where the docs are", "Common commands", "Architecture", "Conventions", "Bound facts"]
+require_bound_fences = true
+
 # In-character satire. Fences stay unbound (they are prose, not evidence);
 # only the real paths near the bottom are claimed.
 [[docs]]
