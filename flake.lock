@@ -236,6 +236,27 @@
         "type": "github"
       }
     },
+    "exsecutor_2": {
+      "inputs": {
+        "nixpkgs": [
+          "hydramesh",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790305834,
+        "narHash": "sha256-zTvYdhALpZra77Zq2J/EawC3Gn4tFr9SzPWEa0dxf6c=",
+        "owner": "ALH477",
+        "repo": "exsecutor",
+        "rev": "d35b7d23e40a5348a32055f695021d6776c591c5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ALH477",
+        "repo": "exsecutor",
+        "type": "github"
+      }
+    },
     "flake-compat": {
       "flake": false,
       "locked": {
@@ -656,12 +677,12 @@
     "hydramesh": {
       "inputs": {
         "demod-quanta-src": "demod-quanta-src",
+        "exsecutor": "exsecutor_2",
         "flake-utils": "flake-utils_7",
         "janus-c-src": "janus-c-src",
         "nixpkgs": "nixpkgs_12",
         "nixpkgs-faust": "nixpkgs-faust",
-        "rust-overlay": "rust-overlay_3",
-        "exsecutor": "exsecutor"
+        "rust-overlay": "rust-overlay_3"
       },
       "locked": {
         "lastModified": 1790317640,
