@@ -14,7 +14,7 @@ services.oligarchyMinecraft = {
   enable = true;
   eula = true;                                    # https://aka.ms/MinecraftEULA
   interface = "tailscale0";
-  package = pkgs.papermcServers.papermc-1_21_10;  # pin explicitly, see below
+  # package defaults to the in-tree pin (pkgs/papermc.nix: Paper 26.2 build 121)
 };
 ```
 
@@ -50,12 +50,12 @@ Current pins, chosen to match natively so no ViaVersion is needed:
 
 | | version | protocol |
 |---|---|---|
-| Paper | `papermc-1_21_10` (`1.21.10-91`) | 773 |
-| Geyser-Spigot | 2.9.1 build 1003 | 773 (emulates 1.21.9) |
-| Floodgate | 2.2.5 build 123 | — |
+| Paper | `26.2` build 121 (`pkgs/papermc.nix`) | 776 |
+| Geyser-Spigot | 2.11.2 build 1234 (emulates Java 26.2; Bedrock 26.0–26.45) | 776 |
+| Floodgate | 2.2.5 build 140 | — |
 
-773 covers **1.21.9 and 1.21.10** (per ViaVersion's own `ProtocolVersion`
-registry), which is why 1.21.10 pairs with a Geyser that emulates 1.21.9.
+The `.nix` files under `pkgs/` are the truth for these numbers (each derivation checks the
+jar's Java version / config version in `installCheckPhase`); update this table with them.
 
 Pin `package` to an explicit version attribute. The bare `papermc` attribute
 follows nixpkgs' newest Paper, so a routine flake update would move the server
@@ -142,7 +142,7 @@ Three layers, each covering what the others cannot.
 `pkgs/geyser-spigot.nix` reads the Java version and `CONFIG_VERSION` straight
 out of the jar in `installCheckPhase`, so a re-pin that forgets to update them
 fails `nix build` rather than a player's login. This cannot be a runtime test:
-proving 773 == 773 needs a real handshake.
+proving 776 == 776 needs a real handshake.
 
 ### 2. `nix build .#test-minecraft-server` — the module wiring
 
