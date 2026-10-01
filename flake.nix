@@ -1426,6 +1426,11 @@
             data = pkgs.writeText "terminal-contract.json" payload;
             offDesktopId = off.custom.terminal.user.desktopId;
             offXdgList = pkgs.writeText "xdg-terminals.list" xdgList;
+            # Same shape, naming the decoy instead. The adversary leg below
+            # swaps this in: see the comment there for why "take the list away"
+            # cannot be the adversary leg.
+            decoyDesktopId = "aaa-decoy.desktop";
+            decoyXdgList = pkgs.writeText "xdg-terminals.list" (decoyDesktopId + "\n");
             onSystemPkg = on.custom.terminal.system.package;
           in
           pkgs.runCommand "terminal-contract"
@@ -1535,7 +1540,9 @@
               mkdir -p xdg/applications xdg/etc
               cp "$kittyEntry" xdg/applications/
               cp "$kittyEntry" xdg/applications/aaa-decoy.desktop
-              cp ${offXdgList} xdg/etc/xdg-terminals.list
+              # install, not cp: store files are mode 444, so the adversary leg's
+              # second placement cannot overwrite a copy made with cp.
+              install -m0644 ${offXdgList} xdg/etc/xdg-terminals.list
 
               unset XDG_CURRENT_DESKTOP
               unset XDG_DATA_DIRS
@@ -1552,18 +1559,53 @@
                 fail=1
               fi
 
-              # Adversary leg: take the list away and the decoy must win. If
-              # this does NOT change the answer, the check above was measuring
-              # alphabetical order, not the registration.
-              rm -rf "$XDG_CACHE_HOME" xdg/etc/xdg-terminals.list; mkdir -p "$XDG_CACHE_HOME"
+              # Adversary leg: keep the list, POINT IT AT THE DECOY, and the
+              # answer must follow it.
+              #
+              # The obvious adversary leg -- delete the list and require the
+              # answer to change -- is unsound, and was the reason this gate
+              # was red on a GitHub runner while green on the maintainer's
+              # machine with a BYTE-IDENTICAL derivation. xdg-terminal-exec
+              # enumerates candidates with `find -L` and sorts them nowhere
+              # (grep the script: there is no `sort`), prepending each id so the
+              # LAST one `readdir` yields wins. Readdir order for two names in
+              # one directory is a function of the ext4 per-filesystem hash
+              # seed, which is random per filesystem -- so "aaa-decoy sorts
+              # before kitty" was never true, and which entry won the
+              # no-list case was a coin flip decided by whose disk ran the test.
+              #
+              # Flipping the list's CONTENT instead is order-independent in both
+              # directions: with a working list each leg has exactly one legal
+              # answer, and if the list were ignored both legs would return the
+              # same readdir-chosen id, so one of them would fail. That is the
+              # anti-vacuity property the deleted leg was reaching for, without
+              # the impurity.
+              install -m0644 ${decoyXdgList} xdg/etc/xdg-terminals.list
+              rm -rf "$XDG_CACHE_HOME"; mkdir -p "$XDG_CACHE_HOME"
               got2=$(xdg-terminal-exec --print-id || true)
-              if [ "$got2" != "${offDesktopId}" ]; then
-                echo "PASS  xdgResolverWithoutTheListPicksSomethingElse ($got2)" | tee -a $out/report.txt
+              if [ "$got2" = "${decoyDesktopId}" ]; then
+                echo "PASS  xdgResolverFollowsTheListNotTheOrdering ($got2)" | tee -a $out/report.txt
               else
-                echo "FAIL  xdgResolverWithoutTheListPicksSomethingElse: still '$got2' -- the list is not what decided it" \
+                echo "FAIL  xdgResolverFollowsTheListNotTheOrdering: list named '${decoyDesktopId}', resolver answered '$got2'" \
                   | tee -a $out/report.txt >&2
                 fail=1
               fi
+
+              # And with no list at all the resolver must still answer SOMETHING
+              # valid -- but deliberately not a specific id, because that is the
+              # readdir coin flip described above. Asserting only that it stays
+              # within the two entries we installed keeps the check honest.
+              rm -f xdg/etc/xdg-terminals.list
+              rm -rf "$XDG_CACHE_HOME"; mkdir -p "$XDG_CACHE_HOME"
+              got3=$(xdg-terminal-exec --print-id || true)
+              case "$got3" in
+                "${offDesktopId}" | "${decoyDesktopId}")
+                  echo "PASS  xdgResolverStillAnswersWithNoList ($got3; which one is readdir order, not asserted)" \
+                    | tee -a $out/report.txt ;;
+                *)
+                  echo "FAIL  xdgResolverStillAnswersWithNoList: got '$got3'" | tee -a $out/report.txt >&2
+                  fail=1 ;;
+              esac
 
               [ "$fail" -eq 0 ] || { echo "terminal-contract: FAILED" >&2; exit 1; }
               echo "terminal-contract: velocitty is the system terminal; kitty is still the user default" \
