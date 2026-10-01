@@ -276,6 +276,35 @@
       flake = false;
     };
 
+    # xpadneo (github:atar-axis/xpadneo) — the Bluetooth Xbox pad driver, as a
+    # SOURCE input rather than the nixpkgs package, for two reasons.
+    #
+    # First, nixpkgs' xpadneo derivation installs the kernel module and nothing
+    # else: its setSourceRoot points at hid-xpadneo/src, one directory below
+    # upstream's etc-udev-rules.d/, and installTargets is `modules_install`
+    # alone. Upstream installs its udev rules from a dkms.post_install hook that
+    # a Nix build never runs, so the rules were simply absent — and one of them,
+    # 70-xpadneo-disable-hidraw.rules, is what stops SDL's HIDAPI backend
+    # claiming a pad through its raw hidraw node instead of xpadneo's translated
+    # evdev stream. Without it a pad bonds, binds, logs a flawless probe and
+    # delivers nothing to games. modules/gamepad-bluetooth/ installs both rules
+    # from this tree.
+    #
+    # Second, nixos-25.11 pins 0.9.7, whose rules trigger on `ACTION=="add"`;
+    # 0.10 widened them to `ACTION!="remove"`, and under systemd 258 the narrow
+    # form lets the first connect work while reconnects fall back to hidraw.
+    #
+    # Pinned to a tag here rather than fetched inside the module, per the "pin
+    # via flake inputs, not ad-hoc fetches" rule in AGENTS.md. Lazy: nothing
+    # fetches it unless custom.gamepadBluetooth is enabled. Delete this input
+    # and go back to config.boot.kernelPackages.xpadneo once nixpkgs stable
+    # ships >= 0.10.4 WITH the udev rules packaged — the version alone is not
+    # enough, the rules are the point.
+    xpadneo-src = {
+      url = "github:atar-axis/xpadneo/v0.10.4";
+      flake = false;
+    };
+
     # Zig 0.16 for the velocitty build, and for nothing else. Velocitty's
     # build.zig.zon sets `minimum_zig_version = 0.16.0`, and zig refuses a
     # build outright below it. Our nixos-25.11 pin and the nixpkgs-unstable
@@ -1397,6 +1426,11 @@
             data = pkgs.writeText "terminal-contract.json" payload;
             offDesktopId = off.custom.terminal.user.desktopId;
             offXdgList = pkgs.writeText "xdg-terminals.list" xdgList;
+            # Same shape, naming the decoy instead. The adversary leg below
+            # swaps this in: see the comment there for why "take the list away"
+            # cannot be the adversary leg.
+            decoyDesktopId = "aaa-decoy.desktop";
+            decoyXdgList = pkgs.writeText "xdg-terminals.list" (decoyDesktopId + "\n");
             onSystemPkg = on.custom.terminal.system.package;
           in
           pkgs.runCommand "terminal-contract"
@@ -1506,7 +1540,9 @@
               mkdir -p xdg/applications xdg/etc
               cp "$kittyEntry" xdg/applications/
               cp "$kittyEntry" xdg/applications/aaa-decoy.desktop
-              cp ${offXdgList} xdg/etc/xdg-terminals.list
+              # install, not cp: store files are mode 444, so the adversary leg's
+              # second placement cannot overwrite a copy made with cp.
+              install -m0644 ${offXdgList} xdg/etc/xdg-terminals.list
 
               unset XDG_CURRENT_DESKTOP
               unset XDG_DATA_DIRS
@@ -1523,18 +1559,53 @@
                 fail=1
               fi
 
-              # Adversary leg: take the list away and the decoy must win. If
-              # this does NOT change the answer, the check above was measuring
-              # alphabetical order, not the registration.
-              rm -rf "$XDG_CACHE_HOME" xdg/etc/xdg-terminals.list; mkdir -p "$XDG_CACHE_HOME"
+              # Adversary leg: keep the list, POINT IT AT THE DECOY, and the
+              # answer must follow it.
+              #
+              # The obvious adversary leg -- delete the list and require the
+              # answer to change -- is unsound, and was the reason this gate
+              # was red on a GitHub runner while green on the maintainer's
+              # machine with a BYTE-IDENTICAL derivation. xdg-terminal-exec
+              # enumerates candidates with `find -L` and sorts them nowhere
+              # (grep the script: there is no `sort`), prepending each id so the
+              # LAST one `readdir` yields wins. Readdir order for two names in
+              # one directory is a function of the ext4 per-filesystem hash
+              # seed, which is random per filesystem -- so "aaa-decoy sorts
+              # before kitty" was never true, and which entry won the
+              # no-list case was a coin flip decided by whose disk ran the test.
+              #
+              # Flipping the list's CONTENT instead is order-independent in both
+              # directions: with a working list each leg has exactly one legal
+              # answer, and if the list were ignored both legs would return the
+              # same readdir-chosen id, so one of them would fail. That is the
+              # anti-vacuity property the deleted leg was reaching for, without
+              # the impurity.
+              install -m0644 ${decoyXdgList} xdg/etc/xdg-terminals.list
+              rm -rf "$XDG_CACHE_HOME"; mkdir -p "$XDG_CACHE_HOME"
               got2=$(xdg-terminal-exec --print-id || true)
-              if [ "$got2" != "${offDesktopId}" ]; then
-                echo "PASS  xdgResolverWithoutTheListPicksSomethingElse ($got2)" | tee -a $out/report.txt
+              if [ "$got2" = "${decoyDesktopId}" ]; then
+                echo "PASS  xdgResolverFollowsTheListNotTheOrdering ($got2)" | tee -a $out/report.txt
               else
-                echo "FAIL  xdgResolverWithoutTheListPicksSomethingElse: still '$got2' -- the list is not what decided it" \
+                echo "FAIL  xdgResolverFollowsTheListNotTheOrdering: list named '${decoyDesktopId}', resolver answered '$got2'" \
                   | tee -a $out/report.txt >&2
                 fail=1
               fi
+
+              # And with no list at all the resolver must still answer SOMETHING
+              # valid -- but deliberately not a specific id, because that is the
+              # readdir coin flip described above. Asserting only that it stays
+              # within the two entries we installed keeps the check honest.
+              rm -f xdg/etc/xdg-terminals.list
+              rm -rf "$XDG_CACHE_HOME"; mkdir -p "$XDG_CACHE_HOME"
+              got3=$(xdg-terminal-exec --print-id || true)
+              case "$got3" in
+                "${offDesktopId}" | "${decoyDesktopId}")
+                  echo "PASS  xdgResolverStillAnswersWithNoList ($got3; which one is readdir order, not asserted)" \
+                    | tee -a $out/report.txt ;;
+                *)
+                  echo "FAIL  xdgResolverStillAnswersWithNoList: got '$got3'" | tee -a $out/report.txt >&2
+                  fail=1 ;;
+              esac
 
               [ "$fail" -eq 0 ] || { echo "terminal-contract: FAILED" >&2; exit 1; }
               echo "terminal-contract: velocitty is the system terminal; kitty is still the user default" \
@@ -1967,6 +2038,24 @@
         # give. `gamepad-bond-policy-tests` would be a more honest name for
         # this attribute; not renamed here because it's load-bearing in
         # CLAUDE.md, docs and muscle memory — a rename is a separate call.
+        #
+        # Since then it also covers `--diagnose`'s pure halves — which event
+        # nodes count as a pad, which udev rules are considered installed, and
+        # that no diagnostic argv can mutate bond state. That last one matters:
+        # the whole point of the verb is to be safe to run blind on a machine
+        # whose pad is already misbehaving.
+        #
+        # Still not covered, and this is the gap that actually bit: whether the
+        # xpadneo udev rules are PRESENT in a built system. nixpkgs' xpadneo
+        # derivation installs the kernel module alone, so for as long as this
+        # repo relied on `hardware.xpadneo.enable` the pad bonded, bound, logged
+        # a flawless probe and delivered nothing to games, because
+        # 70-xpadneo-disable-hidraw.rules was never installed and SDL's HIDAPI
+        # backend claimed the pad through the raw node. Nothing here would have
+        # noticed. The guard that exists now lives in the rules derivation
+        # itself (modules/gamepad-bluetooth/default.nix): it fails the build if
+        # either rule file is absent from upstream's source tree, so an upstream
+        # layout change can no longer install less and stay quiet.
         #
         # Run on demand:  nix build .#gamepad-bluetooth-tests
         # ════════════════════════════════════════════════════════════════════

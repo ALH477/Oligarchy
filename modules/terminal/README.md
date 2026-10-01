@@ -187,6 +187,37 @@ nix build .#velocitty-tests    # 6 checks: a real X server, a real PTY child, re
 nix build .#terminal-contract  # velocitty is the system terminal; kitty is still the user default
 ```
 
+### The anti-vacuity leg must not depend on entry order
+
+`.#terminal-contract` runs the real `xdg-terminal-exec` against a throwaway
+`XDG_DATA_HOME` holding two entries: `kitty.desktop` and a copy of it named
+`aaa-decoy.desktop`. Proving the *registration* decided the answer needs an
+adversary leg, and the obvious one — delete the list, require the answer to
+change — is **unsound**.
+
+`xdg-terminal-exec` enumerates candidates with `find -L` and sorts them
+nowhere (grep the script: there is no `sort`), prepending each id so the entry
+`readdir` yields *last* wins. Readdir order for two names in one directory is
+not a property of their names: on ext4 it follows the per-filesystem directory
+hash seed, which is random per filesystem, and on tmpfs it follows creation
+order. Measured, same two files, same resolver:
+
+| filesystem | created | no list | list=kitty | list=decoy |
+|---|---|---|---|---|
+| tmpfs | kitty first | `kitty.desktop` | `kitty.desktop` | `aaa-decoy.desktop` |
+| tmpfs | decoy first | `aaa-decoy.desktop` | `kitty.desktop` | `aaa-decoy.desktop` |
+| ext4 | either | `aaa-decoy.desktop` | `kitty.desktop` | `aaa-decoy.desktop` |
+
+The no-list column is a coin flip decided by whose disk ran the test — which is
+exactly how that leg came to be green on the maintainer's machine and red on a
+GitHub runner **from a byte-identical derivation**. The list columns do not
+move.
+
+So the leg flips the list's *contents* instead and requires the answer to
+follow it. That keeps the anti-vacuity property the deleted leg was reaching
+for: if the list were ignored, both legs would return the same readdir-chosen
+id, so one of them would fail — and it stays sound on any filesystem.
+
 ```bash
 velocitty -e sh -c 'echo hello; sleep 3'     # fonts against the REAL /etc/fonts
 oligarchy-system-term --hold -- false        # --hold survives a non-zero exit

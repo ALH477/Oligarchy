@@ -533,5 +533,147 @@ class CollectInfosTests(unittest.TestCase):
             self.assertEqual(hog_finish_bond.main([]), 0)
 
 
+PROC_INPUT_SAMPLE = """\
+I: Bus=0019 Vendor=0000 Product=0005 Version=0000
+N: Name="Lid Switch"
+P: Phys=PNP0C0D/button/input0
+S: Sysfs=/devices/LNXSYSTM:00/button/input3
+U: Uniq=
+H: Handlers=event3
+B: PROP=0
+
+I: Bus=0005 Vendor=045e Product=028e Version=1130
+N: Name="Xbox Wireless Controller"
+P: Phys=fc:b0:de:17:f6:88
+S: Sysfs=/devices/virtual/misc/uhid/0005:045E:0B13.0009/input/input24
+U: Uniq=78:86:2e:ba:73:6e
+H: Handlers=event24 js0
+B: PROP=0
+
+I: Bus=0003 Vendor=093a Product=0274 Version=0111
+N: Name="PIXA3854:00 093A:0274 Touchpad"
+P: Phys=i2c-PIXA3854:00
+S: Sysfs=/devices/platform/AMDI0010:03/input/input14
+U: Uniq=
+H: Handlers=event12 mouse1
+B: PROP=5
+"""
+
+
+class GamepadEventNodeTests(unittest.TestCase):
+    def test_finds_only_the_joystick_block(self):
+        self.assertEqual(
+            hog_finish_bond.gamepad_event_nodes(PROC_INPUT_SAMPLE), ["event24"]
+        )
+
+    def test_a_pad_under_any_name_is_still_found(self):
+        # Same reason classify() ignores names: the name proves nothing. A pad
+        # reporting a vendor alias must not be missed.
+        renamed = PROC_INPUT_SAMPLE.replace(
+            'N: Name="Xbox Wireless Controller"', 'N: Name="Generic BT Gamepad"'
+        )
+        self.assertEqual(hog_finish_bond.gamepad_event_nodes(renamed), ["event24"])
+
+    def test_a_device_named_xbox_without_a_js_handler_is_ignored(self):
+        # Mirrors test_keyboard_even_named_xbox_is_ignored: an "Xbox" keyboard
+        # has no js handler and must not be reported as a pad.
+        decoy = PROC_INPUT_SAMPLE.replace("H: Handlers=event24 js0", "H: Handlers=event24 kbd")
+        self.assertEqual(hog_finish_bond.gamepad_event_nodes(decoy), [])
+
+    def test_empty_input(self):
+        self.assertEqual(hog_finish_bond.gamepad_event_nodes(""), [])
+
+
+class XpadneoRuleFileTests(unittest.TestCase):
+    def test_finds_both_upstream_rules(self):
+        listing = {
+            "/etc/udev/rules.d": [
+                "60-steam-input.rules",
+                "60-xpadneo.rules",
+                "70-xpadneo-disable-hidraw.rules",
+                "99-local.rules",
+            ],
+        }
+        self.assertEqual(
+            hog_finish_bond.xpadneo_rule_files(lambda d: listing.get(d, [])),
+            [
+                "/etc/udev/rules.d/60-xpadneo.rules",
+                "/etc/udev/rules.d/70-xpadneo-disable-hidraw.rules",
+            ],
+        )
+
+    def test_missing_rules_report_empty_not_an_exception(self):
+        # The regression this whole diagnose path exists for: nixpkgs' xpadneo
+        # installs the .ko alone, so this list came back empty on a system whose
+        # kernel log looked perfect.
+        listing = {"/etc/udev/rules.d": ["60-steam-input.rules", "99-local.rules"]}
+        self.assertEqual(
+            hog_finish_bond.xpadneo_rule_files(lambda d: listing.get(d, [])), []
+        )
+
+    def test_a_missing_directory_is_not_fatal(self):
+        def lister(d):
+            if d == "/etc/udev/rules.d":
+                return ["60-xpadneo.rules"]
+            raise AssertionError("absent dirs must be filtered by the caller")
+
+        listing = {"/etc/udev/rules.d": ["60-xpadneo.rules"]}
+        self.assertEqual(
+            hog_finish_bond.xpadneo_rule_files(lambda d: listing.get(d, [])),
+            ["/etc/udev/rules.d/60-xpadneo.rules"],
+        )
+
+
+class DiagnoseCommandTests(unittest.TestCase):
+    def test_every_node_is_probed_for_access(self):
+        cmds = hog_finish_bond.diagnose_commands(["event24"], ["hidraw8"])
+        argvs = [argv for _, argv in cmds]
+        self.assertIn(["getfacl", "/dev/input/event24"], argvs)
+        self.assertIn(["getfacl", "/dev/hidraw8"], argvs)
+        self.assertIn(
+            ["udevadm", "info", "--query=all", "--name=/dev/input/event24"], argvs
+        )
+
+    def test_probes_are_read_only(self):
+        # A diagnostic that can change state is not a diagnostic. No argv here
+        # may carry a mutating verb.
+        forbidden = {"pair", "trust", "remove", "connect", "disconnect", "block"}
+        for _, argv in hog_finish_bond.diagnose_commands(["event1"], ["hidraw0"]):
+            self.assertFalse(
+                forbidden.intersection(argv),
+                msg=f"mutating verb in diagnostic argv: {argv}",
+            )
+
+    def test_no_nodes_still_collects_the_log_and_bond_state(self):
+        labels = [label for label, _ in hog_finish_bond.diagnose_commands([], [])]
+        self.assertIn("xpadneo kernel log", labels)
+        self.assertIn("bonded devices", labels)
+
+
+class DiagnoseDispatchTests(unittest.TestCase):
+    def test_diagnose_flag_routes_to_diagnose_and_never_pairs(self):
+        called = {}
+
+        def fake_diagnose():
+            called["yes"] = True
+            return 0
+
+        with mock.patch.object(hog_finish_bond, "diagnose", fake_diagnose), \
+                mock.patch.object(
+                    hog_finish_bond, "collect_infos_until_action",
+                    lambda *a, **k: (_ for _ in ()).throw(
+                        AssertionError("--diagnose must not touch bonding")
+                    ),
+                ), _quiet():
+            self.assertEqual(hog_finish_bond.main(["prog", "--diagnose"]), 0)
+        self.assertTrue(called)
+
+    def test_help_mentions_diagnose(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(hog_finish_bond.main(["prog", "--help"]), 0)
+        self.assertIn("--diagnose", buf.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

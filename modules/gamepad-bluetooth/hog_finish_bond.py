@@ -300,11 +300,169 @@ def maybe_reconnect(mac: str, *, dry_run: bool) -> None:
         time.sleep(2)
 
 
+# ── Diagnostics ──────────────────────────────────────────────────────────────
+#
+# A pad that bonds and then delivers nothing cannot be diagnosed from bond state
+# alone: `Paired=yes Trusted=yes Connected=yes` is exactly what a working pad and
+# a silent one both look like. The split is one layer down, and the observations
+# that distinguish them are all read-only:
+#
+#   * is there an event stream at all          -> an evdev node exists, and
+#                                                 `evtest` on it shows events
+#   * can the user's processes open it          -> getfacl on the event node
+#   * did something take the hidraw node away   -> hidraw MODE/ACL, which is what
+#                                                 70-xpadneo-disable-hidraw does
+#                                                 and what SDL's HIDAPI backend
+#                                                 hijacks the pad through if it
+#                                                 is left readable
+#   * is that rule even installed               -> nixpkgs' xpadneo ships the .ko
+#                                                 ALONE, so historically it was
+#                                                 not; see default.nix's header
+#   * which quirks actually took effect         -> the module parameters, not the
+#                                                 modprobe.d file that requested
+#                                                 them
+#
+# The planning half is pure and unit-tested; only `diagnose` touches the system,
+# and it only ever reads.
+
+XPADNEO_PARAM_DIR = "/sys/module/hid_xpadneo/parameters"
+UDEV_RULE_DIRS = ("/etc/udev/rules.d", "/run/udev/rules.d", "/usr/lib/udev/rules.d")
+PROC_INPUT_DEVICES = "/proc/bus/input/devices"
+
+
+def gamepad_event_nodes(devices_text: str) -> List[str]:
+    """Event node names of joystick-class devices, from /proc/bus/input/devices.
+
+    Keyed on the `js` handler rather than on a name, for the same reason
+    `classify` ignores names: a device calling itself "Xbox" proves nothing, and
+    a real pad under a vendor alias would be missed.
+    """
+    nodes: List[str] = []
+    for block in devices_text.split("\n\n"):
+        handlers = re.search(r"^H:\s*Handlers=(.*)$", block, re.MULTILINE)
+        if not handlers:
+            continue
+        fields = handlers.group(1).split()
+        if not any(h.startswith("js") for h in fields):
+            continue
+        nodes.extend(h for h in fields if re.fullmatch(r"event\d+", h))
+    return nodes
+
+
+def xpadneo_rule_files(lister) -> List[str]:
+    """Installed udev rule files whose name mentions xpadneo.
+
+    `lister` takes a directory and returns its entries, so this is testable
+    without a filesystem. An empty result is the defect that made a bonded pad
+    deliver nothing, so it is reported as a FAILURE below, never as silence.
+    """
+    found: List[str] = []
+    for d in UDEV_RULE_DIRS:
+        for entry in sorted(lister(d)):
+            if "xpadneo" in entry:
+                found.append(f"{d}/{entry}")
+    return found
+
+
+def diagnose_commands(event_nodes: Sequence[str], hidraw_nodes: Sequence[str]) -> List[Tuple[str, List[str]]]:
+    """(label, argv) pairs for the external probes. Pure; nothing is run here."""
+    cmds: List[Tuple[str, List[str]]] = [
+        ("xpadneo kernel log", ["journalctl", "-k", "--no-pager", "-g", "xpadneo"]),
+        ("bonded devices", ["bluetoothctl", "devices", "Paired"]),
+        ("connected devices", ["bluetoothctl", "devices", "Connected"]),
+    ]
+    for node in event_nodes:
+        cmds.append((f"ACL on /dev/input/{node}", ["getfacl", f"/dev/input/{node}"]))
+        cmds.append(
+            (
+                f"udev tags on /dev/input/{node}",
+                ["udevadm", "info", "--query=all", f"--name=/dev/input/{node}"],
+            )
+        )
+    for node in hidraw_nodes:
+        # A hidraw node that is still readable is the whole bug: SDL's HIDAPI
+        # backend claims the pad through it instead of xpadneo's evdev stream.
+        cmds.append((f"ACL on /dev/{node}", ["getfacl", f"/dev/{node}"]))
+    return cmds
+
+
+def diagnose() -> int:
+    """Print everything needed to tell 'no events' from 'events nobody can read'."""
+    import glob
+    import os
+
+    rc = 0
+
+    rules = xpadneo_rule_files(lambda d: os.listdir(d) if os.path.isdir(d) else [])
+    print("== xpadneo udev rules installed ==")
+    if rules:
+        for r in rules:
+            print(f"  {r}")
+    else:
+        # Deliberately an error: this is the exact regression that let SDL grab
+        # the pad's hidraw node and left games with no input at all.
+        print(
+            "  NONE FOUND -- 60-xpadneo.rules / 70-xpadneo-disable-hidraw.rules are\n"
+            "  missing. nixpkgs' xpadneo package installs only the kernel module, so\n"
+            "  custom.gamepadBluetooth must install them; see the module header.",
+            file=sys.stderr,
+        )
+        rc = 1
+
+    print("\n== hid_xpadneo module parameters (what actually took effect) ==")
+    params = sorted(glob.glob(f"{XPADNEO_PARAM_DIR}/*"))
+    if not params:
+        print("  module not loaded (no " + XPADNEO_PARAM_DIR + ")", file=sys.stderr)
+        rc = 1
+    for path in params:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                print(f"  {os.path.basename(path)} = {fh.read().strip()}")
+        except OSError as exc:
+            print(f"  {os.path.basename(path)} = <unreadable: {exc}>")
+
+    try:
+        with open(PROC_INPUT_DEVICES, encoding="utf-8", errors="replace") as fh:
+            devices_text = fh.read()
+    except OSError as exc:
+        print(f"\ncould not read {PROC_INPUT_DEVICES}: {exc}", file=sys.stderr)
+        devices_text = ""
+        rc = 1
+
+    event_nodes = gamepad_event_nodes(devices_text)
+    print("\n== joystick-class event nodes ==")
+    if event_nodes:
+        for node in event_nodes:
+            print(f"  /dev/input/{node}")
+        print("  (run `evtest /dev/input/<node>` and press buttons: events here but")
+        print("   nothing in games means the fault is above the kernel, in SDL/Steam)")
+    else:
+        print("  none -- no pad is currently presenting a joystick to the kernel")
+
+    hidraw_nodes = [os.path.basename(p) for p in sorted(glob.glob("/dev/hidraw*"))]
+
+    for label, argv in diagnose_commands(event_nodes, hidraw_nodes):
+        print(f"\n== {label} ==")
+        try:
+            out = subprocess.run(
+                argv, capture_output=True, text=True, timeout=20, check=False
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"  <{argv[0]} unavailable: {exc}>")
+            continue
+        body = (out.stdout or out.stderr or "").strip()
+        print("  " + "\n  ".join(body.splitlines()) if body else "  <no output>")
+
+    return rc
+
+
 def main(argv: list[str]) -> int:
     dry_run = "--dry-run" in argv
     if "-h" in argv or "--help" in argv:
-        print("usage: hog_finish_bond.py [--dry-run]")
+        print("usage: hog_finish_bond.py [--dry-run | --diagnose]")
         return 0
+    if "--diagnose" in argv:
+        return diagnose()
     try:
         infos = collect_infos_until_action()
     except CollectError:
