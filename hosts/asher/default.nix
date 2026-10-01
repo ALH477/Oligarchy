@@ -137,6 +137,15 @@ in
   custom.terminus-dev.enable = true;
   custom.vm.dsp.enable = true;
 
+  # The system/admin terminal -- the window a GUI-launched
+  # `sudo nixos-rebuild switch` draws in, plus the security sweeps and the
+  # repo update checks. kitty stays the interactive default everywhere:
+  # $mod+Return, the scratchpads, TERMINAL and Hyprland's $terminal are all
+  # untouched, and .#terminal-contract asserts they stay that way.
+  # Velocitty is an X11 client, so these windows go through XWayland.
+  # See modules/terminal/README.md.
+  custom.terminal.velocitty.enable = true;
+
   # Window restore ONLY. autoLogin is deliberately OFF: it sets greetd's
   # initial_session, which skips tuigreet entirely and lands the boot on
   # hyprlock instead of the greeter (modules/session-resume.nix:178, and
@@ -156,6 +165,12 @@ in
   networking.firewall.blocklists.enable = true;
   hardware.cpuSecurity.enable = true;
   custom.oligarchyForge.enable = true;
+
+  # Exsecutor screensaver (modules/screensaver/): somnium's nine effects,
+  # presented fullscreen under hypridle. hypridle starts it at
+  # custom.screensaver.timeout (default 420, must stay < the 600 s lock rung)
+  # and stops it on resume and at DPMS-off. See modules/screensaver/README.md.
+  custom.screensaver.enable = true;
 
   # Windscribe vendor client (modules/windscribe-app): GUI, windscribe-cli and
   # the root helper. Mutually exclusive with custom.vpn — leave that one off.
@@ -225,6 +240,42 @@ in
       uuid = "a82fcfcf-e913-413e-ab4f-4a3b104b2de0";
       fsType = "btrfs";
       where = "/mnt/data";
+      # gvfs hides every filesystem listed in /etc/fstab from its volume
+      # monitor unless the mount options say otherwise, so this drive was
+      # mounted, readable and completely absent from Thunar's sidebar --
+      # indistinguishable, from the desktop, from a disk that never came up.
+      # `x-gvfs-show` is the documented opt-back-in. It is a USERSPACE mount
+      # option: mount(8) strips the `x-` prefix set rather than handing it to
+      # the kernel, so btrfs never sees it and nothing here depends on it.
+      #
+      # Ownership of the mountpoint is deliberately NOT set from here. It is
+      # filesystem state on the btrfs top level, so one chown outlives every
+      # reboot and every rebuild, and modules/mounts.nix explains why the
+      # tmpfiles rule leaves mode/owner as `-`: `nofail` is unconditional, so
+      # systemd-tmpfiles is not ordered after this mount and would chown the
+      # empty mountpoint underneath it instead -- a silent no-op.
+      #
+      # ── `where` is a published API to Steam, not an internal detail ────────
+      #
+      # This volume carries the ~392 G Steam library at
+      # `@home/asherl/.local/share/Steam` (an inherited CachyOS home preserved
+      # on the btrfs top level). Steam records a library root as an ABSOLUTE
+      # path, in TWO files -- `~/.local/share/Steam/config/libraryfolders.vdf`
+      # and `~/.local/share/Steam/steamapps/libraryfolders.vdf`, which are
+      # separate inodes despite `~/.steam/steam` being a symlink to the same
+      # directory -- so changing `where` detaches the library. The failure is
+      # SILENT in the worst way: Steam reports no error, it simply shows every
+      # installed game as not installed and offers to download it again.
+      #
+      # That is exactly what the move onto this declarative mount did. The old
+      # udisks2 path was `/run/media/asher/<uuid>/@home/asherl/...`; nothing on
+      # disk changed, only the prefix. `appmanifest_*.acf` stores `installdir`
+      # RELATIVE to the library root, so the repair is editing the recorded
+      # root in those two vdf files -- never moving data, and never recreating
+      # the `/run/media` path this module exists to get rid of.
+      #
+      # If you change `where`, fix both vdf files in the same change.
+      extraOptions = [ "x-gvfs-show" ];
       swapfile = {
         enable = true;
         sizeGB = 32;

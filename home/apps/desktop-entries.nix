@@ -26,10 +26,12 @@ let
 in
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Oligarchy Desktop Entries
-# Makes project CLI tools discoverable in Wofi / app launchers.
-# Each entry opens a themed kitty terminal running the command.
-# ─────────────────────────────────────────────────────────────────────────────
+  # Oligarchy Desktop Entries
+  # Makes project CLI tools discoverable in Wofi / app launchers.
+  # Each entry opens a themed kitty terminal running the command -- except
+  # "System Update", which is an admin action and therefore goes through
+  # oligarchy-system-term (custom.terminal.system). See modules/terminal/.
+  # ─────────────────────────────────────────────────────────────────────────────
 
 {
   home.file.".local/share/applications/oligarchy.desktop".text = ''
@@ -49,7 +51,7 @@ in
     Name=System Update
     Comment=Guided NixOS system rearmament
     Icon=system-software-update
-    Exec=${pkgs.kitty}/bin/kitty --class oligarchy-update -e oligarchy-update
+    Exec=/run/current-system/sw/bin/oligarchy-system-term --class oligarchy-update --hold -- oligarchy-update
     Categories=System;
     Terminal=false
   '';

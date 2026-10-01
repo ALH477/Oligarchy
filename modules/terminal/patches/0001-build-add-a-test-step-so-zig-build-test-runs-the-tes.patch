@@ -1,0 +1,99 @@
+From be0c05c5dc92ed4a0e93ddb3658252049f7b2229 Mon Sep 17 00:00:00 2001
+From: ALH477 <demodllc@gmail.com>
+Date: Sun, 27 Sep 2026 11:40:46 -0700
+Subject: [PATCH 1/2] build: add a test step so `zig build test` runs the tests
+ in src/
+
+AGENTS.md documents `ZT_UPDATE_GOLDEN=1 zig build test` under "Rendering
+tests", but build.zig declares no `test` step, so that command fails with
+"no step named 'test'" and none of the 95 `test` blocks in src/ have ever
+been run by the build system. vt.zig alone carries 32 of them; scheme.zig
+10, kitty.zig 9, key.zig 7, csi.zig 6.
+
+Rooted at a new src/test_all.zig rather than at src/main.zig: Zig only
+analyses files that are actually referenced, so rooting at main.zig would
+silently collect a subset and still report success.
+
+The test module deliberately does not link X11 -- test_all.zig pulls in
+neither platform/linux.zig nor main.zig -- so `zig build test` works in a
+container or CI image with no X development libraries present.
+
+    $ zig build test --summary all
+    Build Summary: 3/3 steps succeeded; 96/96 tests passed
+---
+ build.zig        | 24 ++++++++++++++++++++++++
+ src/test_all.zig | 30 ++++++++++++++++++++++++++++++
+ 2 files changed, 54 insertions(+)
+ create mode 100644 src/test_all.zig
+
+diff --git a/build.zig b/build.zig
+index 6d3e2b3..6b53fa6 100644
+--- a/build.zig
++++ b/build.zig
+@@ -20,6 +20,30 @@ pub fn build(b: *std.Build) void {
+     b.installFile("icon.png", "share/icons/hicolor/512x512/apps/velocitty.png");
+     b.installFile("velocitty.1", "share/man/man1/velocitty.1");
+ 
++    // Unit tests. `src/` carries 95 `test` blocks -- vt.zig alone has 32 --
++    // and without a step here none of them have ever been run by `zig build`,
++    // even though AGENTS.md documents `zig build test`.
++    //
++    // Rooted at a file that pulls in every module rather than at main.zig:
++    // Zig only analyses (and therefore only collects tests from) files that
++    // are actually referenced, so rooting at main.zig would silently run a
++    // subset and report success.
++    const test_mod = b.createModule(.{
++        .root_source_file = b.path("src/test_all.zig"),
++        .target = target,
++        .optimize = optimize,
++        .link_libc = true,
++    });
++    // No addLinuxX11 here: test_all.zig deliberately does not pull in
++    // platform/linux.zig or main.zig, so the suite needs no X11 at all. That
++    // keeps `zig build test` runnable in a container or CI image with no X
++    // development libraries installed.
++    addStbTrueType(test_mod, b);
++    const unit_tests = b.addTest(.{ .root_module = test_mod });
++    const run_unit_tests = b.addRunArtifact(unit_tests);
++    const test_step = b.step("test", "Run the unit tests in src/");
++    test_step.dependOn(&run_unit_tests.step);
++
+     // Standard run step
+     const run_cmd = b.addRunArtifact(exe);
+     run_cmd.step.dependOn(b.getInstallStep());
+diff --git a/src/test_all.zig b/src/test_all.zig
+new file mode 100644
+index 0000000..a696ee2
+--- /dev/null
++++ b/src/test_all.zig
+@@ -0,0 +1,30 @@
++//! Test aggregator: referencing each module forces Zig to analyse it, which
++//! is what makes its `test` blocks part of `zig build test`. Without this,
++//! rooting the test step at main.zig would collect only the subset of modules
++//! main.zig happens to reference, and report success for the rest.
++test {
++    _ = @import("c0.zig");
++    _ = @import("c1.zig");
++    _ = @import("circbuffer.zig");
++    _ = @import("csi.zig");
++    _ = @import("dcs.zig");
++    _ = @import("debug.zig");
++    _ = @import("draw.zig");
++    _ = @import("draw/box.zig");
++    _ = @import("esc.zig");
++    _ = @import("grid.zig");
++    _ = @import("key.zig");
++    _ = @import("kitty.zig");
++    _ = @import("osc.zig");
++    _ = @import("scheme.zig");
++    _ = @import("select.zig");
++    _ = @import("simd.zig");
++    _ = @import("sixel.zig");
++    _ = @import("type.zig");
++    _ = @import("type/atlas.zig");
++    _ = @import("type/cache.zig");
++    _ = @import("type/cbdt.zig");
++    _ = @import("type/eastasian.zig");
++    _ = @import("type/truetype.zig");
++    _ = @import("vt.zig");
++}

@@ -840,7 +840,7 @@
           # IceWM Menu Configuration
           # Basic applications menu for backup system
 
-          prog Terminal terminal "/run/current-system/sw/bin/kitty"
+          prog Terminal terminal "/run/current-system/sw/bin/${config.custom.terminal.user.package.meta.mainProgram}"
           prog File Manager folder "/run/current-system/sw/bin/thunar"
           prog Web Browser browser "/run/current-system/sw/bin/firefox"
           prog Text Editor editor "/run/current-system/sw/bin/kate"
@@ -852,8 +852,19 @@
             prog "Display Settings" display "/run/current-system/sw/bin/systemsettings5"
             prog "Network Settings" network "/run/current-system/sw/bin/nm-connection-editor"
             separator
+            # FLAGGED, not fixed: this opens /etc/nixos/configuration.nix,
+            # which this distro does not maintain -- nano would create an
+            # empty file that nothing ever reads. Deciding what it should
+            # point at is a separate call.
             prog "NixOS Config" terminal "kitty -e sudo nano /etc/nixos/configuration.nix"
-            prog "Rebuild System" terminal "kitty -e sudo nixos-rebuild switch"
+            # Was a bare rebuild invocation with no --flake, so it read the
+            # /etc/nixos this distro does not maintain and could never have
+            # worked here. Routed through oligarchy-update rather than
+            # repaired in place: that script already derives $FLAKE_DIR#$HOST
+            # and the pure-vs---impure flag set, and this file does not know
+            # which host it is being evaluated as. IceWM is an X11 session,
+            # so velocitty runs here with no XWayland layer at all.
+            prog "Rebuild System" terminal "/run/current-system/sw/bin/oligarchy-system-term --class oligarchy-update --hold -- oligarchy-update"
             separator
             prog "Logout" logout "icewm-session --logout"
             prog "Reboot" reboot "systemctl reboot"
@@ -927,6 +938,20 @@
         package = pkgs.hyprland;
       };
       systemd.defaultUnit = lib.mkForce "graphical.target";
+
+      # Declare the interactive terminal to the freedesktop Default Terminal
+      # Execution spec. Nothing in this tree did that before, and the default
+      # answer was WRONG: with no xdg-terminals.list, `xdg-terminal-exec
+      # --print-id` selected kitty-open.desktop -- kitty's URL launcher
+      # (Exec=kitty +open %U, NoDisplay=true), which carries a
+      # TerminalEmulator category but no X-TerminalArgExec=, so it qualifies
+      # only under the utility's compat mode. Anything asking this desktop for
+      # a terminal got `kitty +open %U -e <cmd>`.
+      #
+      # This names the USER terminal only. It is not, and cannot be, how the
+      # system/admin terminal is chosen -- the spec has no purpose dimension.
+      # See modules/terminal/README.md.
+      custom.terminal.xdg.enable = true;
 
       xdg.portal = {
         enable = true;

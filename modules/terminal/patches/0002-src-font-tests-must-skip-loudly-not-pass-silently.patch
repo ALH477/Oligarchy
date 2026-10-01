@@ -1,0 +1,187 @@
+From 0b24b61e2fe59775cc0076167a1d2e022fca70a7 Mon Sep 17 00:00:00 2001
+From: ALH477 <demodllc@gmail.com>
+Date: Sun, 27 Sep 2026 11:40:46 -0700
+Subject: [PATCH 2/2] src: font tests must skip loudly, not pass silently
+
+Five tests open a system font with `catch return`. A bare `return` from a
+test body reports as a PASS, so on any machine without these exact paths
+the suite is green while asserting nothing -- including an Arch box that
+simply lacks ttf-liberation or ttf-iosevka-term-nerd.
+
+    src/type.zig            "glyph and layout from system font"
+                            "color emoji glyph"
+                            "bold face is a different glyph"
+    src/type/truetype.zig   "rasterize system font"
+    src/type/cbdt.zig       "noto color emoji grin"
+
+Route them through a small helper that returns error.SkipZigTest and
+prints the path instead. The test runner counts skips separately, so the
+result is honest either way. A failure *after* a successful open stays a
+real error rather than a skip.
+
+    before:  96/96 tests passed          (5 of them asserting nothing)
+    after:   91 pass, 5 skip (96 total)  (each skip printed by path)
+---
+ src/test_all.zig      |  1 +
+ src/testfont.zig      | 31 +++++++++++++++++++++++++++++++
+ src/type.zig          | 19 ++++++-------------
+ src/type/cbdt.zig     |  7 ++-----
+ src/type/truetype.zig |  7 ++-----
+ 5 files changed, 42 insertions(+), 23 deletions(-)
+ create mode 100644 src/testfont.zig
+
+diff --git a/src/test_all.zig b/src/test_all.zig
+index a696ee2..cef9780 100644
+--- a/src/test_all.zig
++++ b/src/test_all.zig
+@@ -26,5 +26,6 @@ test {
+     _ = @import("type/cbdt.zig");
+     _ = @import("type/eastasian.zig");
+     _ = @import("type/truetype.zig");
++    _ = @import("testfont.zig");
+     _ = @import("vt.zig");
+ }
+diff --git a/src/testfont.zig b/src/testfont.zig
+new file mode 100644
+index 0000000..3d93176
+--- /dev/null
++++ b/src/testfont.zig
+@@ -0,0 +1,31 @@
++//! Test-only helper: open a system font, or skip the test *loudly*.
++//!
++//! The font tests used to `catch return` on a missing file. A bare `return`
++//! from a test body reports as a PASS, so on any machine that does not have
++//! these exact paths installed the suite was green while asserting nothing --
++//! and the paths are distribution-specific, so that is most machines, and any
++//! Arch box without ttf-liberation or ttf-iosevka-term-nerd.
++//!
++//! `error.SkipZigTest` is the Zig idiom for "not run here": the test runner
++//! counts it separately and prints it. A skip that is reported is honest; a
++//! skip that looks like a pass is not.
++const std = @import("std");
++
++pub fn openOrSkip(io: std.Io, path: []const u8) !std.Io.File {
++    return std.Io.Dir.openFileAbsolute(io, path, .{}) catch {
++        std.debug.print("SKIP: font not installed: {s}\n", .{path});
++        return error.SkipZigTest;
++    };
++}
++
++/// Read a whole font file, skipping the test if it is not installed.
++/// A failure *after* a successful open is a real error, not a skip.
++pub fn readOrSkip(io: std.Io, gpa: std.mem.Allocator, path: []const u8) ![]u8 {
++    const file = try openOrSkip(io, path);
++    defer file.close(io);
++    const n = try file.length(io);
++    const bytes = try gpa.alloc(u8, n);
++    errdefer gpa.free(bytes);
++    _ = try file.readPositionalAll(io, bytes, 0);
++    return bytes;
++}
+diff --git a/src/type.zig b/src/type.zig
+index bc5e53d..e5c66e1 100644
+--- a/src/type.zig
++++ b/src/type.zig
+@@ -15,6 +15,7 @@
+ //! - Unicode Emoji - UAX#51 - https://www.unicode.org/reports/tr51/
+ 
+ const std = @import("std");
++const testfont = @import("testfont.zig");
+ const assert = std.debug.assert;
+ 
+ pub const TrueType = @import("type/truetype.zig");
+@@ -507,12 +508,8 @@ test "context init and addFont" {
+ test "glyph and layout from system font" {
+     const gpa = std.testing.allocator;
+     const io = std.Io.Threaded.global_single_threaded.io();
+-    const file = std.Io.Dir.openFileAbsolute(io, "/usr/share/fonts/liberation/LiberationMono-Regular.ttf", .{}) catch return;
+-    defer file.close(io);
+-    const n = file.length(io) catch return;
+-    const bytes = try gpa.alloc(u8, n);
++    const bytes = try testfont.readOrSkip(io, gpa, "/usr/share/fonts/liberation/LiberationMono-Regular.ttf");
+     defer gpa.free(bytes);
+-    _ = file.readPositionalAll(io, bytes, 0) catch return;
+ 
+     var ctx = try Context.init(gpa, .{
+         .atlas_width = 256,
+@@ -560,12 +557,8 @@ test "glyph and layout from system font" {
+ test "color emoji glyph" {
+     const gpa = std.testing.allocator;
+     const io = std.Io.Threaded.global_single_threaded.io();
+-    const file = std.Io.Dir.openFileAbsolute(io, "/usr/share/fonts/noto/NotoColorEmoji.ttf", .{}) catch return;
+-    defer file.close(io);
+-    const n = file.length(io) catch return;
+-    const bytes = try gpa.alloc(u8, n);
++    const bytes = try testfont.readOrSkip(io, gpa, "/usr/share/fonts/noto/NotoColorEmoji.ttf");
+     defer gpa.free(bytes);
+-    _ = file.readPositionalAll(io, bytes, 0) catch return;
+ 
+     var ctx = try Context.init(gpa, .{ .atlas_width = 256, .atlas_height = 256, .cache_capacity = 8 });
+     defer ctx.deinit();
+@@ -582,11 +575,11 @@ test "bold face is a different glyph" {
+     const regular_path = "/usr/share/fonts/TTF/IosevkaNerdFontMono-Regular.ttf";
+     const bold_path = "/usr/share/fonts/TTF/IosevkaNerdFontMono-Bold.ttf";
+     const italic_path = "/usr/share/fonts/TTF/IosevkaNerdFontMono-Italic.ttf";
+-    const reg_file = std.Io.Dir.openFileAbsolute(io, regular_path, .{}) catch return;
++    const reg_file = try testfont.openOrSkip(io, regular_path);
+     defer reg_file.close(io);
+-    const bold_file = std.Io.Dir.openFileAbsolute(io, bold_path, .{}) catch return;
++    const bold_file = try testfont.openOrSkip(io, bold_path);
+     defer bold_file.close(io);
+-    const italic_file = std.Io.Dir.openFileAbsolute(io, italic_path, .{}) catch return;
++    const italic_file = try testfont.openOrSkip(io, italic_path);
+     defer italic_file.close(io);
+ 
+     const load = struct {
+diff --git a/src/type/cbdt.zig b/src/type/cbdt.zig
+index c469b0d..0eda01a 100644
+--- a/src/type/cbdt.zig
++++ b/src/type/cbdt.zig
+@@ -1,6 +1,7 @@
+ //! CBDT/CBLC color bitmaps (Noto Color Emoji) + cmap / hhea for glyf-less fonts.
+ 
+ const std = @import("std");
++const testfont = @import("../testfont.zig");
+ 
+ const c = struct {
+     extern fn zt_stbi_load_rgba(data: [*]const u8, len: c_int, w: *c_int, h: *c_int, out: *?[*]u8) callconv(.c) c_int;
+@@ -371,12 +372,8 @@ fn readU32(s: []const u8, off: usize) ?u32 {
+ test "noto color emoji grin" {
+     const gpa = std.testing.allocator;
+     const io = std.Io.Threaded.global_single_threaded.io();
+-    const file = std.Io.Dir.openFileAbsolute(io, "/usr/share/fonts/noto/NotoColorEmoji.ttf", .{}) catch return;
+-    defer file.close(io);
+-    const n = file.length(io) catch return;
+-    const bytes = try gpa.alloc(u8, n);
++    const bytes = try testfont.readOrSkip(io, gpa, "/usr/share/fonts/noto/NotoColorEmoji.ttf");
+     defer gpa.free(bytes);
+-    _ = file.readPositionalAll(io, bytes, 0) catch return;
+ 
+     const font = ColorFont.parse(bytes) orelse return error.InvalidFont;
+     const gid = font.glyphIndex(0x1F600) orelse return error.GlyphNotFound;
+diff --git a/src/type/truetype.zig b/src/type/truetype.zig
+index 3515035..4f9c871 100644
+--- a/src/type/truetype.zig
++++ b/src/type/truetype.zig
+@@ -1,6 +1,7 @@
+ //! TrueType / sfnt parser and glyph rasterizer (stb_truetype).
+ 
+ const std = @import("std");
++const testfont = @import("../testfont.zig");
+ const assert = std.debug.assert;
+ const Cbdt = @import("cbdt.zig");
+ 
+@@ -209,12 +210,8 @@ test "open rejects junk" {
+ test "rasterize system font" {
+     const gpa = std.testing.allocator;
+     const io = std.Io.Threaded.global_single_threaded.io();
+-    const file = std.Io.Dir.openFileAbsolute(io, "/usr/share/fonts/liberation/LiberationMono-Regular.ttf", .{}) catch return;
+-    defer file.close(io);
+-    const n = file.length(io) catch return;
+-    const bytes = try gpa.alloc(u8, n);
++    const bytes = try testfont.readOrSkip(io, gpa, "/usr/share/fonts/liberation/LiberationMono-Regular.ttf");
+     defer gpa.free(bytes);
+-    _ = file.readPositionalAll(io, bytes, 0) catch return;
+ 
+     const font = try Font.open(bytes);
+     const gid = (try font.glyphIndex('A')) orelse return error.GlyphNotFound;

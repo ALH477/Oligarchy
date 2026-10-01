@@ -217,3 +217,15 @@ jobs:
 
       - name: nix build .#captive-portal-contract
         run: nix build --no-update-lock-file --print-build-logs .#captive-portal-contract
+
+      # terminal-contract is the third. It costs no extra fetch here: the
+      # "Evaluate all hosts" step above already evaluates nixos-asher, which
+      # has custom.terminal.velocitty enabled and so already pulls the
+      # velocitty and nixpkgs-zig inputs. What it guards is the half of the
+      # contract that would otherwise rot in silence -- that kitty is STILL
+      # the user default (TERMINAL, $terminal, the scratchpads, the IceWM
+      # Terminal entry) after velocitty became the system terminal. Nothing
+      # breaks visibly if someone "tidies up" by pointing those at velocitty
+      # too, which is exactly why it is asserted rather than assumed.
+      - name: nix build .#terminal-contract
+        run: nix build --no-update-lock-file --print-build-logs .#terminal-contract
