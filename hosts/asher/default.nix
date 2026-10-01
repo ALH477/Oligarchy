@@ -166,6 +166,12 @@ in
   hardware.cpuSecurity.enable = true;
   custom.oligarchyForge.enable = true;
 
+  # Exsecutor screensaver (modules/screensaver/): somnium's nine effects,
+  # presented fullscreen under hypridle. hypridle starts it at
+  # custom.screensaver.timeout (default 420, must stay < the 600 s lock rung)
+  # and stops it on resume and at DPMS-off. See modules/screensaver/README.md.
+  custom.screensaver.enable = true;
+
   # Windscribe vendor client (modules/windscribe-app): GUI, windscribe-cli and
   # the root helper. Mutually exclusive with custom.vpn — leave that one off.
   custom.windscribeApp.enable = true;
@@ -248,6 +254,27 @@ in
       # tmpfiles rule leaves mode/owner as `-`: `nofail` is unconditional, so
       # systemd-tmpfiles is not ordered after this mount and would chown the
       # empty mountpoint underneath it instead -- a silent no-op.
+      #
+      # ── `where` is a published API to Steam, not an internal detail ────────
+      #
+      # This volume carries the ~392 G Steam library at
+      # `@home/asherl/.local/share/Steam` (an inherited CachyOS home preserved
+      # on the btrfs top level). Steam records a library root as an ABSOLUTE
+      # path, in TWO files -- `~/.local/share/Steam/config/libraryfolders.vdf`
+      # and `~/.local/share/Steam/steamapps/libraryfolders.vdf`, which are
+      # separate inodes despite `~/.steam/steam` being a symlink to the same
+      # directory -- so changing `where` detaches the library. The failure is
+      # SILENT in the worst way: Steam reports no error, it simply shows every
+      # installed game as not installed and offers to download it again.
+      #
+      # That is exactly what the move onto this declarative mount did. The old
+      # udisks2 path was `/run/media/asher/<uuid>/@home/asherl/...`; nothing on
+      # disk changed, only the prefix. `appmanifest_*.acf` stores `installdir`
+      # RELATIVE to the library root, so the repair is editing the recorded
+      # root in those two vdf files -- never moving data, and never recreating
+      # the `/run/media` path this module exists to get rid of.
+      #
+      # If you change `where`, fix both vdf files in the same change.
       extraOptions = [ "x-gvfs-show" ];
       swapfile = {
         enable = true;

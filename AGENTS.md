@@ -54,6 +54,7 @@ Comments next to the code are load-bearing. A 400-line module is often 300 lines
 12. **DCF Docker images are `:latest` and off.** Do not enable `custom.dcfCommunityNode` / `custom.dcfIdentity` until those images are digests. Bind ports in `modules/hydramesh.nix` must match `modules/dcf-community-node.nix`.
 13. **Path subflakes:** extra inputs in e.g. `modules/minecraft/flake.nix` are **not** passed by the parent lock (`flake.lock` `minecraft.inputs`). Prefer `fetchFromGitHub` inside the subflake, or `nix flake lock` at the repo root after adding inputs. `outputs = { self, nixpkgs, … }:` with new required args will eval-fail the whole OS.
 14. **Do not `git add -A`.** Unstage `.hermes/`, tarballs, literal `~/` MCP audit dirs, `target/`.
+15. **Never grant a Bluetooth Xbox pad's hidraw node `uaccess`.** It is the inverse of the fix. nixpkgs' `xpadneo` package installs the kernel module alone — no udev rules — so `70-xpadneo-disable-hidraw.rules`, which sets the hidraw node `MODE:="0000"` and `TAG-="uaccess"`, was absent and SDL's HIDAPI backend claimed the pad through the raw node instead of xpadneo's evdev stream: flawless kernel log, zero input in games. `modules/gamepad-bluetooth/` installs both rules from the `xpadneo-src` input. See `modules/gamepad-bluetooth/README.md`.
 
 ## Adding an MCP aspect
 

@@ -276,6 +276,35 @@
       flake = false;
     };
 
+    # xpadneo (github:atar-axis/xpadneo) — the Bluetooth Xbox pad driver, as a
+    # SOURCE input rather than the nixpkgs package, for two reasons.
+    #
+    # First, nixpkgs' xpadneo derivation installs the kernel module and nothing
+    # else: its setSourceRoot points at hid-xpadneo/src, one directory below
+    # upstream's etc-udev-rules.d/, and installTargets is `modules_install`
+    # alone. Upstream installs its udev rules from a dkms.post_install hook that
+    # a Nix build never runs, so the rules were simply absent — and one of them,
+    # 70-xpadneo-disable-hidraw.rules, is what stops SDL's HIDAPI backend
+    # claiming a pad through its raw hidraw node instead of xpadneo's translated
+    # evdev stream. Without it a pad bonds, binds, logs a flawless probe and
+    # delivers nothing to games. modules/gamepad-bluetooth/ installs both rules
+    # from this tree.
+    #
+    # Second, nixos-25.11 pins 0.9.7, whose rules trigger on `ACTION=="add"`;
+    # 0.10 widened them to `ACTION!="remove"`, and under systemd 258 the narrow
+    # form lets the first connect work while reconnects fall back to hidraw.
+    #
+    # Pinned to a tag here rather than fetched inside the module, per the "pin
+    # via flake inputs, not ad-hoc fetches" rule in AGENTS.md. Lazy: nothing
+    # fetches it unless custom.gamepadBluetooth is enabled. Delete this input
+    # and go back to config.boot.kernelPackages.xpadneo once nixpkgs stable
+    # ships >= 0.10.4 WITH the udev rules packaged — the version alone is not
+    # enough, the rules are the point.
+    xpadneo-src = {
+      url = "github:atar-axis/xpadneo/v0.10.4";
+      flake = false;
+    };
+
     # Zig 0.16 for the velocitty build, and for nothing else. Velocitty's
     # build.zig.zon sets `minimum_zig_version = 0.16.0`, and zig refuses a
     # build outright below it. Our nixos-25.11 pin and the nixpkgs-unstable
@@ -1967,6 +1996,24 @@
         # give. `gamepad-bond-policy-tests` would be a more honest name for
         # this attribute; not renamed here because it's load-bearing in
         # CLAUDE.md, docs and muscle memory — a rename is a separate call.
+        #
+        # Since then it also covers `--diagnose`'s pure halves — which event
+        # nodes count as a pad, which udev rules are considered installed, and
+        # that no diagnostic argv can mutate bond state. That last one matters:
+        # the whole point of the verb is to be safe to run blind on a machine
+        # whose pad is already misbehaving.
+        #
+        # Still not covered, and this is the gap that actually bit: whether the
+        # xpadneo udev rules are PRESENT in a built system. nixpkgs' xpadneo
+        # derivation installs the kernel module alone, so for as long as this
+        # repo relied on `hardware.xpadneo.enable` the pad bonded, bound, logged
+        # a flawless probe and delivered nothing to games, because
+        # 70-xpadneo-disable-hidraw.rules was never installed and SDL's HIDAPI
+        # backend claimed the pad through the raw node. Nothing here would have
+        # noticed. The guard that exists now lives in the rules derivation
+        # itself (modules/gamepad-bluetooth/default.nix): it fails the build if
+        # either rule file is absent from upstream's source tree, so an upstream
+        # layout change can no longer install less and stay quiet.
         #
         # Run on demand:  nix build .#gamepad-bluetooth-tests
         # ════════════════════════════════════════════════════════════════════
