@@ -605,9 +605,12 @@
 
         archibaldOS = {
           enable = true;
+          # NetJack2: the guest runs the manager and the DeMoD engine; this
+          # host (`systemctl --user start dsp-netjack`, or `dsp-arm on`) and
+          # any companion join it. Rate and period are the GUEST's JACK, the
+          # image is built from them (flake.nix, mkDspImage).
           netjack = {
-            enable = true; # NETJACK routes processed audio back to host
-            sourcePort = 4713;
+            enable = true;
             bufferSize = 32; # 32 frames @ 96kHz = 0.33ms period, 0.67ms buffer
             sampleRate = 96000;
             channels = 2;

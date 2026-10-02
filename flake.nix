@@ -104,11 +104,23 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # ArchibaldOS DSP coprocessor (uncomment when available)
-    # archibaldos = {
-    #   url = "github:YOUR_ORG/archibaldos";
-    #   inputs.nixpkgs.follows = "nixpkgs";
-    # };
+    # ArchibaldOS (github:ALH477/ArchibaldOS) — the DSP coprocessor guest's
+    # roles: the NetJack2 manager, the DeMoD engine and the control bridge
+    # (its nixosModules), and through its own `demod` input DeMoD's engine
+    # packages. Only `dspGuestModules` below reads it.
+    #
+    # The lock pins the branch that carries those modules until they reach
+    # ArchibaldOS's main, the same arrangement as `exsecutor` below. It
+    # follows our nixpkgs, so the guest has one nixpkgs and DeMoD's engine
+    # builds against nixos-25.11 (measured: demod-orchestrator, demod-rt and
+    # demod-remote-bridge all build).
+    archibaldos = {
+      url = "git+https://github.com/ALH477/ArchibaldOS?ref=ccr-08f057a2-l4wyo1&shallow=1";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.chaotic.follows = "chaotic";
+      inputs.nixos-hardware.follows = "nixos-hardware";
+      inputs.nixos-generators.follows = "nixos-generators";
+    };
 
     # VM Manager - Hybrid VM management
     vm-manager.url = "path:./vm-manager";
@@ -352,8 +364,8 @@
     , nnnvim
     , yara-rules
     , trvthnvke
-    , # archibaldos,
-      ...
+    , archibaldos
+    , ...
     } @ inputs:
 
     let
@@ -376,11 +388,50 @@
       # Common specialArgs passed to all modules
       specialArgs = {
         inherit inputs nixpkgs-unstable chaotic;
-        # Uncomment when archibaldos is available:
-        # inherit archibaldos;
         inherit vm-manager dsp-ctl oligarchy-forge mcp-servers hydramesh;
         inherit nnnvim;
         inherit demod-talk oligarchy-vault reliquary;
+      };
+
+      # ════════════════════════════════════════════════════════════════════════
+      # The DSP coprocessor guest (modules/dsp-guest.nix), built FROM the host
+      # that boots it. The guest's addresses, MAC, ports, rate, period and ssh
+      # keys are the host's custom.vm.dsp values (and custom.user keys), so
+      # the two halves cannot disagree, and a host-side option is never a
+      # setting that silently does nothing to the guest.
+      # ════════════════════════════════════════════════════════════════════════
+      dspGuestModules = [
+        archibaldos.nixosModules.netjack
+        archibaldos.nixosModules.demod-engine
+        archibaldos.nixosModules.dsp-control-bridge
+        { archibald.engine.packages = archibaldos.inputs.demod.packages.${system}; }
+        ./modules/dsp-guest.nix
+      ];
+      dspGuestFor = config:
+        let
+          d = config.custom.vm.dsp;
+          r = d.network.routed;
+        in
+        {
+          network = d.network.mode;
+          address = r.guestAddress;
+          hostAddress = r.hostAddress;
+          prefixLength = r.prefixLength;
+          mac = r.guestMac;
+          netjack = d.archibaldOS.netjack.enable;
+          netjackPort = d.archibaldOS.netjack.port;
+          sampleRate = d.archibaldOS.netjack.sampleRate;
+          period = d.archibaldOS.netjack.bufferSize;
+          authorizedKeys = config.custom.user.sshAuthorizedKeys;
+        };
+      # `qcow-efi`, NOT `qcow`: the host boots it under OVMF, and the image it
+      # replaced had no EFI system partition — OVMF found nothing, fell
+      # through to PXE, and sat in the netboot loop. A BIOS image here
+      # silently reproduces exactly that failure.
+      mkDspImage = guest: nixos-generators.nixosGenerate {
+        inherit system;
+        format = "qcow-efi";
+        modules = dspGuestModules ++ [{ oligarchy.dspGuest = guest; }];
       };
 
       # ════════════════════════════════════════════════════════════════════════
@@ -535,6 +586,14 @@
         # See modules/terminal/README.md.
         ./modules/terminal
 
+        # custom.companions — the WireGuard hub and `oligarchy-companion`, for
+        # commanding ArchibaldOS companion machines (an older laptop or tablet
+        # running JACK, driven through dsp-ctl). Opt-in, defaults OFF; disabled
+        # it emits nothing, so no ISO mkForce. Read-write and it reaches other
+        # machines, so it stays off the MCP surface. See
+        # modules/companions/README.md.
+        ./modules/companions
+
         ./modules/secure-boot.nix
         ./modules/agentic-local-ai.nix
         # oligarchy-mcp.nix removed — replaced by mcp-servers.nixosModules.default
@@ -639,28 +698,31 @@
         esac
         echo "Suggested flake target: $target"
         echo
-        echo "Next steps:"
-        echo "  1. Partition + mount your disks under /mnt as usual."
-        echo "  2. nixos-generate-config --root /mnt --show-hardware-config > /tmp/hw.nix"
-        echo "  3. Copy the filesystems section of /tmp/hw.nix into the matching"
-        echo "     hosts/<target>/hardware-configuration.nix, replacing the"
-        echo "     FILL-IN-*-UUID markers (or modules/hardware-configuration.nix"
-        echo "     for the nixos/Framework-16 target)."
-        echo "  4. sudo nixos-install --flake <path-to-flake>#<target>"
+        echo "To install:"
+        echo "  - Graphical: run the installer and pick this target on its Target page."
+        echo "    It installs Oligarchy itself, with your language, keyboard and time zone."
+        echo "  - From a TTY: partition + mount your disks under /mnt, then"
+        echo "      sudo oligarchy-install --profile <target> --user <name> --hostname <host>"
+        echo "  Either way /etc/nixos on the new system is this flake. Rebuild it with"
+        echo "      sudo nixos-rebuild switch --flake /etc/nixos#installed"
         echo
 
-        # The locale warning goes in front of the user HERE, on the ISO,
-        # before they make the choice they are about to lose: a Calamares
-        # install writes /etc/locale.conf + /etc/vconsole.conf + /etc/localtime
-        # and adopting this flake throws all three away unless they carry them
-        # across. `oligarchy-adopt` reads exactly those files back.
+        # The locale warning goes in front of the user HERE, on the ISO.
+        # The installer now writes the locale into custom.locale.* itself
+        # (installer/installed.nix); the adopt path remains for a machine
+        # installed some other way -- plain NixOS from this ISO, or another
+        # distribution's installer -- whose /etc/locale.conf, vconsole.conf and
+        # localtime adopting this flake would throw away. `oligarchy-adopt`
+        # reads exactly those files back.
         echo "== Locale (what this install is about to set) =="
         if command -v localectl >/dev/null 2>&1; then
           localectl status 2>/dev/null | sed 's/^/  /' || echo "  localectl produced nothing."
         else
           echo "  localectl not present on this image."
         fi
-        echo "  After installing: clone the flake, run 'oligarchy-adopt', review the"
+        echo "  The installer carries this into the new system by itself. Installed"
+        echo "  plain NixOS instead, or another way? After installing: clone the"
+        echo "  flake, run 'oligarchy-adopt', review the"
         echo "  ~/.config/oligarchy/local.nix it writes, then:"
         echo "    sudo nixos-rebuild switch --flake .#nixos --impure"
         echo "  --impure is REQUIRED. Without it that file is silently ignored and"
@@ -694,6 +756,287 @@
       # next to oligarchy-hw-detect, and `nix run .#oligarchy-adopt`-able on an
       # already-installed system.
       oligarchyAdopt = pkgs.callPackage ./modules/locale/adopt.nix { };
+
+      # ── Install targets ────────────────────────────────────────────────────
+      # The four laptops, as data: the nixos-hardware board modules, the
+      # hardware scan, the host name, and everything else. `mkTarget` makes the
+      # nixosConfigurations below from them, in the module order they always
+      # had (the drvPaths did not move when this was introduced). The
+      # installer (installer/, docs/installer.md) offers the same targets and
+      # swaps `hardware` for the scan of the machine it is installing on, and
+      # `hostName` for the one the user typed: `mkInstalled`.
+      installTargets = {
+        nixos = {
+          name = "Framework 16 (AMD 7040)";
+          description = "Framework Laptop 16, AMD Ryzen 7040, with or without the expansion-bay GPU. The primary target: plugin runtime, P2P substituter and the DSP VM are wired here.";
+          board = [
+            nixos-hardware.nixosModules.framework-16-7040-amd
+          ];
+          hardware = ./modules/hardware-configuration.nix;
+          hostName = "nixos";
+          modules = [
+
+            # mkDefault on `gpu`, and only on `gpu`. The control center's
+            # build_fragment() (home/apps/control-center/oligarchy-ctl.sh) emits
+            # `custom.platform.gpu = "..."` at NORMAL priority into state.nix, so
+            # a host that also pins it at normal priority turns every `oligarchy-
+            # ctl gpu-*` action into "conflicting definition values" — the gpu
+            # verbs have never been able to work. (kernel-* and persona-* are
+            # fine: both of their sinks are already mkDefault.)
+            #
+            # It is fixed here rather than left alone because hosts/asher moved
+            # state.nix INTO the flake tree: the clash used to be reachable only
+            # on an `--impure` run, and now it would break the ordinary pure daily
+            # rebuild. `cpu`/`framework` stay pinned — nothing writes them, and
+            # they are statements of fact about the chassis.
+            #
+            # Safe for the downstream readers: `hasDgpu`'s default is computed
+            # from the RESOLVED value of `gpu` (modules/platform.nix:106), as is
+            # `displayGpu`'s from `hasDgpu`, and the two assertions there read the
+            # resolved values too — mkDefault changes which definition wins, not
+            # what anything sees afterwards.
+            { custom.platform = { gpu = nixpkgs.lib.mkDefault "amd"; cpu = "amd"; framework = true; }; }
+
+            # Tiered plugin runtime — STAGE 1 (tier 0 only), and this is the only
+            # host that gets it. The other three and the ISO are untouched;
+            # `custom.plugins.enable` defaults to false, so nothing to force off.
+            #
+            # These settings are the shipped-instrument posture, not a development
+            # relaxation, and a stage rig keeps them permanently. allowedTiers is
+            # not merely a runtime refusal either: the module derives the plugind
+            # package from it, so on a wasm-only host libloading, mlua and the
+            # vendored LuaJIT are not in the closure at all. requireSignature with
+            # no keys yet means nothing can be registered — which is the intent
+            # here: the runtime is present, the registry is shut.
+            #
+            # Staging plan, per-stage gates and known gaps: docs/plugins-roadmap.md
+            # nixosModules.default rather than .plugins: it adds microvm.nix's host
+            # module, which tier 2 needs and which the other three hosts have no use
+            # for. custom.plugins asserts on the difference rather than silently
+            # doing nothing if you get it wrong.
+            oligarchy-plugins.nixosModules.default
+            ({ config, ... }: {
+              custom.plugins = {
+                enable = true;
+
+                # Stage 3: tier 1. Native and Lua plugins run under bwrap +
+                # Landlock + seccomp, which is what makes CLAP/LV2/Faust-native DSP
+                # possible on a sub-millisecond guitar path where the Wasm boundary
+                # is measurable. This is the WORKSTATION only — a stage rig or a
+                # shipped instrument keeps [ "wasm" ] and allowSelfJit = false,
+                # because there it is running plugins somebody else wrote.
+                allowedTiers = [ "wasm" "native" "lua" "microvm" ];
+
+                # The concession, and it is a real one: a plugin declaring
+                # jit = "self" runs with MemoryDenyWriteExecute=no. It emits a build
+                # warning on purpose. Verified on this hardware rather than assumed
+                # — `plugind selftest` reports mprotect(PROT_EXEC) and memfd_create
+                # DENIED for jit=none and allowed for jit=self on the zen kernel.
+                #
+                # Two things keep it bounded. Manifest validation refuses
+                # untrusted + jit=self outside tier 2 outright, and a request that
+                # arrived over the control socket cannot ask for it at all
+                # (Authority::Socket) — whether a signed plugin may hold W+X pages
+                # is the operator's call, not something install-group membership
+                # buys.
+                allowSelfJit = true;
+
+                # Tightened now that native code can load: refuse a manifest that
+                # only claims "untrusted". Read it as a filter on a claim rather
+                # than a boundary — see the option docs — but combined with
+                # requireSignature it means an author put their name to it.
+                minTrust = "trusted";
+
+                # Stage 4: tier 2. A microVM guest is the only honest place for a
+                # plugin that is BOTH untrusted and ships its own code generator —
+                # manifest validation refuses that combination outside tier 2
+                # precisely because no host-side mitigation of W+X memory you did
+                # not write is truthful.
+                #
+                # Note the asymmetry with the other tiers: a tier 2 plugin cannot be
+                # installed imperatively. The guest needs a closure and building one
+                # is a rebuild, so tier 2 plugins arrive through declaredPlugins.
+                # That is a real limitation of the tier, not an oversight.
+                microvm.enable = true;
+                microvm.hypervisor = "cloud-hypervisor";
+
+                requireSignature = true;
+
+                # Stage 2: this account can ask the supervisor for a
+                # signature-checked install without being root and — the point —
+                # without being in nix.settings.trusted-users, which per the Nix
+                # manual is root-equivalent and would make the checking moot.
+                #
+                # `substituters`/`trustedPublicKeys` stay empty until a signed
+                # cache actually exists (see docs/plugins-roadmap.md § stage 2).
+                # Until then the only installable thing is a locally signed store
+                # path, which is exactly as verified.
+                installers = [ config.custom.user.name ];
+              };
+            })
+
+            # ── P2P substituter — STAGE 2, still not switched on ────────────────
+            # The module is imported here and nowhere else: the other three hosts
+            # and the ISO never see the option, so nothing needs a mkForce disable.
+            #
+            # Stage 1 shipped this off because a pass-through narinfo described
+            # bytes we did not control, and Nix caches a narinfo for thirty days —
+            # so an upstream re-compression made the adapter 404 for a month. THAT
+            # REASON IS GONE. Stage 2 serves the canonical uncompressed NAR, so
+            # every transport field emitted is a function of NarHash and NarSize,
+            # both signed and both immutable for a given store path.
+            #
+            # It stays off for a different and smaller reason: `priority = 30` puts
+            # the adapter ahead of cache.nixos.org for EVERY path, so enabling it
+            # re-routes all substitution on this machine through a local daemon.
+            # That is the intended design and it fails safe — the daemon 404s on any
+            # internal error, upstream stays configured behind it, and
+            # `.#p2p-substituter-protocol` asserts a build still succeeds with the
+            # unit stopped — but it is the operator's call to make, not a default to
+            # inherit.
+            #
+            # To turn it on:
+            #   custom.p2pCache.enable = true;
+            # then check it took:
+            #   oligarchy-p2pd --config /etc/oligarchy/p2p/config.json check
+            #   curl -s http://127.0.0.1:5111/nix-cache-info
+            oligarchy-p2p.nixosModules.default
+
+            # ── DSP coprocessor guest image ────────────────────────────────────
+            # Workstation only, and this sets the IMAGE, not `enable` — enabling
+            # the VM stays in ~/.config/oligarchy/local.nix, because starting it
+            # hands the passed-through xHCI controller to the guest and the audio
+            # interfaces vanish from the host.
+            #
+            # Everything else about this VM (VFIO device ids, cores, hugepages,
+            # NETJACK) is already configured in configuration.nix. The one thing
+            # that was never reproducible was the disk: the default is a path under
+            # /home that nothing builds, and the image sitting there had no EFI
+            # system partition, so OVMF fell through to PXE and the VM sat in a
+            # netboot loop pinning the isolated cores. It is now a derivation.
+            #
+            # The image is built from THIS host's custom.vm.dsp values
+            # (mkDspImage above): the guest's address, the NetJack2 port, the
+            # rate and period, and the ssh keys (custom.user.sshAuthorizedKeys,
+            # so the latency harness can drive jackd from INSIDE the RT guest:
+            # measuring from the host measures the host's scheduler, which is
+            # the thing under test). The guest is at 10.78.0.2 on the routed
+            # tap; there is no loopback forward any more.
+            ({ config, ... }: {
+              custom.vm.dsp.archibaldOS.diskImage = mkDspImage (dspGuestFor config);
+            })
+          ];
+        };
+
+        # Framework 13 AMD 7040 — iGPU only, no expansion-bay dGPU. Unverified
+        # against real hardware (see hosts/framework13/hardware-configuration.nix).
+        nixos-fw13 = {
+          name = "Framework 13 (AMD 7040)";
+          description = "Framework Laptop 13, AMD Ryzen 7040, integrated GPU only. Not yet verified on real hardware.";
+          board = [
+            nixos-hardware.nixosModules.framework-13-7040-amd
+          ];
+          hardware = ./hosts/framework13/hardware-configuration.nix;
+          hostName = "nixos-fw13";
+          modules = [
+            {
+              custom.platform = {
+                # mkDefault so `oligarchy-ctl gpu-*` can write state.nix without
+                # a conflicting-definition error — see the nixos host above.
+                gpu = nixpkgs.lib.mkDefault "amd";
+                cpu = "amd";
+                framework = true;
+                frameworkModel = "13";
+                hasDgpu = false;
+                displayGpu = "igpu"; # no dGPU on this chassis — see hasDgpu assertion in modules/platform.nix
+              };
+            }
+          ];
+        };
+
+        # Pure Intel laptop (iGPU only, CPU inference).
+        nixos-intel = {
+          name = "Intel laptop";
+          description = "Any Intel laptop with integrated graphics only. AI inference runs on the CPU.";
+          board = [
+            nixos-hardware.nixosModules.common-cpu-intel
+            nixos-hardware.nixosModules.common-gpu-intel
+            nixos-hardware.nixosModules.common-pc-laptop-ssd
+          ];
+          hardware = ./hosts/intel/hardware-configuration.nix;
+          hostName = "nixos-intel";
+          modules = [
+            {
+              # mkDefault on gpu — see the nixos host above (control-center
+              # gpu-* actions write custom.platform.gpu at normal priority).
+              custom.platform = { gpu = nixpkgs.lib.mkDefault "intel"; cpu = "intel"; framework = false; };
+            }
+          ];
+        };
+
+        # Intel + Nvidia Optimus laptop (PRIME render offload, CUDA AI stack).
+        # Fill in the PCI bus ids in hosts/optimus/hardware-configuration.nix or here.
+        nixos-optimus = {
+          name = "Intel + Nvidia (Optimus)";
+          description = "Intel laptop with an Nvidia GPU under PRIME offload, CUDA for AI. The PCI bus ids default to the common 0:2:0 / 1:0:0; check yours with lspci after install.";
+          board = [
+            nixos-hardware.nixosModules.common-cpu-intel
+            nixos-hardware.nixosModules.common-gpu-intel # iGPU (primary display under offload)
+            nixos-hardware.nixosModules.common-gpu-nvidia # = prime.nix (offload)
+            nixos-hardware.nixosModules.common-pc-laptop-ssd
+          ];
+          hardware = ./hosts/optimus/hardware-configuration.nix;
+          hostName = "nixos-optimus";
+          modules = [
+            {
+              custom.platform = {
+                # mkDefault on gpu — see the nixos host above.
+                gpu = nixpkgs.lib.mkDefault "nvidia-optimus";
+                cpu = "intel";
+                framework = false;
+                # Obtain with: lspci | grep -E 'VGA|3D|Display'  ("01:00.0" -> "PCI:1:0:0")
+                nvidia.intelBusId = "PCI:0:2:0";
+                nvidia.nvidiaBusId = "PCI:1:0:0";
+              };
+            }
+          ];
+        };
+      };
+
+      mkTarget = t: mkHost (t.board ++ [ t.hardware { networking.hostName = t.hostName; } ] ++ t.modules);
+
+      # A machine the ISO's installer put on a disk. `dir` holds what it wrote:
+      # install.json (the target and the user's answers) and
+      # hardware-configuration.nix (the scan), plus local.nix if the owner
+      # made one (nothing writes it). The target's own hardware file and host
+      # name are the two things replaced; every other module is the target's,
+      # in the same order. See installer/installed.nix and docs/installer.md.
+      mkInstalled = dir:
+        let
+          lib = nixpkgs.lib;
+          install = builtins.fromJSON (builtins.readFile (dir + "/install.json"));
+          profile = install.profile or (throw "${toString dir}/install.json names no target");
+          target = installTargets.${profile} or (throw
+            "install.json asks for target '${profile}'; this tree has: ${lib.concatStringsSep ", " (builtins.attrNames installTargets)}");
+        in
+        mkHost (target.board
+          ++ [ (dir + "/hardware-configuration.nix") (import ./installer/installed.nix { inherit install; }) ]
+          ++ target.modules
+          ++ lib.optional (builtins.pathExists (dir + "/local.nix")) (dir + "/local.nix"));
+
+      # What the installer's target page offers, in this order, and the CLI
+      # that runs the same job from a TTY (the only installer path that needs
+      # no desktop). installer/ is vendored from ArchibaldOS; see its README.
+      installerProfiles = map
+        (id: { inherit id; inherit (installTargets.${id}) name description; })
+        [ "nixos" "nixos-fw13" "nixos-intel" "nixos-optimus" ];
+      oligarchyInstall = pkgs.callPackage ./installer/cli.nix {
+        distro = "Oligarchy";
+        source = self;
+        profiles = installerProfiles;
+        defaultProfile = "nixos";
+      };
+
     in
     {
       # ════════════════════════════════════════════════════════════════════════
@@ -701,158 +1044,14 @@
       # ════════════════════════════════════════════════════════════════════════
 
       # Framework 16 AMD 7040 — the original target, behaviour unchanged.
-      nixosConfigurations.nixos = mkHost [
-        nixos-hardware.nixosModules.framework-16-7040-amd
-        ./modules/hardware-configuration.nix
-        { networking.hostName = "nixos"; }
+      nixosConfigurations.nixos = mkTarget installTargets.nixos;
 
-        # mkDefault on `gpu`, and only on `gpu`. The control center's
-        # build_fragment() (home/apps/control-center/oligarchy-ctl.sh) emits
-        # `custom.platform.gpu = "..."` at NORMAL priority into state.nix, so
-        # a host that also pins it at normal priority turns every `oligarchy-
-        # ctl gpu-*` action into "conflicting definition values" — the gpu
-        # verbs have never been able to work. (kernel-* and persona-* are
-        # fine: both of their sinks are already mkDefault.)
-        #
-        # It is fixed here rather than left alone because hosts/asher moved
-        # state.nix INTO the flake tree: the clash used to be reachable only
-        # on an `--impure` run, and now it would break the ordinary pure daily
-        # rebuild. `cpu`/`framework` stay pinned — nothing writes them, and
-        # they are statements of fact about the chassis.
-        #
-        # Safe for the downstream readers: `hasDgpu`'s default is computed
-        # from the RESOLVED value of `gpu` (modules/platform.nix:106), as is
-        # `displayGpu`'s from `hasDgpu`, and the two assertions there read the
-        # resolved values too — mkDefault changes which definition wins, not
-        # what anything sees afterwards.
-        { custom.platform = { gpu = nixpkgs.lib.mkDefault "amd"; cpu = "amd"; framework = true; }; }
-
-        # Tiered plugin runtime — STAGE 1 (tier 0 only), and this is the only
-        # host that gets it. The other three and the ISO are untouched;
-        # `custom.plugins.enable` defaults to false, so nothing to force off.
-        #
-        # These settings are the shipped-instrument posture, not a development
-        # relaxation, and a stage rig keeps them permanently. allowedTiers is
-        # not merely a runtime refusal either: the module derives the plugind
-        # package from it, so on a wasm-only host libloading, mlua and the
-        # vendored LuaJIT are not in the closure at all. requireSignature with
-        # no keys yet means nothing can be registered — which is the intent
-        # here: the runtime is present, the registry is shut.
-        #
-        # Staging plan, per-stage gates and known gaps: docs/plugins-roadmap.md
-        # nixosModules.default rather than .plugins: it adds microvm.nix's host
-        # module, which tier 2 needs and which the other three hosts have no use
-        # for. custom.plugins asserts on the difference rather than silently
-        # doing nothing if you get it wrong.
-        oligarchy-plugins.nixosModules.default
-        ({ config, ... }: {
-          custom.plugins = {
-            enable = true;
-
-            # Stage 3: tier 1. Native and Lua plugins run under bwrap +
-            # Landlock + seccomp, which is what makes CLAP/LV2/Faust-native DSP
-            # possible on a sub-millisecond guitar path where the Wasm boundary
-            # is measurable. This is the WORKSTATION only — a stage rig or a
-            # shipped instrument keeps [ "wasm" ] and allowSelfJit = false,
-            # because there it is running plugins somebody else wrote.
-            allowedTiers = [ "wasm" "native" "lua" "microvm" ];
-
-            # The concession, and it is a real one: a plugin declaring
-            # jit = "self" runs with MemoryDenyWriteExecute=no. It emits a build
-            # warning on purpose. Verified on this hardware rather than assumed
-            # — `plugind selftest` reports mprotect(PROT_EXEC) and memfd_create
-            # DENIED for jit=none and allowed for jit=self on the zen kernel.
-            #
-            # Two things keep it bounded. Manifest validation refuses
-            # untrusted + jit=self outside tier 2 outright, and a request that
-            # arrived over the control socket cannot ask for it at all
-            # (Authority::Socket) — whether a signed plugin may hold W+X pages
-            # is the operator's call, not something install-group membership
-            # buys.
-            allowSelfJit = true;
-
-            # Tightened now that native code can load: refuse a manifest that
-            # only claims "untrusted". Read it as a filter on a claim rather
-            # than a boundary — see the option docs — but combined with
-            # requireSignature it means an author put their name to it.
-            minTrust = "trusted";
-
-            # Stage 4: tier 2. A microVM guest is the only honest place for a
-            # plugin that is BOTH untrusted and ships its own code generator —
-            # manifest validation refuses that combination outside tier 2
-            # precisely because no host-side mitigation of W+X memory you did
-            # not write is truthful.
-            #
-            # Note the asymmetry with the other tiers: a tier 2 plugin cannot be
-            # installed imperatively. The guest needs a closure and building one
-            # is a rebuild, so tier 2 plugins arrive through declaredPlugins.
-            # That is a real limitation of the tier, not an oversight.
-            microvm.enable = true;
-            microvm.hypervisor = "cloud-hypervisor";
-
-            requireSignature = true;
-
-            # Stage 2: this account can ask the supervisor for a
-            # signature-checked install without being root and — the point —
-            # without being in nix.settings.trusted-users, which per the Nix
-            # manual is root-equivalent and would make the checking moot.
-            #
-            # `substituters`/`trustedPublicKeys` stay empty until a signed
-            # cache actually exists (see docs/plugins-roadmap.md § stage 2).
-            # Until then the only installable thing is a locally signed store
-            # path, which is exactly as verified.
-            installers = [ config.custom.user.name ];
-          };
-        })
-
-        # ── P2P substituter — STAGE 2, still not switched on ────────────────
-        # The module is imported here and nowhere else: the other three hosts
-        # and the ISO never see the option, so nothing needs a mkForce disable.
-        #
-        # Stage 1 shipped this off because a pass-through narinfo described
-        # bytes we did not control, and Nix caches a narinfo for thirty days —
-        # so an upstream re-compression made the adapter 404 for a month. THAT
-        # REASON IS GONE. Stage 2 serves the canonical uncompressed NAR, so
-        # every transport field emitted is a function of NarHash and NarSize,
-        # both signed and both immutable for a given store path.
-        #
-        # It stays off for a different and smaller reason: `priority = 30` puts
-        # the adapter ahead of cache.nixos.org for EVERY path, so enabling it
-        # re-routes all substitution on this machine through a local daemon.
-        # That is the intended design and it fails safe — the daemon 404s on any
-        # internal error, upstream stays configured behind it, and
-        # `.#p2p-substituter-protocol` asserts a build still succeeds with the
-        # unit stopped — but it is the operator's call to make, not a default to
-        # inherit.
-        #
-        # To turn it on:
-        #   custom.p2pCache.enable = true;
-        # then check it took:
-        #   oligarchy-p2pd --config /etc/oligarchy/p2p/config.json check
-        #   curl -s http://127.0.0.1:5111/nix-cache-info
-        oligarchy-p2p.nixosModules.default
-
-        # ── DSP coprocessor guest image ────────────────────────────────────
-        # Workstation only, and this sets the IMAGE, not `enable` — enabling
-        # the VM stays in ~/.config/oligarchy/local.nix, because starting it
-        # hands the passed-through xHCI controller to the guest and the audio
-        # interfaces vanish from the host.
-        #
-        # Everything else about this VM (VFIO device ids, cores, hugepages,
-        # NETJACK) is already configured in configuration.nix. The one thing
-        # that was never reproducible was the disk: the default is a path under
-        # /home that nothing builds, and the image sitting there had no EFI
-        # system partition, so OVMF fell through to PXE and the VM sat in a
-        # netboot loop pinning the isolated cores. It is now a derivation.
-        {
-          custom.vm.dsp.archibaldOS.diskImage = self.packages.x86_64-linux.dsp-vm-qcow;
-
-          # sshd in the guest (modules/dsp-guest.nix), so the latency harness
-          # can drive jackd from INSIDE the RT guest — measuring from the host
-          # measures the host's scheduler, which is the thing under test.
-          custom.vm.dsp.network.hostfwd = { "2222" = 22; };
-        }
-      ];
+      # This tree as the installer left it in /etc/nixos on an installed
+      # machine: `sudo nixos-rebuild switch --flake /etc/nixos#installed`.
+      # Absent from the repository itself (there is no hosts/installed here):
+      # a null attribute name is omitted, and mkInstalled is never forced.
+      nixosConfigurations.${if builtins.pathExists ./hosts/installed/install.json then "installed" else null} =
+        mkInstalled ./hosts/installed;
 
       # ────────────────────────────────────────────────────────────────────
       # The maintainer's actual machine: `nixos` plus hosts/asher.
@@ -880,59 +1079,14 @@
 
       # Framework 13 AMD 7040 — iGPU only, no expansion-bay dGPU. Unverified
       # against real hardware (see hosts/framework13/hardware-configuration.nix).
-      nixosConfigurations.nixos-fw13 = mkHost [
-        nixos-hardware.nixosModules.framework-13-7040-amd
-        ./hosts/framework13/hardware-configuration.nix
-        {
-          networking.hostName = "nixos-fw13";
-          custom.platform = {
-            # mkDefault so `oligarchy-ctl gpu-*` can write state.nix without
-            # a conflicting-definition error — see the nixos host above.
-            gpu = nixpkgs.lib.mkDefault "amd";
-            cpu = "amd";
-            framework = true;
-            frameworkModel = "13";
-            hasDgpu = false;
-            displayGpu = "igpu"; # no dGPU on this chassis — see hasDgpu assertion in modules/platform.nix
-          };
-        }
-      ];
+      nixosConfigurations.nixos-fw13 = mkTarget installTargets.nixos-fw13;
 
       # Pure Intel laptop (iGPU only, CPU inference).
-      nixosConfigurations.nixos-intel = mkHost [
-        nixos-hardware.nixosModules.common-cpu-intel
-        nixos-hardware.nixosModules.common-gpu-intel
-        nixos-hardware.nixosModules.common-pc-laptop-ssd
-        ./hosts/intel/hardware-configuration.nix
-        {
-          networking.hostName = "nixos-intel";
-          # mkDefault on gpu — see the nixos host above (control-center
-          # gpu-* actions write custom.platform.gpu at normal priority).
-          custom.platform = { gpu = nixpkgs.lib.mkDefault "intel"; cpu = "intel"; framework = false; };
-        }
-      ];
+      nixosConfigurations.nixos-intel = mkTarget installTargets.nixos-intel;
 
       # Intel + Nvidia Optimus laptop (PRIME render offload, CUDA AI stack).
       # Fill in the PCI bus ids in hosts/optimus/hardware-configuration.nix or here.
-      nixosConfigurations.nixos-optimus = mkHost [
-        nixos-hardware.nixosModules.common-cpu-intel
-        nixos-hardware.nixosModules.common-gpu-intel # iGPU (primary display under offload)
-        nixos-hardware.nixosModules.common-gpu-nvidia # = prime.nix (offload)
-        nixos-hardware.nixosModules.common-pc-laptop-ssd
-        ./hosts/optimus/hardware-configuration.nix
-        {
-          networking.hostName = "nixos-optimus";
-          custom.platform = {
-            # mkDefault on gpu — see the nixos host above.
-            gpu = nixpkgs.lib.mkDefault "nvidia-optimus";
-            cpu = "intel";
-            framework = false;
-            # Obtain with: lspci | grep -E 'VGA|3D|Display'  ("01:00.0" -> "PCI:1:0:0")
-            nvidia.intelBusId = "PCI:0:2:0";
-            nvidia.nvidiaBusId = "PCI:1:0:0";
-          };
-        }
-      ];
+      nixosConfigurations.nixos-optimus = mkTarget installTargets.nixos-optimus;
 
       # ════════════════════════════════════════════════════════════════════════
       # Headless CI build server (custom.ciBuilder).
@@ -1025,23 +1179,14 @@
         # assertion (nixpkgs lib/eval-config.nix only sets nixpkgs.pkgs when
         # pkgs != null). With `system`, nixpkgs is built internally and honours
         # nixpkgs.config.
-        # The DSP coprocessor guest, as a UEFI-bootable image.
-        #
-        # `qcow-efi`, NOT `qcow`, and that is the whole point: the firmware in
-        # modules/archibaldos-dsp-vm.nix is OVMF, and the image it replaced had
-        # no EFI system partition — OVMF found nothing, fell through to PXE,
-        # and sat in the netboot loop. A BIOS image here silently reproduces
-        # exactly that failure.
+        # The DSP coprocessor guest, as a UEFI-bootable image: exactly the one
+        # .#nixos boots (mkDspImage, built from that host's custom.vm.dsp).
         #
         # This exists so the guest stops being a hand-copied artifact built out
         # of tree. Three files in this repo used to look like they defined that
         # VM and none of them did; when the image stopped booting there was
         # nothing to rebuild it from.
-        dsp-vm-qcow = nixos-generators.nixosGenerate {
-          inherit system;
-          format = "qcow-efi";
-          modules = [ ./modules/dsp-guest.nix ];
-        };
+        dsp-vm-qcow = self.nixosConfigurations.nixos.config.custom.vm.dsp.archibaldOS.diskImage;
 
         # velocitty — the X11 terminal behind custom.terminal.system. Built
         # here rather than in the module so `nix build .#velocitty` is a gate
@@ -1626,6 +1771,17 @@
 
             "${nixpkgs}/nixos/modules/installer/cd-dvd/installation-cd-graphical-calamares-plasma6.nix"
 
+            # The graphical installer installs Oligarchy: a target page (the
+            # four laptops, plus plain NixOS) and a job that copies this flake
+            # to /etc/nixos and installs `#installed` from it, instead of the
+            # stock job's generic configuration.nix. docs/installer.md.
+            (import ./installer/iso.nix {
+              distro = "Oligarchy";
+              source = self;
+              profiles = installerProfiles;
+              defaultProfile = "nixos";
+            })
+
             ({ lib, ... }: {
               # ISO-specific overrides
               networking.hostName = "oligarchy-iso";
@@ -1703,11 +1859,20 @@
                 user = "nixos";
               };
 
+              # sshd runs at boot on every NixOS installer image. With the
+              # published password above and PasswordAuthentication on, anyone
+              # who could reach :22 logged in as a passwordless-sudo wheel
+              # user. The firewall admits :22 on tailscale0 only, so that was
+              # the tailnet, if the live session ever joined it; and NixOS's
+              # default KbdInteractiveAuthentication = true is a second
+              # password path through PAM, so both are off. Keys still work:
+              # put one in ~nixos/.ssh/authorized_keys from the live session.
               services.openssh = {
                 enable = true;
                 settings = {
                   PermitRootLogin = "prohibit-password";
-                  PasswordAuthentication = true;
+                  PasswordAuthentication = false;
+                  KbdInteractiveAuthentication = false;
                 };
               };
 
@@ -1719,7 +1884,9 @@
               # oligarchy-adopt ships beside it so the locale round-trip is
               # available on the installed system without fetching anything:
               # the user runs it once, after install, before the first switch.
-              environment.systemPackages = [ oligarchyHwDetect oligarchyAdopt ];
+              # oligarchy-install is the installer from a TTY: the same job the
+              # graphical installer runs (installer/), with flags for answers.
+              environment.systemPackages = [ oligarchyHwDetect oligarchyAdopt oligarchyInstall ];
               services.fwupd.enable = lib.mkForce true;
             })
           ];
@@ -1736,6 +1903,82 @@
         #   nix run .#oligarchy-adopt
         # Guarded by `nix build .#locale-adopt-fixtures`.
         oligarchy-adopt = oligarchyAdopt;
+
+        # The installer from a TTY (also on the ISO):
+        #   sudo nix run .#oligarchy-install -- --profile nixos-fw13 --user … --hostname …
+        # Same job module the graphical installer runs; docs/installer.md.
+        oligarchy-install = oligarchyInstall;
+
+        # installer-unit — the Calamares job's 9 unit tests against the REAL
+        # upstream nixos job of this nixpkgs, the generated settings.conf (the
+        # target page shown, distroinstall in place of nixos, plain NixOS still
+        # delegated), the drift guard failing a doctored upstream on purpose,
+        # and oligarchy-install --dry-run. Seconds, no KVM.
+        installer-unit = import ./tests/installer/unit.nix {
+          inherit pkgs;
+          cli = oligarchyInstall;
+          extensions = pkgs.callPackage ./installer/calamares/extensions.nix {
+            distro = "Oligarchy";
+            source = self;
+            profiles = installerProfiles;
+            defaultProfile = "nixos";
+          };
+        };
+
+        # companion-cli-tests — oligarchy-companion against a fake companion:
+        # enroll writes a commander.nix that evaluates to what ArchibaldOS's
+        # companion module reads, deploy builds here and syncs back and
+        # refuses to clobber an edit made on the companion, status drives
+        # dsp-ctl. Stubs for ssh and the remote side; seconds, no KVM.
+        companion-cli-tests = import ./tests/companions/cli.nix { inherit pkgs; };
+
+        # dsp-netjack-tests — the DSP VM's audio path, run in the sandbox with
+        # the units' own commands: the guest's JACK (dummy driver: no card
+        # here), NetJack2 manager and router, a companion's netadapter, and
+        # this host's dsp-netjack (PipeWire's netjack2 driver) against a
+        # PipeWire daemon. A tone round-trips box -> guest engine -> box and
+        # PipeWire app -> guest engine -> app; an idle host must not stall the
+        # guest, and the same run without node.always-process must. Loopback
+        # addresses, an engine stand-in, WirePlumber's PortConfig step done
+        # by pw-cli. Under a minute, no KVM. tests/dsp-vm/netjack.nix.
+        dsp-netjack-tests =
+          let
+            mini = modules: nixpkgs.lib.nixosSystem {
+              inherit system;
+              modules = [{ boot.isContainer = true; system.stateVersion = "25.11"; }] ++ modules;
+            };
+          in
+          import ./tests/dsp-vm/netjack.nix {
+            inherit pkgs;
+            guest = nixpkgs.lib.nixosSystem {
+              inherit system;
+              modules = dspGuestModules ++ [{
+                oligarchy.dspGuest = { address = "127.0.0.1"; hostAddress = "127.0.0.1"; sampleRate = 48000; period = 256; };
+              }];
+            };
+            box = mini [
+              archibaldos.nixosModules.netjack
+              {
+                networking.hostName = "box1";
+                users.groups.audio = { };
+                users.users.dsp = { isSystemUser = true; group = "audio"; };
+                archibald.jack.user = "dsp";
+                archibald.netjack = { role = "adapter"; address = "127.0.0.1"; };
+              }
+            ];
+            host = mini [
+              vm-manager.nixosModules.dsp-vm
+              {
+                custom.vm.dsp = {
+                  enable = true;
+                  network.routed.guestAddress = "127.0.0.1";
+                  archibaldOS.netjack.clientName = "oligarchy";
+                  archibaldOS.diskImage = "/nonexistent/dsp.qcow2";
+                };
+              }
+            ];
+            probe = pkgs.callPackage "${archibaldos}/tests/netjack2/probe.nix" { };
+          };
 
         # USB scrcpy game-display wrapper. Same derivation the NixOS module
         # installs when custom.androidMirror.enable is set.
@@ -2935,6 +3178,40 @@
       # Run on demand:  nix build .#locale-contract
       # ════════════════════════════════════════════════════════════════════════
       legacyPackages.${system} = {
+        # installer-contract — what the installer writes becomes the target
+        # the user picked, under THEIR identity: host name, account, locale in
+        # custom.locale.*, boot loader, LUKS, autologin; none of the
+        # maintainer's SSH keys and not his git identity. Three complete
+        # system evaluations (Home Manager included), hence legacyPackages for
+        # the reason given at locale-contract below: `nix flake check` never
+        # pays for it.  nix build .#installer-contract
+        installer-contract = import ./tests/installer/contract.nix { inherit pkgs mkInstalled; };
+
+        # dsp-route-contract — the DSP VM on .#nixos with custom.companions:
+        # the routed tap, forwarding scoped to the guest (and nft accepting
+        # the table), this host's NetJack2 unit, and the guest built from this
+        # host running JACK, the NetJack2 manager, the DeMoD engine and its
+        # bridges on the host's addresses. One host evaluation plus the guest.
+        #   nix build .#dsp-route-contract
+        dsp-route-contract =
+          let
+            host = self.nixosConfigurations.nixos.extendModules {
+              modules = [{ custom.vm.dsp.enable = true; custom.companions.enable = true; }];
+            };
+          in
+          import ./tests/dsp-vm/contract.nix {
+            inherit pkgs host;
+            # Evaluated with the image format's own module, as mkDspImage
+            # builds it (that is where the guest's file systems come from).
+            guest = nixpkgs.lib.nixosSystem {
+              inherit system;
+              modules = dspGuestModules ++ [
+                nixos-generators.nixosModules.qcow-efi
+                { oligarchy.dspGuest = dspGuestFor host.config; }
+              ];
+            };
+          };
+
         locale-contract =
           let
             lib' = nixpkgs.lib;

@@ -1,4 +1,4 @@
-# ArchibaldOS DSP VM with NETJACK Audio Routing
+# ArchibaldOS DSP VM: the NetJack2 DSP host
 
 Real-time audio processing coprocessor with ultra-low latency.
 
@@ -6,8 +6,10 @@ Real-time audio processing coprocessor with ultra-low latency.
 
 The DSP VM boots an in-tree NixOS guest (`modules/dsp-guest.nix`,
 still called "ArchibaldOS" for its hostname/persona), isolated from the
-host system. Audio is routed to the host via NETJACK2 over the virtual
-network.
+host system. It is a NetJack2 DSP host: its JACK runs jack2's `netmanager`
+and the DeMoD engine, and this host (PipeWire) and ArchibaldOS companions
+(jack2's `netadapter`, over WireGuard) join it as followers, so their audio
+runs through the engine and back. It sits on a routed tap (`10.78.0.2`).
 
 The guest kernel is `linuxPackages_xanmod_latest`, **not** PREEMPT_RT and
 **not** CachyOS RT — both were removed from nixpkgs ("removed due to lack
@@ -21,9 +23,9 @@ Any older material that says "RT kernel" or "CachyOS RT" means this now.
 | Round-trip latency | <2ms | **not yet measured** on the XanMod guest — the old CachyOS-RT figures do not carry over, and none has replaced them; see `docs/architecture.md` §10 and `modules/dsp-guest.nix` |
 | Sample rate | 96kHz | 96kHz |
 | Bit depth | 24-bit | 24-bit |
-| Buffer size | 128 samples | 128 samples |
+| Buffer size | 32 samples | 32 (`archibaldOS.netjack.bufferSize`) |
 | CPU cores | 1-2 | 0-1 (isolated) |
-| Memory | 2-4GB | 4GB |
+| Memory | 2-4GB | 2GB (`memoryMB`, `configuration.nix`) |
 
 ## Prerequisites
 
@@ -74,36 +76,32 @@ the derivation is already wired into `custom.vm.dsp.archibaldOS.diskImage`
 
 ### Step 2: Configure the Host
 
-Add to `configuration.nix`:
+On `.#nixos` the VM is already configured (`configuration.nix`, and the
+image wiring in `flake.nix`); turning it on is one line in your local
+overrides, because starting it hands the passed-through USB controller to
+the guest:
+
+```nix
+custom.vm.dsp.enable = true;
+```
+
+Elsewhere:
 
 ```nix
 imports = [ vm-manager.nixosModules.dsp-vm ];
 
 custom.vm.dsp = {
   enable = true;
-  
-  # CPU isolation - use cores 0-1
   isolatedCores = [ 0 1 ];
-  
-  # Memory allocation
-  memoryMB = 4096;
-  
-  # Hugepages for real-time performance
-  hugepages = 2048;
-  
-  # ArchibaldOS configuration
-  archibaldOS = {
+  memoryMB = 2048;
+  hugepages = 1024;
+  archibaldOS.diskImage = /path/to/image;   # Oligarchy: built for you
+  archibaldOS.netjack = {
     enable = true;
-    diskImage = ~/vms/archibaldos-dsp.qcow2;
-    
-    # NETJACK audio routing
-    netjack = {
-      enable = true;
-      sourcePort = 4713;
-      bufferSize = 128;      # 1.33ms @ 96kHz
-      sampleRate = 96000;
-      channels = 2;
-    };
+    port = 19000;        # the guest's NetJack2 manager
+    bufferSize = 32;     # the guest's JACK period
+    sampleRate = 96000;  # the guest's JACK rate
+    channels = 2;        # this host <-> the guest
   };
 };
 ```
@@ -111,286 +109,91 @@ custom.vm.dsp = {
 ### Step 3: Rebuild
 
 ```bash
-sudo nixos-rebuild switch --flake .#nixos
+sudo nixos-rebuild switch --flake .#nixos-asher   # or .#nixos --impure
 ```
 
-## Configuration Reference
+## What runs where
 
-### DSP VM Options
+| | host | guest (`10.78.0.2`) |
+|---|---|---|
+| network | tap `dsp0` (`10.78.0.1/24`), `networking.interfaces` | static, matched by MAC; the host is the gateway |
+| JACK | the user's PipeWire | `dsp-jackd`: the passed-through interface if there is one, else the dummy driver |
+| NetJack2 | `dsp-netjack` (user unit): PipeWire's netjack2 driver, a follower | `jack-netmanager` on UDP 19000 |
+| engine | | `demod-orchestrator` + `demod-rt` (DeMoD), every follower's 1-2 in, its output back to all of them (`jack-router`) |
+| control | `dsp-ctl --transport tcp --host 10.78.0.2` | `dsp-control-bridge`, TCP 7777, admits `10.78.0.1` only |
+| remote UI | | `demod-remote-bridge`, DCF on UDP 47000 (a companion kiosk: `remote:10.78.0.2`) |
+| ssh | `ssh root@10.78.0.2` (your `custom.user.sshAuthorizedKeys`) | admits `10.78.0.1` only |
+
+The guest image is built from the host's `custom.vm.dsp` values
+(`flake.nix`, `mkDspImage`), so addresses, port, rate, period and keys
+cannot disagree between the two.
+
+## Companions
+
+With `custom.companions.enable`, the hub's tunnel is in
+`network.routed.forwardFrom`: a companion reaches the guest through this
+host with UDP and ICMP only (NetJack2, DCF, path-MTU messages), and nothing
+else through this host. Forwarding is enabled for the tap and the tunnel
+alone (`net.ipv4.conf.<if>.forwarding`), never globally, and an nft table
+of its own (`dsp-vm-route.service`, loaded before `network-pre.target`; the
+VM requires it) drops everything else to or from either. On the companion:
 
 ```nix
-custom.vm.dsp = {
-  # Required
-  enable = true;
-  isolatedCores = [ 0 ];
-  memoryMB = 2048;
-  
-  # Optional - ArchibaldOS
-  archibaldOS = {
-    enable = true;
-    diskImage = /path/to/image.qcow2;
-    
-    # NETJACK settings
-    netjack = {
-      enable = true;
-      sourcePort = 4713;      # Port on VM
-      bufferSize = 128;        # Frames per buffer
-      sampleRate = 96000;      # Hz
-      channels = 2;             # Stereo
-    };
-  };
-  
-  # Alternative: VFIO audio passthrough
-  audioDevice = {
-    enable = false;
-    pciId = "0000:00:1b.0";  # From lspci
-    vendorDevice = "1022:15e3"; # For vfio-pci
-  };
-  
-  # Performance tuning
-  hugepages = 1024;
-  realtime = {
-    enable = true;
-    mlock = true;
-    nice = -20;
-  };
-  
-  # Display (optional)
-  spice = false;
-  vnc = false;
-  
-  # Network
-  network = {
-    enable = true;
-    hostfwd = {
-      2222 = 22;  # SSH
-    };
-  };
-  
-  # QEMU extra args
-  qemuExtraArgs = [ ];
-};
+# hosts/installed/local.nix (ArchibaldOS)
+{ archibald.companion.dsp = { host = "10.78.0.2"; netjack = true; }; }
 ```
 
 ## Usage
 
-### Quick Start with oligarchy-dsp Command
+```bash
+dsp-arm on                         # the VM, then this host's NetJack2 link
+systemctl --user start dsp-netjack # the link alone
+dsp-status                         # VM, isolation, hugepages, NetJack2
+dsp-console                        # the guest's serial console
+oligarchy-dsp status               # the control-center view
+```
 
-OligarchyOS provides a dedicated command-line tool for managing the DSP VM:
+This host then has `dsp-vm.sink` (into the engine) and `dsp-vm.source` (out
+of it) in PipeWire. `terminus-dsp-connect start` routes TERMINUS through
+them.
+
+## Gates
+
+- `nix build .#dsp-netjack-tests` runs the guest's units, a companion's
+  netadapter and this host's `dsp-netjack` in the build sandbox: a tone
+  makes the box -> engine -> box and PipeWire app -> engine -> app trips,
+  and neither happens before the guest's router exists.
+- `nix build .#dsp-route-contract` evaluates `.#nixos` with the VM and the
+  companions hub on, and the guest built from it: tap, forwarding scope,
+  the forward table (`nft -c`), the guest's units and addresses.
+
+## Troubleshooting
 
 ```bash
-# Start the DSP VM
-oligarchy-dsp start
-
-# Stop the DSP VM
-oligarchy-dsp stop
-
-# Restart the DSP VM
-oligarchy-dsp restart
-
-# Check detailed status
-oligarchy-dsp status
-
-# View serial console logs
-oligarchy-dsp logs
-
-# Access QEMU monitor
-oligarchy-dsp monitor
-
-# Rebuild VM image from ArchibaldOS flake
-oligarchy-dsp rebuild
-
-# Show help
-oligarchy-dsp help
+journalctl -u archibaldos-dsp -f          # the VM
+journalctl --user -u dsp-netjack -f       # this host's NetJack2 follower
+ssh root@10.78.0.2 journalctl -u dsp-jackd -u jack-netmanager -u demod-orchestrator
 ```
 
-The `oligarchy-dsp status` command provides comprehensive diagnostics:
+- **`dsp-vm.sink` never appears:** the guest's manager is not answering.
+  `ping 10.78.0.2`; on the guest, `systemctl status jack-netmanager`. The
+  first line of `dsp-jackd`'s journal says which driver JACK took.
+- **IOMMU / VFIO:** AMD-Vi on in firmware; `lspci -nnk` should show the
+  controllers on `vfio-pci` while the VM runs.
 
-```
-═══════════════════════════════════════════════════════
-  ArchibaldOS DSP Coprocessor VM Status
-═══════════════════════════════════════════════════════
+## Not measured
 
-[✓] Service: ACTIVE
-[✓] QEMU Process: PID 1260613 (CPU: 178%, MEM: 161.4MB)
-[✓] Disk Image: 4.1G (last modified: 2026-07-15 12:52:05)
-[✓] Serial Log: 273K
-[✓] Monitor Socket: AVAILABLE
-
-Network Ports:
-[✓] NETJACK (4713): LISTENING
-
-VFIO Passthrough:
-[✓] USB Controller 1 (c7:00.3): BOUND
-[✓] USB Controller 2 (c7:00.4): BOUND
-```
-
-### Manual Service Management
-
-```bash
-# The VM starts automatically on boot
-sudo systemctl start archibaldos-dsp.service
-
-# Check service status
-sudo systemctl status archibaldos-dsp.service
-
-# View service logs
-sudo journalctl -u archibaldos-dsp.service -f
-```
-
-## Audio Routing
-
-### Host Side (PipeWire)
-
-The NETJACK bridge creates a remote JACK client on the host:
-
-```
-Host PipeWire → NETJACK Bridge → Virtual Network → VM JACK → Applications
-```
-
-### Viewing Audio Connections
-
-```bash
-# List JACK ports
-jack_lsp
-
-# List NETJACK connections
-jack_lsp -c netjack
-
-# Connect applications
-jack_connect "Spotify:output_left" "netjack:capture_1"
-jack_connect "netjack:playback_1" "PulseAudio:front-left"
-```
-
-### Latency Calculation
-
-```
-Round-trip latency = (buffer_size / sample_rate) × 2
-                   = (128 / 96000) × 2
-                   = 0.00267 seconds
-                   = 2.67ms
-```
-
-For lower latency, reduce buffer size (warning: may cause xruns):
-```nix
-archibaldOS.netjack.bufferSize = 64;  # 1.33ms round-trip
-```
-
-## Won't Troubleshooting
-
-### VM Start
-
-```bash
-# Check logs
-journalctl -u archibaldos-dsp -f
-
-# Common issues:
-# - IOMMU not enabled in BIOS
-# - Hugepages not configured
-# - CPU cores don't exist
-```
-
-### NETJACK Connection Failed
-
-```bash
-# Check VM is running
-systemctl status archibaldos-dsp
-
-# Check NETJACK service
-systemctl status dsp-netjack-bridge
-
-# Check network
-ping 10.0.2.2  # VM IP
-
-# Restart NETJACK
-dsp-netjack-restart
-```
-
-### Audio Xruns
-
-```bash
-# Increase buffer size
-archibaldOS.netjack.bufferSize = 256;
-
-# Check CPU isolation
-cat /sys/devices/system/cpu/isolated
-
-# Disable hyperthreading in BIOS
-```
-
-### High Latency
-
-```bash
-# Verify buffer size
-jack_bufsize
-
-# Check for CPU throttling
-cat /proc/cpuinfo | grep MHz
-
-# Check for interrupt conflicts
-cat /proc/interrupts | head -20
-```
-
-## Advanced: VFIO Audio Passthrough
-
-For lowest latency, bypass NETJACK with VFIO passthrough:
-
-```nix
-custom.vm.dsp = {
-  enable = true;
-  
-  # Disable NETJACK
-  archibaldOS.netjack.enable = false;
-  
-  # Enable VFIO audio passthrough
-  audioDevice = {
-    enable = true;
-    pciId = "0000:00:1b.0";  # USB audio interface
-    
-    # For vfio-pci binding
-    vendorDevice = "1234:5678";
-  };
-};
-```
-
-**Finding your audio device:**
-```bash
-lspci -nn | grep -i audio
-# Example: 0000:00:1b.0 [0403] Intel Corporation Celeron N3350/Pentium N4200 Audio Cluster
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        HOST SYSTEM                          │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐   │
-│  │   Hyprland  │    │  PipeWire   │    │  NETJACK    │   │
-│  │  (Gaming)   │───▶│  (Audio)    │◀───│   Bridge    │   │
-│  └─────────────┘    └──────┬──────┘    └──────┬──────┘   │
-│                             │                    │          │
-│                      ┌──────▼──────┐            │          │
-│                      │  VM Network  │◀───────────┘          │
-│                      │   (virtio)  │                       │
-│                      └──────┬──────┘                       │
-└─────────────────────────────┼───────────────────────────────┘
-                              │
-┌─────────────────────────────▼───────────────────────────────┐
-│                    DSP VM (ArchibaldOS)                      │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
-│  │  CachyOS   │    │  JACK2      │    │   Apps     │     │
-│  │  RT Kernel  │───▶│ (NETJACK)  │◀───│ (DAW/DSP)  │     │
-│  └─────────────┘    └─────────────┘    └─────────────┘     │
-│        │                                                       │
-│  ┌──────▼──────┐                                              │
-│  │ CPU Isolated │  cores 0-1                                  │
-│  │ (real-time)  │                                              │
-│  └─────────────┘                                              │
-└──────────────────────────────────────────────────────────────┘
-```
+- `[UNTESTED]` The guest booting under KVM with this configuration: the
+  image builds through a KVM job, and nothing here ran one.
+- `[UNTESTED]` NetJack2 over the real tap and over WireGuard (MTU 1420 on
+  the tunnel; NetJack2 defaults to 1500-byte packets), and its latency.
+- `[UNTESTED]` WirePlumber configuring the netjack2 nodes' ports on a real
+  desktop; the gate does that step with `pw-cli`.
+- The latency figures in `docs/architecture.md` §10 predate the XanMod
+  guest and this network; none has been re-measured.
 
 ## See Also
 
 - [VM Manager Overview](../README.md)
-- [ArchibaldOS Documentation](../../modules/ArchibaldOS/README.md)
-- [NETJACK Documentation](https://jackaudio.org/docs/net_one/)
+- `modules/dsp-guest.nix`, `vm-manager/modules/dsp-vm.nix`
+- ArchibaldOS `docs/form-factors.md` (the companion side)

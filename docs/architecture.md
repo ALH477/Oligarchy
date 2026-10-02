@@ -19,7 +19,7 @@ nothing to "run" beyond `nixos-rebuild switch`.
 | Alternate targets | Framework 13 AMD 7040 (iGPU only, unverified on real hardware), pure Intel iGPU, Intel + NVIDIA Optimus dGPU |
 | Primary desktop | Hyprland (Wayland); Plasma 6, X11 fallbacks |
 | Kernel variants | `zen`, `xanmod`, `latest`, `lts` (6.12), `cachyos-bore` (opt-in) |
-| DSP | Real-time coprocessor guest via KVM/QEMU + NETJACK, isolated CPU core `isolcpus=0` |
+| DSP | Real-time coprocessor guest via KVM/QEMU on a routed tap, a NetJack2 hub for this host and ArchibaldOS companions; isolated cores `custom.vm.dsp.isolatedCores` |
 | AI | Local Ollama on ROCm (AMD) / CUDA (Optimus) / CPU fallback; `ai-stack` CLI with presets |
 | MCP | 10 dedicated, read-only Rust MCP servers — one per OS aspect, including the `ports-sec` auditor |
 | Scale | ~70k lines of code across 285 files (35k Nix, 25k Rust) — see §1a |
@@ -545,13 +545,14 @@ lane that costs money per run.
 A sub-flake providing two NixOS modules — `quickemu-vm` and `dsp-vm` —
 plus per-VM definitions in `vm-manager/config/`:
 
-- **DSP VM** — latency-critical RT guest (NETJACK over virtio-net, CPU
-  isolation via `custom.vm.dsp.isolatedCores`, default `[ 0 1 ]`). The
-  headline feature. The runner is `vm-manager/modules/dsp-vm.nix`
-  (`custom.vm.dsp`, unit `archibaldos-dsp`); the guest OS itself is
-  `modules/dsp-guest.nix`, built with `nix build .#dsp-vm-qcow`
-  (`qcow-efi` format — the firmware is OVMF, and a plain `qcow` image has
-  no ESP). `vm-manager/config/archibaldos-dsp.nix` and
+- **DSP VM** — latency-critical RT guest (NetJack2 over a routed tap,
+  `dsp0`, guest `10.78.0.2`; CPU isolation via
+  `custom.vm.dsp.isolatedCores`, default `[ 0 1 ]`). The headline feature.
+  The runner is `vm-manager/modules/dsp-vm.nix` (`custom.vm.dsp`, unit
+  `archibaldos-dsp`); the guest OS itself is `modules/dsp-guest.nix` plus
+  ArchibaldOS's NetJack2/engine/control-bridge modules, built from the
+  host's values with `nix build .#dsp-vm-qcow` (`qcow-efi` format — the
+  firmware is OVMF, and a plain `qcow` image has no ESP). `vm-manager/config/archibaldos-dsp.nix` and
   `modules/archibaldos-dsp-vm.nix` are older, smaller definitions that
   predate this and are imported by nothing; do not edit either expecting
   it to affect the running guest. See §10.
@@ -800,7 +801,11 @@ not a service mesh. Do not add HTTP between these processes.
       dcf-hypr-agent     -- UDP 7100 → hypr sockets + oligarchy-ctl (off)
       docker-dcf-sdk     -- 0.0.0.0:7777/50051/8888 (off, image unpinned)
       docker-dcf-id      -- :4000 (off, image unpinned)
-      archibaldos-dsp    -- QEMU + NETJACK (enable is local.nix)
+      archibaldos-dsp    -- QEMU, guest 10.78.0.2 on tap dsp0 (enable is local.nix):
+                            NetJack2 UDP 19000, dsp-ctl TCP 7777 (host only),
+                            DCF UDP 47000; companions reach it via wg-companions
+      dsp-vm-route       -- nft forward table scoping dsp0 <-> forwardFrom
+      dsp-netjack (user) -- PipeWire netjack2 driver -> the guest (on demand)
 
 HydraMesh is packages (`dcf`, `hydramesh` CLIs), not a daemon.
 
@@ -826,7 +831,7 @@ runner is `vm-manager/modules/dsp-vm.nix` (`custom.vm.dsp`).
 | Host kernel | CachyOS/Zen/XanMod/latest/lts/BORE (per `custom.kernel.variant`) |
 | RT guest | ArchibaldOS on `linuxPackages_xanmod_latest` via KVM/QEMU. `linuxPackages-rt`/`-rt_latest` and CachyOS RT were removed from nixpkgs; XanMod carries the RT patch set instead — anything older in this repo saying "PREEMPT_RT kernel" means this now |
 | Isolation | `custom.vm.dsp.isolatedCores`, default `[ 0 1 ]` — not just core 0 |
-| Audio bridge | NETJACK over virtio-net (port 4713), not shared memory |
+| Audio bridge | NetJack2 over a routed tap, not shared memory: the guest runs the manager (UDP 19000) and the DeMoD engine; this host joins with PipeWire's netjack2 driver (`dsp-netjack`), companions with jack2's netadapter through `wg-companions`. The old `jack_netsource` units on port 4713 could not form a link and are gone. Gates: `.#dsp-netjack-tests`, `.#dsp-route-contract` |
 | Latency | 0.38–0.66 ms @ 96 kHz / 32–64 samples and ~1.33 ms measured are old, theoretical/pre-XanMod numbers, carried here for history only — the current XanMod guest has not been re-measured |
 | Recovery | no kexec path is defined anywhere in `modules/dsp-guest.nix`; restart is `systemctl restart archibaldos-dsp` on the host |
 | Arming | `studio` persona documents *intent* only — `p.dsp` does not touch `custom.vm.dsp.enable` (`modules/personas.nix`). Real path: set `custom.vm.dsp.enable = true` in `~/.config/oligarchy/local.nix` (`nixos-rebuild switch --impure`), then arm at runtime with `dsp-arm` or `systemctl start archibaldos-dsp`. `autoStart` defaults to `false` because starting the VM binds the second xHCI controller to `vfio-pci`, pulling it out from under the host |

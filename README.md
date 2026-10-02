@@ -116,7 +116,7 @@ The Oligarchy endures.
 | Control Center                   | `Super+D` Wofi war-room hub + `oligarchy-control` TUI — every toggle, service & switch on one surface |
 | Personas                         | studio / gaming / dev / battery / minimal — one switch re-arms kernel, DSP, AI tier, audio quantum & power |
 | VM Manager                       | 4 dedicated VMs: DSP, Coding Sandbox, Kali, OpenWRT                                   |
-| DSP Coprocessor                  | ArchibaldOS-DSP QEMU/KVM + NETJACK — 1.33ms @ 96kHz                                   |
+| DSP Coprocessor                  | ArchibaldOS-DSP QEMU/KVM + NetJack2 — 1.33ms @ 96kHz                                  |
 | Voice AI                         | DeMoD Voice — Local TTS and voice cloning (Coqui XTTS-v2, Piper)                      |
 | Core 0                           | Isolated (`isolcpus=0`) and surrendered to the DSP overlord                             |
 | DSP Coprocessor                  | ArchibaldOS-DSP QEMU/KVM + kexec image — self-healing tyrant                            |
@@ -148,7 +148,7 @@ One flake, four configurations — each forged to dominate its own silicon. No t
 
 Flip one knob — `custom.platform.{gpu,cpu,framework,hasDgpu}` — and the flake re-forges the GPU stack, kernel modules, power policy, and AI acceleration to match. The Nvidia dGPU stays asleep until you summon it for war (`nvidia-offload <cmd>`); CUDA wakes it for the local AI stack. Fill in your disks (and, for Optimus, your PCI bus ids) in `hosts/<target>/hardware-configuration.nix`.
 
-Forking this for your own machine? Set your account name and SSH keys in one place — `custom.user.name` / `custom.user.sshAuthorizedKeys` (`modules/user.nix`) — instead of hunting down every hardcoded username. Booting the installer ISO, run `oligarchy-hw-detect` from a TTY first: it identifies Framework 13 vs 16 (or neither) via DMI, tells you which target above to build, walks `nixos-generate-config` for your real disk UUIDs, and offers to pull pending Framework BIOS/EC firmware from LVFS via `fwupdmgr` before you install. `nixos-fw13` is wired up against upstream `nixos-hardware`'s `framework-13-7040-amd` profile but unverified on real Framework 13 hardware — the maintainer's units are a Framework 16 and a RISC-V cluster.
+Forking this for your own machine? Set your account name and SSH keys in one place — `custom.user.name` / `custom.user.sshAuthorizedKeys` (`modules/user.nix`) — instead of hunting down every hardcoded username. Booting the installer ISO, run `oligarchy-hw-detect` from a TTY first: it identifies Framework 13 vs 16 (or neither) via DMI, tells you which target above to pick, and offers to pull pending Framework BIOS/EC firmware from LVFS via `fwupdmgr` before you install. The installer itself puts that target on the disk — not plain NixOS — with your disks, language, keyboard and account, and none of the maintainer's keys (`docs/installer.md`). `nixos-fw13` is wired up against upstream `nixos-hardware`'s `framework-13-7040-amd` profile but unverified on real Framework 13 hardware — the maintainer's units are a Framework 16 and a RISC-V cluster.
 
 ## Personas — One Switch, Four War Footings
 
@@ -429,7 +429,8 @@ Every control is a declarative NixOS option, default-off unless noted. See [`doc
 
 4. **Flash & Install**:
    - Flash `result/iso/nixos-*.iso` to USB.
-   - Boot → Calamares → conquer disk, encryption, user setup → reboot into victory.
+   - Boot → Calamares → pick your silicon on the Target page → conquer disk, encryption, user setup → reboot into victory.
+   - What lands is Oligarchy itself, this flake at `/etc/nixos`: `sudo nixos-rebuild switch --flake /etc/nixos#installed`. From a TTY instead: `sudo oligarchy-install --profile <target> --user <you>`. See `docs/installer.md`.
 
 5. **Existing System Quick Switch** (post-install — pick your silicon):
    ```bash
@@ -505,7 +506,7 @@ Every control is a declarative NixOS option, default-off unless noted. See [`doc
   - Enable IOMMU in BIOS.
   - Set audio PCI ID.
   - Arm at runtime with `dsp-arm` or `systemctl start archibaldos-dsp` (`autoStart` is off by default — starting it hands the second xHCI controller to VFIO).
-  - `dsp-status` to verify; `dsp-bench` to measure the round-trip yourself (`jack_iodelay` across the NETJACK bridge, carried over virtio-net).
+  - `dsp-status` to verify; `dsp-bench` to measure the round-trip yourself (`jack_iodelay` across NetJack2, `dsp-netjack`, carried over the routed tap).
 
 ## Troubleshooting – Crush the Resistance
 

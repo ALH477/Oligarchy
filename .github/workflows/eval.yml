@@ -229,3 +229,12 @@ jobs:
       # too, which is exactly why it is asserted rather than assumed.
       - name: nix build .#terminal-contract
         run: nix build --no-update-lock-file --print-build-logs .#terminal-contract
+
+      # dsp-route-contract: .#nixos with the DSP VM and the companions hub on,
+      # and the guest image's configuration built from it. One more host
+      # evaluation, then a grep and `nft -c` over three small files. It guards
+      # the scoping that nothing at runtime would report: forwarding on for
+      # the tap and wg-companions only (never net.ipv4.ip_forward), and a
+      # forward table that admits UDP/ICMP to the guest and drops the rest.
+      - name: nix build .#dsp-route-contract
+        run: nix build --no-update-lock-file --print-build-logs .#dsp-route-contract

@@ -68,7 +68,8 @@ cmd_start() {
         echo ""
         echo "  Serial log: $SERIAL_LOG"
         echo "  Monitor:    sudo socat - UNIX-CONNECT:$MONITOR_SOCK"
-        echo "  NETJACK:    Port 4713 (TCP/UDP)"
+        echo "  Guest:      ${DSP_GUEST:-10.78.0.2} (NetJack2 UDP 19000, dsp-ctl TCP 7777)"
+        echo "  This host:  systemctl --user start dsp-netjack"
     else
         print_error "Failed to start DSP VM"
         journalctl -u "$VM_SERVICE" -n 20 --no-pager
@@ -150,11 +151,16 @@ cmd_status() {
     
     # Network ports
     echo ""
-    print_status "Network Ports:"
-    if ss -tlnp | grep -q ":4713"; then
-        print_success "  NETJACK (4713): LISTENING"
+    print_status "Network (routed tap; DSP_GUEST overrides the address):"
+    if ping -c 1 -W 1 "${DSP_GUEST:-10.78.0.2}" >/dev/null 2>&1; then
+        print_success "  Guest ${DSP_GUEST:-10.78.0.2}: REACHABLE"
     else
-        print_warning "  NETJACK (4713): NOT LISTENING"
+        print_warning "  Guest ${DSP_GUEST:-10.78.0.2}: NO ANSWER"
+    fi
+    if systemctl --user is-active --quiet dsp-netjack 2>/dev/null; then
+        print_success "  NetJack2 from this host (dsp-netjack): ACTIVE"
+    else
+        print_warning "  NetJack2 from this host (dsp-netjack): inactive"
     fi
     
     # VFIO devices

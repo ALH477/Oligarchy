@@ -20,6 +20,25 @@ with lib;
       '';
     };
 
+    fullName = mkOption {
+      type = types.str;
+      default = "Asher";
+      description = ''
+        The account holder's name: git's user.name (home/apps/default.nix).
+        The installer sets it from the name given at install.
+      '';
+    };
+
+    email = mkOption {
+      type = types.nullOr types.str;
+      default = "demodllc@gmail.com";
+      description = ''
+        git's user.email (home/apps/default.nix). null leaves it unset, so
+        git asks before the first commit instead of using someone else's
+        address; the installer sets null, since it never asks for one.
+      '';
+    };
+
     sshAuthorizedKeys = mkOption {
       type = types.listOf types.str;
       default = [

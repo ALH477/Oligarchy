@@ -21,9 +21,15 @@
 #     arguments here so the measurement can be made comparable, or deliberately
 #     not, on purpose rather than by accident.
 #
-# `jack_iodelay` is NOT in jack2 (checked: no iodelay in its bin/) and is not in
-# this guest's package list, so it is fetched with `nix shell` — no image
-# rebuild. The guest has nix-command/flakes and DHCP, so this works as-is.
+# `jack_iodelay` is NOT in jack2 (checked: no iodelay in its bin/); it comes
+# from jack-example-tools, which the guest image installs. Only when it is
+# missing is it fetched with `nix shell`, and a routed guest (the default,
+# 10.78.0.2 behind the host's tap) has no route to the internet for that.
+#
+# The guest runs its own JACK at boot now (dsp-jackd, with the NetJack2
+# manager and the DeMoD engine bound to it), and it holds the interface.
+# `start` stops it for the measurement; `systemctl start dsp-jackd` (or a
+# reboot) brings the stack back.
 #
 # TWO DIFFERENT INTERFACES DO NOT SHARE A WORD CLOCK. Expect xruns and a slowly
 # drifting figure; that is the honest, realistic case for a guitar rig, not a
@@ -32,7 +38,8 @@
 set -uo pipefail
 
 RATE="${RATE:-96000}"; FRAMES="${FRAMES:-32}"; NPER="${NPER:-2}"; SECS="${SECS:-25}"
-NIXRUN="nix shell nixpkgs#jack-example-tools -c"
+if command -v jack_iodelay >/dev/null 2>&1; then NIXRUN=""
+else NIXRUN="nix shell nixpkgs#jack-example-tools -c"; fi
 
 say() { printf '%s\n' "$*"; }
 die() { printf '\n[FAIL] %s\n' "$*" >&2; exit 1; }
@@ -50,6 +57,9 @@ case "${1:-help}" in
     P="${2:-}"; C="${3:-}"
     [ -n "$P" ] && [ -n "$C" ] || die "usage: $0 start hw:X,0 hw:Y,0"
     [ "$P" != "$C" ] || die "playback and capture must be different devices"
+    # The guest's own JACK holds the interface; without this the jackd below
+    # fails on a busy device, or races dsp-jackd's Restart=.
+    systemctl stop dsp-jackd.service 2>/dev/null
     pkill -x jackd 2>/dev/null; sleep 1
     say "starting jackd  rate=$RATE frames=$FRAMES nperiods=$NPER"
     say "  playback=$P  capture=$C"
@@ -93,6 +103,7 @@ usage, in order, inside the DSP guest:
   ./dsp-latency-guest.sh devices                 # pick two DIFFERENT cards
   ./dsp-latency-guest.sh start hw:2,0 hw:3,0     # playback dev, capture dev
   ./dsp-latency-guest.sh measure                 # the number
+  systemctl start dsp-jackd                      # the guest's own stack back
 
   RATE=48000 FRAMES=256 ./dsp-latency-guest.sh start hw:2,0 hw:3,0
       ^ override to compare settings; defaults are 96000/32, which is what the

@@ -1,0 +1,12 @@
+{
+  "boot": {"btrfsRoot": true, "device": "/dev/sda", "firmware": "bios", "grubCryptodisk": true},
+  "distro": "Oligarchy",
+  "hostname": "altbook",
+  "keyboard": {"consoleKeyMap": null, "layout": "us", "variant": ""},
+  "locale": {"LANG": "en_US.UTF-8"},
+  "luks": {"keyFile": ["luks-root"], "swap": [{"name": "luks-swap", "uuid": "22222222-0000-4000-8000-000000000002"}]},
+  "profile": "nixos-intel",
+  "schema": 1,
+  "timeZone": "America/New_York",
+  "user": {"autologin": true, "fullName": "", "name": "sam"}
+}
