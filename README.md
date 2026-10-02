@@ -116,7 +116,7 @@ The Oligarchy endures.
 | Control Center                   | `Super+D` Wofi war-room hub + `oligarchy-control` TUI — every toggle, service & switch on one surface |
 | Personas                         | studio / gaming / dev / battery / minimal — one switch re-arms kernel, DSP, AI tier, audio quantum & power |
 | VM Manager                       | 4 dedicated VMs: DSP, Coding Sandbox, Kali, OpenWRT                                   |
-| DSP Coprocessor                  | ArchibaldOS-DSP QEMU/KVM + NETJACK — 1.33ms @ 96kHz                                   |
+| DSP Coprocessor                  | ArchibaldOS-DSP QEMU/KVM + NetJack2 — 1.33ms @ 96kHz                                  |
 | Voice AI                         | DeMoD Voice — Local TTS and voice cloning (Coqui XTTS-v2, Piper)                      |
 | Core 0                           | Isolated (`isolcpus=0`) and surrendered to the DSP overlord                             |
 | DSP Coprocessor                  | ArchibaldOS-DSP QEMU/KVM + kexec image — self-healing tyrant                            |
@@ -506,7 +506,7 @@ Every control is a declarative NixOS option, default-off unless noted. See [`doc
   - Enable IOMMU in BIOS.
   - Set audio PCI ID.
   - Arm at runtime with `dsp-arm` or `systemctl start archibaldos-dsp` (`autoStart` is off by default — starting it hands the second xHCI controller to VFIO).
-  - `dsp-status` to verify; `dsp-bench` to measure the round-trip yourself (`jack_iodelay` across the NETJACK bridge, carried over virtio-net).
+  - `dsp-status` to verify; `dsp-bench` to measure the round-trip yourself (`jack_iodelay` across NetJack2, `dsp-netjack`, carried over the routed tap).
 
 ## Troubleshooting – Crush the Resistance
 

@@ -8,7 +8,7 @@ The VM Manager provides a declarative way to configure and run multiple virtual 
 
 | VM | Purpose | CPU Cores | RAM | Storage | Network |
 |----|---------|-----------|-----|---------|---------|
-| **DSP Coprocessor** | Real-time audio processing | 0-1 | 2-4GB | 20GB+ | NETJACK |
+| **DSP Coprocessor** | Real-time audio processing | 0-1 | 2-4GB | 20GB+ | Routed tap (NetJack2) |
 | **Coding Sandbox** | Headless development | Last-1 | 2-4GB | 64GB | NAT |
 | **Kali Linux** | Security/hacking | Last | 4GB | 80GB | NAT/Bridge |
 | **OpenWRT Router** | Network routing | 1 | 512MB | 512MB | Bridged |
@@ -168,21 +168,39 @@ through a writable qcow2 overlay under `/var/lib/qemu` (`archibaldOS.overlay`,
 default `true`); delete the overlay file to reset the guest to a clean
 image.
 
-### NETJACK Audio Settings
+### Network and NetJack2
+
+The guest is a NetJack2 DSP host: its JACK runs jack2's `netmanager` and
+the DeMoD engine, and this host and any ArchibaldOS box join it as
+followers. That needs a real subnet, so the default `network.mode` is
+`routed`: a tap (`dsp0`, host `10.78.0.1`, guest `10.78.0.2`). `user`
+(QEMU user-mode networking with loopback `hostfwd`s) remains, without
+NetJack2.
 
 ```nix
 custom.vm.dsp = {
-  archibaldOS = {
-    netjack = {
-      enable = true;
-      sourcePort = 4713;      # Port for NETJACK routing
-      bufferSize = 32;        # 32 samples @ 96kHz = 0.33ms
-      sampleRate = 96000;     # 96kHz HD audio
-      channels = 2;           # Stereo
-    };
+  network = {
+    mode = "routed";                       # default
+    routed.forwardFrom = [ "wg-companions" ];  # custom.companions sets this
+  };
+  archibaldOS.netjack = {
+    enable = true;
+    port = 19000;           # the guest's NetJack2 manager (UDP)
+    bufferSize = 32;        # the guest's JACK period: 32 @ 96kHz = 0.33ms
+    sampleRate = 96000;     # the guest's JACK rate; boxes resample to it
+    channels = 2;           # this host <-> the guest
   };
 };
 ```
+
+Oligarchy builds the guest image from these values (`flake.nix`,
+`mkDspImage`), so they are what the guest runs. This host joins with
+`systemctl --user start dsp-netjack` (PipeWire's netjack2 driver); the
+guest then appears as `dsp-vm.sink` / `dsp-vm.source`. Peers on a
+`forwardFrom` interface reach the guest with UDP and ICMP only; forwarding
+is enabled per interface, never globally (`net.ipv4.conf.<if>.forwarding`).
+The old `archibaldOS.netjack.sourcePort` is removed: it was the port of
+`jack_netsource`, which could not form a link.
 
 **Latency calculation:**
 ```
@@ -226,7 +244,6 @@ custom.vm.dsp = {
     
     netjack = {
       enable = true;
-      sourcePort = 4713;
       bufferSize = 32;
       sampleRate = 96000;
       channels = 2;
@@ -247,7 +264,7 @@ imports = [
 
 ## VM Types
 
-### DSP Coprocessor (ArchibaldOS + NETJACK)
+### DSP Coprocessor (ArchibaldOS + NetJack2)
 
 Real-time audio processing with ultra-low latency.
 
@@ -263,7 +280,6 @@ custom.vm.dsp = {
     diskImage = self.packages.x86_64-linux.dsp-vm-qcow;
     netjack = {
       enable = true;
-      sourcePort = 4713;
       bufferSize = 128;      # 128/96000 = 1.33ms buffer period
       sampleRate = 96000;     # HD audio
       channels = 2;
@@ -277,7 +293,8 @@ custom.vm.dsp = {
   set — PREEMPT_RT and CachyOS RT were both removed from nixpkgs, so
   neither is available; see `modules/dsp-guest.nix`
 - CPU isolation (isolcpus, nohz_full, rcu_nocbs)
-- NETJACK2 audio routing to host PipeWire
+- NetJack2 hub: this host (PipeWire's netjack2 driver) and ArchibaldOS
+  boxes (jack2's netadapter, over WireGuard) through the DeMoD engine
 - Buffer math above is arithmetic, not a measured round trip — no
   latency has been re-measured against the XanMod guest yet (the old
   CachyOS-RT figures no longer apply); see `docs/architecture.md` §10
@@ -285,9 +302,9 @@ custom.vm.dsp = {
 
 **Helper Commands:**
 ```bash
-dsp-status        # Check VM and NETJACK status
+dsp-status        # Check VM and NetJack2 status
 dsp-console      # Connect to VM console
-dsp-netjack-restart  # Restart NETJACK bridge
+dsp-netjack-restart  # Restart this host's NetJack2 link (systemctl --user)
 ```
 
 ### Coding Sandbox
@@ -368,13 +385,17 @@ custom.vm.quickemu = {
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enable` | bool | false | Enable the DSP VM |
-| `isolatedCores` | list | [0] | CPU cores to isolate |
+| `isolatedCores` | list | [0 1] | CPU cores to isolate |
 | `memoryMB` | int | 2048 | RAM in MB |
 | `hugepages` | int | 1024 | 2MB hugepages |
 | `archibaldOS.enable` | bool | true | Use ArchibaldOS |
-| `archibaldOS.netjack.enable` | bool | true | Enable NETJACK |
-| `archibaldOS.netjack.bufferSize` | int | 128 | Buffer frames |
-| `archibaldOS.netjack.sampleRate` | int | 96000 | Sample rate Hz |
+| `network.mode` | enum | "routed" | routed (tap, NetJack2) or user (hostfwd only) |
+| `network.routed.guestAddress` | string | "10.78.0.2" | The guest on the tap |
+| `network.routed.forwardFrom` | list | [] | Interfaces whose peers may reach the guest |
+| `archibaldOS.netjack.enable` | bool | true | NetJack2 (needs routed) |
+| `archibaldOS.netjack.port` | port | 19000 | The guest's NetJack2 manager |
+| `archibaldOS.netjack.bufferSize` | int | 32 | The guest's JACK period |
+| `archibaldOS.netjack.sampleRate` | int | 96000 | The guest's JACK rate |
 | `audioDevice.enable` | bool | false | VFIO audio passthrough |
 
 ## Building VM Images
@@ -457,8 +478,9 @@ cat /sys/devices/system/cpu/isolated
 # Check hugepages
 cat /proc/meminfo | grep Huge
 
-# Test NETJACK connection
-jack_lsp -c netjack
+# This host's NetJack2 link, and the guest as PipeWire sees it
+systemctl --user status dsp-netjack
+{ pw-link -o; pw-link -i; } | grep dsp-vm
 ```
 
 ### Quickemu VMs

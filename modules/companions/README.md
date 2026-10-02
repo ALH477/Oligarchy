@@ -46,6 +46,27 @@ Read-write, and it reaches other machines, so like `dsp-ctl` it stays **off
 the MCP surface**. Opt-in and default off; when disabled it emits nothing, so
 the ISO needs no `mkForce`.
 
+## The DSP VM
+
+When this host also runs the DSP VM (`custom.vm.dsp.enable`), the tunnel is
+added to `custom.vm.dsp.network.routed.forwardFrom`, so a companion reaches
+the guest at `10.78.0.2` through this host: UDP and ICMP only (NetJack2, the
+DeMoD remote bridge, path-MTU messages), and nothing else through this host.
+Forwarding is turned on for the tunnel and the tap only, never globally;
+`vm-manager/docs/dsp-vm.md` has the details. On the companion, in the
+enrolled copy (`oligarchy-companion path NAME`), add to
+`hosts/installed/local.nix` and `deploy`:
+
+```nix
+{ archibald.companion.dsp = { host = "10.78.0.2"; netjack = true; }; }
+```
+
+`netjack = true` is for wired companions; over Wi-Fi it needs its own
+latency budget. With a touchscreen attached, the companion's kiosk then
+drives the guest's engine (`remote:10.78.0.2`). `.#dsp-netjack-tests` runs
+a companion's NetJack2 commands against the guest's in the build sandbox;
+`.#dsp-route-contract` checks the forwarding scope.
+
 ## Gate
 
 `nix build .#companion-cli-tests` runs the real script against a fake

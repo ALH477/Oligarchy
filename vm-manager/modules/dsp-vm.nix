@@ -1,32 +1,45 @@
 { config, pkgs, lib, ... }:
 
 # ============================================================================
-# DSP VM Module - ArchibaldOS DSP Coprocessor with NETJACK
+# DSP VM Module - ArchibaldOS DSP Coprocessor, NetJack2 hub
 # ============================================================================
 #
-# This module creates an isolated VM running ArchibaldOS for real-time
-# digital signal processing. It uses CPU isolation and NETJACK audio
-# routing to the host PipeWire system.
+# An isolated KVM guest for real-time DSP: isolated cores, hugepages, VFIO
+# passthrough of a USB controller for the audio interface, OVMF.
 #
-# Guest image source: https://github.com/ALH477/ArchibaldOS
-#   Build: cd ArchibaldOS && nix build .#dsp-vm-qcow2
-#   Place: cp result/*.qcow2 ~/vms/archibaldos-dsp.qcow2
+# The guest is a NetJack2 DSP host. It runs JACK (on the passed-through
+# interface, or the dummy driver), jack2's netmanager, and the DeMoD engine.
+# This host and any ArchibaldOS box join it as NetJack2 followers and their
+# audio runs through the engine. That needs the guest on a real subnet:
+# network.mode = "routed" puts it behind a tap (10.78.0.2 by default), and
+# routed.forwardFrom lets the peers of a named interface (custom.companions'
+# WireGuard hub) reach it through this host, UDP and ICMP only.
 #
-# Host integration: Oligarchy NixOS (https://github.com/ALH477/Oligarchy)
-#   Enable: custom.vm.dsp.enable = true in configuration.nix
+# Guest image: Oligarchy builds it from modules/dsp-guest.nix and THIS
+# module's values (flake.nix, mkDspImage), so addresses, rate, period and
+# ports here are the ones the guest uses.
+#
+# This host's audio: `systemctl --user start dsp-netjack` (or `dsp-arm on`)
+# joins with PipeWire's netjack2 driver; the guest appears in PipeWire as
+# `dsp-vm.sink` / `dsp-vm.source`.
 #
 # Terminus Dev audio routing: terminus-dsp-connect start|stop|status
 #   (provided by modules/terminus-dev.nix)
 #
-# Prerequisites:
-#   1. Build the VM image: cd ~/ArchibaldOS && nix build .#dsp-vm-qcow2
-#   2. Copy result to ~/vms/archibaldos-dsp.qcow2
-#   3. Enable IOMMU in BIOS (AMD-Vi / Intel VT-d) — only for VFIO passthrough
+# Prerequisite for passthrough: IOMMU on in firmware (AMD-Vi / Intel VT-d).
 #
 # Organization: https://github.com/ALH477
 # ============================================================================
 
 {
+  imports = [
+    (lib.mkRemovedOptionModule [ "custom" "vm" "dsp" "archibaldOS" "netjack" "sourcePort" ] ''
+      It was the port of `jack_netsource`, a NetJack1 tool run on both ends,
+      which could not form a link. The guest now runs a NetJack2 manager on
+      custom.vm.dsp.archibaldOS.netjack.port (19000).
+    '')
+  ];
+
   options.custom.vm.dsp = {
     enable = lib.mkEnableOption "ArchibaldOS DSP coprocessor VM";
 
@@ -116,35 +129,53 @@
         '';
       };
 
+      # NetJack2. The guest's JACK runs jack2's netmanager (ArchibaldOS
+      # modules/netjack.nix, role "manager"); this host and any box join it
+      # as followers and appear there as clients named after themselves.
+      # The guest image is built from these values (flake.nix, mkDspImage),
+      # so they reach the guest rather than describing it.
       netjack = {
         enable = lib.mkOption {
           type = lib.types.bool;
           default = true;
-          description = "Enable NETJACK2 audio routing to host.";
+          description = ''
+            NetJack2 between the guest and this host. The guest runs the
+            manager on `port`; this host joins with PipeWire's netjack2
+            driver (`systemctl --user start dsp-netjack`), which shows up
+            here as the sink/source `dsp-vm.sink` and `dsp-vm.source`.
+            Requires network.mode = "routed".
+          '';
         };
 
-        sourcePort = lib.mkOption {
+        port = lib.mkOption {
           type = lib.types.port;
-          default = 4713;
-          description = "Source port for NETJACK server in VM.";
+          default = 19000;
+          description = "The guest's NetJack2 manager port (UDP).";
+        };
+
+        clientName = lib.mkOption {
+          type = lib.types.str;
+          default = config.networking.hostName;
+          defaultText = lib.literalExpression "config.networking.hostName";
+          description = "The client name this host appears under in the guest's JACK graph.";
         };
 
         bufferSize = lib.mkOption {
           type = lib.types.int;
           default = 32;
-          description = "Buffer size in frames (32 @ 96kHz = 0.33ms, 0.67ms buffer with n=2).";
+          description = "The guest JACK period in frames (32 @ 96kHz = 0.33ms). Every NetJack2 follower runs at this period.";
         };
 
         sampleRate = lib.mkOption {
           type = lib.types.int;
           default = 96000;
-          description = "Sample rate in Hz (96000 for HD audio).";
+          description = "The guest JACK sample rate. Boxes resample to it (netadapter); this host's PipeWire follows it.";
         };
 
         channels = lib.mkOption {
           type = lib.types.int;
           default = 2;
-          description = "Number of audio channels.";
+          description = "Channels each way between this host and the guest.";
         };
       };
     };
@@ -219,20 +250,70 @@
         description = "Enable network for the VM.";
       };
 
+      mode = lib.mkOption {
+        type = lib.types.enum [ "routed" "user" ];
+        default = "routed";
+        description = ''
+          routed: a tap device (`routed.interface`) with an address on each
+          side, so the guest is a real host on a small subnet. NetJack2 needs
+          this: each joined box gets its own UDP pair on ephemeral ports, which
+          no fixed port forward can carry.
+
+          user: QEMU user-mode networking with loopback `hostfwd`s. The guest
+          is reachable only through the forwards, so NetJack2 cannot run.
+        '';
+      };
+
       hostfwd = lib.mkOption {
         type = lib.types.attrsOf lib.types.int;
         default = { };
-        description = "Port forwards in format { hostPort = guestPort; }. Bound to 127.0.0.1 on the host.";
+        description = "mode = user only: port forwards { hostPort = guestPort; }, bound to 127.0.0.1 on the host.";
       };
 
       openFirewall = lib.mkOption {
         type = lib.types.bool;
         default = false;
-        description = ''
-          Open the forwarded ports in the host firewall for LAN access.
-          Not needed for the local NETJACK bridge, which connects via
-          127.0.0.1 hostfwd.
-        '';
+        description = "mode = user only: open the forwarded ports in the host firewall for LAN access.";
+      };
+
+      routed = {
+        interface = lib.mkOption {
+          type = lib.types.str;
+          default = "dsp0";
+          description = "The tap device on the host.";
+        };
+        hostAddress = lib.mkOption {
+          type = lib.types.str;
+          default = "10.78.0.1";
+          description = "The host's address on the tap. The guest's gateway, and the only address its control bridge and ssh admit.";
+        };
+        guestAddress = lib.mkOption {
+          type = lib.types.str;
+          default = "10.78.0.2";
+          description = "The guest's address: where NetJack2 boxes, the host's PipeWire and dsp-ctl reach it.";
+        };
+        prefixLength = lib.mkOption {
+          type = lib.types.ints.between 8 30;
+          default = 24;
+          description = "Prefix length of the tap subnet.";
+        };
+        guestMac = lib.mkOption {
+          type = lib.types.str;
+          default = "52:54:00:78:00:02";
+          description = "The guest NIC's MAC; the guest configures the NIC that has it.";
+        };
+        forwardFrom = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = [ ];
+          example = [ "wg-companions" ];
+          description = ''
+            Interfaces whose peers may reach the guest through this host:
+            UDP and ICMP to `guestAddress`, nothing else, and nothing from
+            them to anywhere else. Forwarding is turned on for these
+            interfaces and the tap only (`net.ipv4.conf.<if>.forwarding`),
+            never globally. custom.companions adds its tunnel here.
+          '';
+        };
       };
     };
 
@@ -351,13 +432,110 @@
       # so resolve to the qcow2 inside before either sees the path. A plain
       # hand-managed path (the option's `str` branch) is untouched, since
       # pathExists on a non-directory file path is simply false.
+      #
+      # A derivation is resolved by its known layout, NOT by pathExists:
+      # pathExists on a derivation's output is import-from-derivation, which
+      # built the whole disk image (a KVM job, minutes) just to EVALUATE any
+      # host with the VM enabled. Now the image is an ordinary build input.
       resolveDisk = img:
         let s = toString img;
-        in if builtins.pathExists (s + "/nixos.qcow2") then s + "/nixos.qcow2" else s;
+        in
+        if lib.isDerivation img then "${img}/nixos.qcow2"
+        else if builtins.pathExists (s + "/nixos.qcow2") then s + "/nixos.qcow2"
+        else s;
 
       runtimeDisk = if cfg.archibaldOS.overlay then overlayDisk else resolveDisk cfg.archibaldOS.diskImage;
+
+      # ── Routed network ────────────────────────────────────────────────────
+      net = cfg.network;
+      r = net.routed;
+      routed = net.enable && net.mode == "routed";
+      nj = cfg.archibaldOS.netjack;
+
+      # Forwarding through this host, scoped to the guest. Its own inet table,
+      # loaded by its own oneshot (the pattern strict-egress.nix and
+      # dcf-spa-gate.nix use), so it coexists with the iptables firewall and
+      # touches nothing that does not cross the tap. `policy accept` because
+      # a forward hook sees every forwarded packet on the machine; the drops
+      # below match only traffic to or from the tap and the `forwardFrom`
+      # interfaces. Peers on those interfaces get UDP and ICMP to the guest
+      # (NetJack2, the DeMoD remote bridge, path-MTU messages) and nothing
+      # else; the guest gets the same back to them and nothing else. The
+      # control bridge (TCP) and ssh stay host-only: the guest admits only
+      # `hostAddress` on those.
+      routeTable = "oligarchy-dsp-route";
+      ifset = l: "{ " + lib.concatMapStringsSep ", " (i: ''"${i}"'') l + " }";
+      routeRules = pkgs.writeText "${routeTable}.nft" (lib.concatStringsSep "\n" ([
+        "table inet ${routeTable}"
+        "delete table inet ${routeTable}"
+        "table inet ${routeTable} {"
+        "  chain forward {"
+        "    type filter hook forward priority filter; policy accept;"
+      ] ++ map (rule: "    " + rule) (lib.optionals (r.forwardFrom != [ ]) [
+        ''iifname ${ifset r.forwardFrom} oifname "${r.interface}" ip daddr ${r.guestAddress} meta l4proto { udp, icmp } accept''
+        ''iifname "${r.interface}" oifname ${ifset r.forwardFrom} ip saddr ${r.guestAddress} meta l4proto { udp, icmp } accept''
+        ''iifname ${ifset r.forwardFrom} counter drop''
+      ] ++ [
+        ''iifname "${r.interface}" counter drop''
+        ''oifname "${r.interface}" counter drop''
+      ]) ++ [ "  }" "}" "" ]));
+
+      # This host joins the guest's NetJack2 manager with PipeWire's own
+      # netjack2 driver, as a separate PipeWire process (the way filter-chain
+      # runs standalone) that connects to the user's PipeWire daemon. Its
+      # sink and source carry this host's audio into the guest's engine and
+      # the engine's output back. The driver creates its ports when the
+      # session manager configures the nodes (WirePlumber's PortConfig).
+      # Measured in the build sandbox against jack2's netmanager:
+      # `.#dsp-netjack-tests`.
+      netjackConf = pkgs.writeText "dsp-netjack.conf" ''
+        context.properties = {
+          support.dbus = false
+        }
+        context.spa-libs = {
+          audio.convert.* = audioconvert/libspa-audioconvert
+          support.*       = support/libspa-support
+        }
+        context.modules = [
+          { name = libpipewire-module-rt flags = [ ifexists nofail ] }
+          { name = libpipewire-module-protocol-native }
+          { name = libpipewire-module-client-node }
+          { name = libpipewire-module-adapter }
+          { name = libpipewire-module-netjack2-driver
+            args = {
+              net.ip               = "${r.guestAddress}"
+              net.port             = ${toString nj.port}
+              netjack2.client-name = "${nj.clientName}"
+              audio.channels       = ${toString nj.channels}
+              sink.props = {
+                node.name        = "dsp-vm.sink"
+                node.description = "DSP VM (to the engine)"
+              }
+              source.props = {
+                node.name        = "dsp-vm.source"
+                node.description = "DSP VM (from the engine)"
+              }
+            }
+          }
+        ]
+      '';
     in
-    lib.mkIf cfg.enable {
+    lib.mkIf cfg.enable (lib.mkMerge [{
+      assertions = [
+        {
+          assertion = nj.enable -> routed;
+          message = ''
+            custom.vm.dsp.archibaldOS.netjack needs custom.vm.dsp.network.mode = "routed".
+            NetJack2 gives each follower its own UDP pair on ephemeral ports,
+            which QEMU user-mode forwards cannot carry.
+          '';
+        }
+        {
+          assertion = routed -> (net.hostfwd == { } && !net.openFirewall);
+          message = "custom.vm.dsp.network.hostfwd/openFirewall apply to mode = \"user\" only; in routed mode reach the guest at ${r.guestAddress}.";
+        }
+      ];
+
       boot.kernelParams = lib.mkAfter (
         let
           isolatedCoresStr = lib.concatStringsSep "," (map toString cfg.isolatedCores);
@@ -546,25 +724,25 @@
                 ''
               );
 
-              # Network: forward NETJACK port (TCP + UDP) + multi-queue virtio-net
-              # for lower latency. mq=on enables multi-queue, vectors=4 for
-              # interrupt coalescing. This reduces NETJACK packet overhead.
+              # Network. routed: the persistent tap (networking.interfaces
+              # below) with vhost-net, and a fixed MAC the guest matches on.
+              # No mq=on: multi-queue needs a multi-queue tap (`queues=` on
+              # the netdev), and this one is created single-queue.
+              # user: QEMU user-mode networking; forwards bind 127.0.0.1, so
+              # the guest's ports are never exposed on LAN interfaces.
               netOpts =
                 let
-                  # Forwards bind to 127.0.0.1: the NETJACK bridge connects locally,
-                  # so the guest ports are never exposed on LAN interfaces.
-                  tcpFwds = lib.mapAttrsToList (k: v: "hostfwd=tcp:127.0.0.1:${toString k}-:${toString v}")
-                    (cfg.network.hostfwd // lib.optionalAttrs (cfg.archibaldOS.netjack.enable) {
-                      ${toString cfg.archibaldOS.netjack.sourcePort} = cfg.archibaldOS.netjack.sourcePort;
-                    });
-                  udpFwds = lib.optional (cfg.archibaldOS.netjack.enable)
-                    "hostfwd=udp:127.0.0.1:${toString cfg.archibaldOS.netjack.sourcePort}-:${toString cfg.archibaldOS.netjack.sourcePort}";
-                  allFwds = tcpFwds ++ udpFwds;
+                  userFwds = lib.mapAttrsToList (k: v: "hostfwd=tcp:127.0.0.1:${toString k}-:${toString v}") net.hostfwd;
                 in
-                lib.optionalString cfg.network.enable (lib.replaceStrings [ "\n" ] [ " " ] ''
-                  -netdev user,id=net0,${lib.concatStringsSep "," allFwds}
-                  -device virtio-net-pci,netdev=net0,mq=on,vectors=4
-                '');
+                lib.optionalString net.enable (lib.replaceStrings [ "\n" ] [ " " ] (
+                  if net.mode == "routed" then ''
+                    -netdev tap,id=net0,ifname=${r.interface},script=no,downscript=no,vhost=on
+                    -device virtio-net-pci,netdev=net0,mac=${r.guestMac}
+                  '' else ''
+                    -netdev user,id=net0${lib.concatMapStrings (f: "," + f) userFwds}
+                    -device virtio-net-pci,netdev=net0,mq=on,vectors=4
+                  ''
+                ));
 
               displayOpts =
                 lib.optionalString cfg.spice " -vga virtio -display gtk,gl=on"
@@ -613,69 +791,28 @@
         startLimitBurst = 5;
       };
 
-      # NETJACK bridge service - connects to VM's JACK server
-      systemd.services.dsp-netjack-bridge = lib.mkIf cfg.archibaldOS.netjack.enable {
-        description = "NETJACK bridge to ArchibaldOS DSP VM";
-        wantedBy = lib.optionals cfg.autoStart [ "multi-user.target" ];
-        after = [ "${cfg.name}.service" "pipewire.service" ];
-        requires = [ "${cfg.name}.service" ];
-
+      # This host's side of NetJack2 (see netjackConf). A user unit, started
+      # on demand like the VM itself (`dsp-arm on`, terminus-dsp-connect),
+      # because it joins the user's PipeWire. It replaces dsp-netjack-bridge
+      # and dsp-jack-bridge, which ran jack_netsource (NetJack1, and a master)
+      # against a guest that ran no JACK at all, through a loopback forward
+      # that could not carry NetJack2's ephemeral ports. Neither could have
+      # formed a link.
+      systemd.user.services.dsp-netjack = lib.mkIf (nj.enable && routed) {
+        description = "This host's audio to the DSP VM's NetJack2 manager at ${r.guestAddress}:${toString nj.port}";
+        after = [ "pipewire.service" ];
+        bindsTo = [ "pipewire.service" ];
         serviceConfig = {
-          Type = "simple";
+          ExecStart = "${config.services.pipewire.package}/bin/pipewire -c ${netjackConf}";
           Restart = "on-failure";
-          RestartSec = 10;
-          User = "asher";
-
-          ExecStart = pkgs.writeShellScript "dsp-netjack-bridge" ''
-            # Wait for VM to boot and JACK to start
-            sleep 15
-          
-            # Connect to VM's NETJACK server via QEMU port forwarding.
-            # QEMU user-mode networking forwards host 127.0.0.1:4713 → VM:4713.
-            # 128 frames @ 96kHz = 1.33ms round-trip latency
-            exec ${pkgs.jack-example-tools}/bin/jack_netsource \
-              -H 127.0.0.1 \
-              -p ${toString cfg.archibaldOS.netjack.sourcePort} \
-              -n archibaldos-dsp \
-              -C ${toString cfg.archibaldOS.netjack.channels} \
-              -P ${toString cfg.archibaldOS.netjack.channels} \
-              -l ${toString cfg.archibaldOS.netjack.bufferSize} \
-              -r ${toString cfg.archibaldOS.netjack.sampleRate}
-          '';
-
-          ExecStop = "${pkgs.coreutils}/bin/kill -TERM $MAINPID";
+          RestartSec = 5;
         };
       };
 
-      # Legacy JACK bridge for VFIO audio device passthrough
-      systemd.services.dsp-jack-bridge = lib.mkIf cfg.audioDevice.enable {
-        description = "JACK bridge to DSP VM (VFIO passthrough)";
-        wantedBy = lib.optionals cfg.autoStart [ "multi-user.target" ];
-        after = [ "${cfg.name}.service" "pipewire.service" ];
-
-        serviceConfig = {
-          Type = "simple";
-          Restart = "on-failure";
-          RestartSec = 10;
-          User = "asher";
-
-          ExecStart = pkgs.writeShellScript "dsp-jack-bridge" ''
-            sleep 10
-            exec ${pkgs.jack-example-tools}/bin/jack_netsource \
-              -H 127.0.0.1 \
-              -p 4713 \
-              -n dsp-vm \
-              -C 2 -P 2 \
-              -l 256 \
-              -r 48000
-          '';
-        };
-      };
-
-      # hostfwd binds to 127.0.0.1, so no host firewall port is needed for the
-      # local bridge; opt in via network.openFirewall for genuine LAN exposure.
-      networking.firewall.allowedTCPPorts = lib.mkIf (cfg.network.enable && cfg.network.openFirewall)
-        (lib.attrValues cfg.network.hostfwd ++ lib.optionals cfg.archibaldOS.netjack.enable [ cfg.archibaldOS.netjack.sourcePort ]);
+      # user mode only: hostfwd binds 127.0.0.1, so nothing needs opening for
+      # local use; openFirewall is the explicit opt-in for LAN exposure.
+      networking.firewall.allowedTCPPorts = lib.mkIf (net.enable && net.mode == "user" && net.openFirewall)
+        (lib.attrValues net.hostfwd);
 
       environment.systemPackages = [
         (pkgs.writeShellScriptBin "dsp-status" ''
@@ -688,8 +825,8 @@
           echo "=== Hugepages ==="
           cat /proc/meminfo | grep -i huge
           echo ""
-          echo "=== NETJACK Bridge ==="
-          systemctl status dsp-netjack-bridge.service --no-pager || true
+          echo "=== NetJack2 (this host -> ${r.guestAddress}:${toString nj.port}) ==="
+          systemctl --user status dsp-netjack.service --no-pager || true
         '')
 
         # Interactive guest console.
@@ -722,11 +859,59 @@
         '')
 
         (pkgs.writeShellScriptBin "dsp-netjack-restart" ''
-          echo "Restarting NETJACK bridge..."
-          systemctl restart dsp-netjack-bridge.service
+          echo "Restarting NetJack2 to the DSP VM..."
+          exec systemctl --user restart dsp-netjack.service
         '')
       ];
 
       users.users.asher.extraGroups = [ "libvirtd" "kvm" "audio" ];
-    };
+    }
+
+      (lib.mkIf routed {
+        # The tap, persistent, with the host's address. QEMU (root) attaches to
+        # it by name; while the VM is down it simply has no carrier.
+        networking.interfaces.${r.interface} = {
+          virtual = true;
+          virtualType = "tap";
+          ipv4.addresses = [{ address = r.hostAddress; prefixLength = r.prefixLength; }];
+        };
+        networking.networkmanager.unmanaged = [ "interface-name:${r.interface}" ];
+        boot.kernelModules = [ "vhost_net" ];
+
+        systemd.services.${cfg.name} = {
+          requires = [ "${r.interface}-netdev.service" "dsp-vm-route.service" ];
+          after = [ "${r.interface}-netdev.service" "network-addresses-${r.interface}.service" "dsp-vm-route.service" ];
+        };
+
+        # Per interface, never `net.ipv4.ip_forward`: packets arriving on any
+        # other interface (Wi-Fi, the LAN) are still never forwarded. These are
+        # applied when each interface appears, by systemd's own udev rule
+        # (99-systemd.rules runs systemd-sysctl --prefix=/net/ipv4/conf/$name),
+        # so a tunnel that is recreated gets them again.
+        boot.kernel.sysctl = lib.listToAttrs (map
+          (i: lib.nameValuePair "net.ipv4.conf.${i}.forwarding" 1)
+          ([ r.interface ] ++ r.forwardFrom));
+
+        # Ordered before network-pre.target, so the filter is in place before
+        # any of these interfaces exists. The VM requires it.
+        systemd.services.dsp-vm-route = {
+          description = "DSP VM - scope forwarding to the guest (nft table ${routeTable})";
+          wantedBy = [ "multi-user.target" ];
+          wants = [ "network-pre.target" ];
+          before = [ "network-pre.target" ];
+          after = [ "firewall.service" ];
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            ExecStartPre = "${pkgs.nftables}/bin/nft -c -f ${routeRules}";
+            ExecStart = "${pkgs.nftables}/bin/nft -f ${routeRules}";
+            ExecStop = "${pkgs.nftables}/bin/nft delete table inet ${routeTable}";
+          };
+        };
+
+        # NetJack2: the manager answers this host's PipeWire from ephemeral
+        # ports, so the tap admits UDP. The guest is the only thing on it.
+        networking.firewall.interfaces.${r.interface}.allowedUDPPortRanges =
+          lib.mkIf nj.enable [{ from = 1024; to = 65535; }];
+      })]);
 }

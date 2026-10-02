@@ -104,11 +104,23 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # ArchibaldOS DSP coprocessor (uncomment when available)
-    # archibaldos = {
-    #   url = "github:YOUR_ORG/archibaldos";
-    #   inputs.nixpkgs.follows = "nixpkgs";
-    # };
+    # ArchibaldOS (github:ALH477/ArchibaldOS) — the DSP coprocessor guest's
+    # roles: the NetJack2 manager, the DeMoD engine and the control bridge
+    # (its nixosModules), and through its own `demod` input DeMoD's engine
+    # packages. Only `dspGuestModules` below reads it.
+    #
+    # The lock pins the branch that carries those modules until they reach
+    # ArchibaldOS's main, the same arrangement as `exsecutor` below. It
+    # follows our nixpkgs, so the guest has one nixpkgs and DeMoD's engine
+    # builds against nixos-25.11 (measured: demod-orchestrator, demod-rt and
+    # demod-remote-bridge all build).
+    archibaldos = {
+      url = "git+https://github.com/ALH477/ArchibaldOS?ref=ccr-08f057a2-l4wyo1&shallow=1";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.chaotic.follows = "chaotic";
+      inputs.nixos-hardware.follows = "nixos-hardware";
+      inputs.nixos-generators.follows = "nixos-generators";
+    };
 
     # VM Manager - Hybrid VM management
     vm-manager.url = "path:./vm-manager";
@@ -352,8 +364,8 @@
     , nnnvim
     , yara-rules
     , trvthnvke
-    , # archibaldos,
-      ...
+    , archibaldos
+    , ...
     } @ inputs:
 
     let
@@ -376,11 +388,50 @@
       # Common specialArgs passed to all modules
       specialArgs = {
         inherit inputs nixpkgs-unstable chaotic;
-        # Uncomment when archibaldos is available:
-        # inherit archibaldos;
         inherit vm-manager dsp-ctl oligarchy-forge mcp-servers hydramesh;
         inherit nnnvim;
         inherit demod-talk oligarchy-vault reliquary;
+      };
+
+      # ════════════════════════════════════════════════════════════════════════
+      # The DSP coprocessor guest (modules/dsp-guest.nix), built FROM the host
+      # that boots it. The guest's addresses, MAC, ports, rate, period and ssh
+      # keys are the host's custom.vm.dsp values (and custom.user keys), so
+      # the two halves cannot disagree, and a host-side option is never a
+      # setting that silently does nothing to the guest.
+      # ════════════════════════════════════════════════════════════════════════
+      dspGuestModules = [
+        archibaldos.nixosModules.netjack
+        archibaldos.nixosModules.demod-engine
+        archibaldos.nixosModules.dsp-control-bridge
+        { archibald.engine.packages = archibaldos.inputs.demod.packages.${system}; }
+        ./modules/dsp-guest.nix
+      ];
+      dspGuestFor = config:
+        let
+          d = config.custom.vm.dsp;
+          r = d.network.routed;
+        in
+        {
+          network = d.network.mode;
+          address = r.guestAddress;
+          hostAddress = r.hostAddress;
+          prefixLength = r.prefixLength;
+          mac = r.guestMac;
+          netjack = d.archibaldOS.netjack.enable;
+          netjackPort = d.archibaldOS.netjack.port;
+          sampleRate = d.archibaldOS.netjack.sampleRate;
+          period = d.archibaldOS.netjack.bufferSize;
+          authorizedKeys = config.custom.user.sshAuthorizedKeys;
+        };
+      # `qcow-efi`, NOT `qcow`: the host boots it under OVMF, and the image it
+      # replaced had no EFI system partition — OVMF found nothing, fell
+      # through to PXE, and sat in the netboot loop. A BIOS image here
+      # silently reproduces exactly that failure.
+      mkDspImage = guest: nixos-generators.nixosGenerate {
+        inherit system;
+        format = "qcow-efi";
+        modules = dspGuestModules ++ [{ oligarchy.dspGuest = guest; }];
       };
 
       # ════════════════════════════════════════════════════════════════════════
@@ -863,14 +914,17 @@
             # /home that nothing builds, and the image sitting there had no EFI
             # system partition, so OVMF fell through to PXE and the VM sat in a
             # netboot loop pinning the isolated cores. It is now a derivation.
-            {
-              custom.vm.dsp.archibaldOS.diskImage = self.packages.x86_64-linux.dsp-vm-qcow;
-
-              # sshd in the guest (modules/dsp-guest.nix), so the latency harness
-              # can drive jackd from INSIDE the RT guest — measuring from the host
-              # measures the host's scheduler, which is the thing under test.
-              custom.vm.dsp.network.hostfwd = { "2222" = 22; };
-            }
+            #
+            # The image is built from THIS host's custom.vm.dsp values
+            # (mkDspImage above): the guest's address, the NetJack2 port, the
+            # rate and period, and the ssh keys (custom.user.sshAuthorizedKeys,
+            # so the latency harness can drive jackd from INSIDE the RT guest:
+            # measuring from the host measures the host's scheduler, which is
+            # the thing under test). The guest is at 10.78.0.2 on the routed
+            # tap; there is no loopback forward any more.
+            ({ config, ... }: {
+              custom.vm.dsp.archibaldOS.diskImage = mkDspImage (dspGuestFor config);
+            })
           ];
         };
 
@@ -1125,23 +1179,14 @@
         # assertion (nixpkgs lib/eval-config.nix only sets nixpkgs.pkgs when
         # pkgs != null). With `system`, nixpkgs is built internally and honours
         # nixpkgs.config.
-        # The DSP coprocessor guest, as a UEFI-bootable image.
-        #
-        # `qcow-efi`, NOT `qcow`, and that is the whole point: the firmware in
-        # modules/archibaldos-dsp-vm.nix is OVMF, and the image it replaced had
-        # no EFI system partition — OVMF found nothing, fell through to PXE,
-        # and sat in the netboot loop. A BIOS image here silently reproduces
-        # exactly that failure.
+        # The DSP coprocessor guest, as a UEFI-bootable image: exactly the one
+        # .#nixos boots (mkDspImage, built from that host's custom.vm.dsp).
         #
         # This exists so the guest stops being a hand-copied artifact built out
         # of tree. Three files in this repo used to look like they defined that
         # VM and none of them did; when the image stopped booting there was
         # nothing to rebuild it from.
-        dsp-vm-qcow = nixos-generators.nixosGenerate {
-          inherit system;
-          format = "qcow-efi";
-          modules = [ ./modules/dsp-guest.nix ];
-        };
+        dsp-vm-qcow = self.nixosConfigurations.nixos.config.custom.vm.dsp.archibaldOS.diskImage;
 
         # velocitty — the X11 terminal behind custom.terminal.system. Built
         # here rather than in the module so `nix build .#velocitty` is a gate
@@ -1886,6 +1931,54 @@
         # refuses to clobber an edit made on the companion, status drives
         # dsp-ctl. Stubs for ssh and the remote side; seconds, no KVM.
         companion-cli-tests = import ./tests/companions/cli.nix { inherit pkgs; };
+
+        # dsp-netjack-tests — the DSP VM's audio path, run in the sandbox with
+        # the units' own commands: the guest's JACK (dummy driver: no card
+        # here), NetJack2 manager and router, a companion's netadapter, and
+        # this host's dsp-netjack (PipeWire's netjack2 driver) against a
+        # PipeWire daemon. A tone round-trips box -> guest engine -> box and
+        # PipeWire app -> guest engine -> app; an idle host must not stall the
+        # guest, and the same run without node.always-process must. Loopback
+        # addresses, an engine stand-in, WirePlumber's PortConfig step done
+        # by pw-cli. Under a minute, no KVM. tests/dsp-vm/netjack.nix.
+        dsp-netjack-tests =
+          let
+            mini = modules: nixpkgs.lib.nixosSystem {
+              inherit system;
+              modules = [{ boot.isContainer = true; system.stateVersion = "25.11"; }] ++ modules;
+            };
+          in
+          import ./tests/dsp-vm/netjack.nix {
+            inherit pkgs;
+            guest = nixpkgs.lib.nixosSystem {
+              inherit system;
+              modules = dspGuestModules ++ [{
+                oligarchy.dspGuest = { address = "127.0.0.1"; hostAddress = "127.0.0.1"; sampleRate = 48000; period = 256; };
+              }];
+            };
+            box = mini [
+              archibaldos.nixosModules.netjack
+              {
+                networking.hostName = "box1";
+                users.groups.audio = { };
+                users.users.dsp = { isSystemUser = true; group = "audio"; };
+                archibald.jack.user = "dsp";
+                archibald.netjack = { role = "adapter"; address = "127.0.0.1"; };
+              }
+            ];
+            host = mini [
+              vm-manager.nixosModules.dsp-vm
+              {
+                custom.vm.dsp = {
+                  enable = true;
+                  network.routed.guestAddress = "127.0.0.1";
+                  archibaldOS.netjack.clientName = "oligarchy";
+                  archibaldOS.diskImage = "/nonexistent/dsp.qcow2";
+                };
+              }
+            ];
+            probe = pkgs.callPackage "${archibaldos}/tests/netjack2/probe.nix" { };
+          };
 
         # USB scrcpy game-display wrapper. Same derivation the NixOS module
         # installs when custom.androidMirror.enable is set.
@@ -3093,6 +3186,31 @@
         # the reason given at locale-contract below: `nix flake check` never
         # pays for it.  nix build .#installer-contract
         installer-contract = import ./tests/installer/contract.nix { inherit pkgs mkInstalled; };
+
+        # dsp-route-contract — the DSP VM on .#nixos with custom.companions:
+        # the routed tap, forwarding scoped to the guest (and nft accepting
+        # the table), this host's NetJack2 unit, and the guest built from this
+        # host running JACK, the NetJack2 manager, the DeMoD engine and its
+        # bridges on the host's addresses. One host evaluation plus the guest.
+        #   nix build .#dsp-route-contract
+        dsp-route-contract =
+          let
+            host = self.nixosConfigurations.nixos.extendModules {
+              modules = [{ custom.vm.dsp.enable = true; custom.companions.enable = true; }];
+            };
+          in
+          import ./tests/dsp-vm/contract.nix {
+            inherit pkgs host;
+            # Evaluated with the image format's own module, as mkDspImage
+            # builds it (that is where the guest's file systems come from).
+            guest = nixpkgs.lib.nixosSystem {
+              inherit system;
+              modules = dspGuestModules ++ [
+                nixos-generators.nixosModules.qcow-efi
+                { oligarchy.dspGuest = dspGuestFor host.config; }
+              ];
+            };
+          };
 
         locale-contract =
           let

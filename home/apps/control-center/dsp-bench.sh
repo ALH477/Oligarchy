@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # dsp-bench — measure ArchibaldOS DSP coprocessor round-trip latency.
 # Turns the README's latency claims into a reproducible figure: loop an audio
-# signal out to the DSP guest and back through the NETJACK/JACK bridge and let
+# signal out to the DSP guest and back over NetJack2 (dsp-netjack) and let
 # jack_iodelay report the round trip.
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
@@ -16,9 +16,8 @@ if ! command -v jack_iodelay >/dev/null 2>&1; then
 fi
 
 if ! pgrep -x jackd >/dev/null 2>&1 \
-   && ! systemctl is-active --quiet dsp-netjack-bridge 2>/dev/null \
-   && ! systemctl is-active --quiet dsp-jack-bridge 2>/dev/null; then
-  echo "No JACK / NETJACK bridge looks active."
+   && ! systemctl --user is-active --quiet dsp-netjack 2>/dev/null; then
+  echo "No JACK, and no NetJack2 link to the DSP VM (dsp-netjack), looks active."
   echo "Arm the studio persona and start the DSP VM, then re-run:"
   echo "    oligarchy-ctl run persona-studio   &&   dsp-status"
   echo

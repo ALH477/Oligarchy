@@ -694,7 +694,8 @@ imports it with `allowedTiers` gaining `"microvm"` and
 `systemd.tmpfiles.settings."10-microvm"`, `boot.kernelModules += [ "tap"
 "vhost_net" ]`, a `security.pam.loginLimits` entry and `/var/lib/microvms`.
 vm-manager writes `custom.vm.{quickemu,dsp}`, `systemd.services.{quickemu-vm,
-dsp-jack-bridge,dsp-netjack-bridge}` and `users.users.{asher,dsp}`. Nothing
+dsp-vm-route}`, `systemd.user.services.dsp-netjack`, `networking.interfaces.dsp0`
+and `users.users.{asher,dsp}`, and both add `vhost_net` to `boot.kernelModules`. Nothing
 overlaps; the two list-valued options merge. Both want `/dev/kvm`, which is fine.
 `microvm.autostart` is deliberately left empty — a plugin's guest is started by
 its own unit's dependency, so autostarting would give one guest two owners.

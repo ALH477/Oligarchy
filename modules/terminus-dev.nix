@@ -88,44 +88,53 @@ let
   '';
 
   terminus-dsp-connect = pkgs.writeShellScriptBin "terminus-dsp-connect" ''
-    # Route Terminus Dev audio through ArchibaldOS DSP VM
+    # Route Terminus Dev audio through the ArchibaldOS DSP VM's engine.
     # Usage: terminus-dsp-connect [start|stop|status]
+    #
+    # This host joins the guest's NetJack2 manager with the dsp-netjack user
+    # unit (PipeWire's netjack2 driver); the guest shows up here as
+    # dsp-vm.sink (into its engine) and dsp-vm.source (out of it). It used to
+    # start dsp-netjack-bridge and link `demod-rt:output_FL` to
+    # `archibaldos-dsp:capture_1`: the bridge could not form a link, and
+    # demod-rt's ports are out_L/out_R, so neither link ever existed.
     set -e
     ACTION="''${1:-status}"
-    BRIDGE="dsp-netjack-bridge"
-    VM="archibaldos-dsp"
+    LINK="dsp-netjack"
+    VM="${config.custom.vm.dsp.name}"
 
     case "$ACTION" in
       start)
         echo "Starting DSP VM..."
         sudo systemctl start "''${VM}.service"
-        echo "Waiting for VM boot + NETJACK..."
-        sleep 20
-        echo "Starting NETJACK bridge..."
-        sudo systemctl start "''${BRIDGE}.service"
-        sleep 3
-        echo "Connecting Terminus Dev to DSP bridge..."
-        # Auto-connect demod-rt outputs to DSP bridge inputs via PipeWire
-        pw-link "demod-rt:output_FL" "archibaldos-dsp:capture_1" 2>/dev/null || true
-        pw-link "demod-rt:output_FR" "archibaldos-dsp:capture_2" 2>/dev/null || true
-        # Auto-connect DSP bridge outputs to default speakers
-        pw-link "archibaldos-dsp:playback_1" "$(pw-link -i | grep -m1 'alsa.*:playback_FL')" 2>/dev/null || true
-        pw-link "archibaldos-dsp:playback_2" "$(pw-link -i | grep -m1 'alsa.*:playback_FR')" 2>/dev/null || true
-        echo "Done. Terminus Dev → DSP VM → speakers"
+        systemctl --user start "''${LINK}.service"
+        echo "Waiting for the guest's NetJack2 manager..."
+        for _ in $(seq 1 90); do
+          pw-link -i 2>/dev/null | grep -qx 'dsp-vm.sink:playback_1' && break
+          sleep 1
+        done
+        pw-link -i 2>/dev/null | grep -qx 'dsp-vm.sink:playback_1' \
+          || { echo "dsp-vm.sink never appeared: is the guest up? (dsp-status)" >&2; exit 1; }
+        echo "Connecting Terminus Dev to the DSP VM..."
+        pw-link "demod-rt:out_L" "dsp-vm.sink:playback_1" 2>/dev/null || true
+        pw-link "demod-rt:out_R" "dsp-vm.sink:playback_2" 2>/dev/null || true
+        # The engine's return to the default speakers.
+        pw-link "dsp-vm.source:capture_1" "$(pw-link -i | grep -m1 'alsa.*:playback_FL')" 2>/dev/null || true
+        pw-link "dsp-vm.source:capture_2" "$(pw-link -i | grep -m1 'alsa.*:playback_FR')" 2>/dev/null || true
+        echo "Done. Terminus Dev -> DSP VM engine -> speakers"
         ;;
       stop)
-        echo "Stopping NETJACK bridge..."
-        sudo systemctl stop "''${BRIDGE}.service"
+        echo "Stopping NetJack2 to the DSP VM..."
+        systemctl --user stop "''${LINK}.service"
         echo "Stopping DSP VM..."
         sudo systemctl stop "''${VM}.service"
         ;;
       status)
         echo "=== DSP VM ==="
         systemctl is-active "''${VM}.service" 2>/dev/null || echo "inactive"
-        echo "=== NETJACK Bridge ==="
-        systemctl is-active "''${BRIDGE}.service" 2>/dev/null || echo "inactive"
-        echo "=== JACK Ports ==="
-        jack_lsp 2>/dev/null | grep -E "archibaldos|demod" || echo "no DSP ports visible"
+        echo "=== NetJack2 (dsp-netjack) ==="
+        systemctl --user is-active "''${LINK}.service" 2>/dev/null || echo "inactive"
+        echo "=== Ports ==="
+        { pw-link -o; pw-link -i; } 2>/dev/null | grep -E "dsp-vm|demod-rt" || echo "no DSP ports visible"
         ;;
       *)
         echo "Usage: terminus-dsp-connect [start|stop|status]"

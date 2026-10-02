@@ -6,7 +6,11 @@
 #
 #   - a WireGuard hub (`wg-companions`, 10.77.0.1/24, UDP 51877). Companions
 #     dial in; this side only listens, and each peer's allowedIPs is its own
-#     /32, so a companion can reach this host and nothing behind it;
+#     /32, so a companion can reach this host and nothing behind it, except
+#     the DSP VM when this host runs one: then the tunnel is in
+#     custom.vm.dsp.network.routed.forwardFrom, and a companion reaches the
+#     guest (10.78.0.2) with UDP and ICMP only, for NetJack2 and the DeMoD
+#     remote bridge (vm-manager/modules/dsp-vm.nix scopes it);
 #   - `oligarchy-companion`: enrol a freshly installed companion, deploy to it
 #     (built HERE, so a 4 GB machine never compiles), and drive its DSP stack
 #     through dsp-ctl's SSH transport.
@@ -122,6 +126,10 @@ in
       '';
     };
     networking.firewall.allowedUDPPorts = optional cfg.openFirewall cfg.listenPort;
+
+    # Companions reach the DSP VM through this host, when it runs one. On
+    # the companion: archibald.companion.dsp.host = the guest's address.
+    custom.vm.dsp.network.routed.forwardFrom = mkIf config.custom.vm.dsp.enable [ cfg.interface ];
 
     # What the CLI reads: where the hub is and who the members are. No keys.
     environment.etc."oligarchy/companions.json".text = builtins.toJSON {

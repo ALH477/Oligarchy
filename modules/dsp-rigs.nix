@@ -170,7 +170,9 @@ in
     environment.systemPackages = [ runner pkgs.mod-host pkgs.lsp-plugins pkgs.qpwgraph pkgs.jack2 ];
 
     # Let a wheel user arm/disarm the DSP coprocessor (the `dsp-arm` cockpit key)
-    # without a password — scoped to exactly those units.
+    # without a password — scoped to exactly that unit. This host's NetJack2
+    # link to it (dsp-netjack) is a user unit and needs no rule; the two
+    # jack_netsource bridges that used to be listed here are gone.
     #
     # `custom.vm.dsp.name` is the real unit name (vm-manager's dsp-vm module,
     # `services.dsp-vm.*` never existed as a live option — see personas.nix).
@@ -180,9 +182,7 @@ in
       polkit.addRule(function(action, subject) {
         if (action.id == "org.freedesktop.systemd1.manage-units" && subject.isInGroup("wheel")) {
           var unit = action.lookup("unit");
-          if (unit == "${config.custom.vm.dsp.name}.service" ||
-              unit == "dsp-netjack-bridge.service" ||
-              unit == "dsp-jack-bridge.service") {
+          if (unit == "${config.custom.vm.dsp.name}.service") {
             return polkit.Result.YES;
           }
         }
