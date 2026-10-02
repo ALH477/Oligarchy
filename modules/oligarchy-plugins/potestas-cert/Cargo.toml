@@ -1,0 +1,35 @@
+# potestas-cert: plugind's install-time policy facts, certified against the
+# Exsecutor library that states them (examples/potestas upstream).
+#
+# TEST-ONLY. Nothing here is linked into plugind:
+#   - plugind's derivation (pkgs/plugind/default.nix) filters its source to
+#     host/ and wit/, so this directory is not even in its build input;
+#   - plugind's Cargo.toml is untouched, so `cc` stays out of its graph;
+#   - tests/certify.rs path-includes host/src/manifest.rs and policy.rs
+#     verbatim, so the functions under test are plugind's own source, not a
+#     copy.
+# Run: cargo test --release (in this directory).
+[package]
+name = "potestas-cert"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+license = "MPL-2.0"
+publish = false
+description = "Differential certification of Exsecutor's potestas against plugind's policy functions"
+
+[lib]
+path = "src/lib.rs"
+
+# The dependencies manifest.rs and policy.rs import, at plugind's own
+# versions (Cargo.lock started as a copy of host/Cargo.lock).
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+tracing = "0.1"
+
+[build-dependencies]
+# Compiles potestas/potestas.gen.c, the Exsecutor-generated unit.
+cc = "1"

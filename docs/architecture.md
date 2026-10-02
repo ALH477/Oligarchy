@@ -930,6 +930,7 @@ tree-wide.
 | `docs/dcf-minecraft.md` | DCF-Minecraft on the Paper server (plugin, datapack, sidecar, Bedrock `/connect`) |
 | `docs/vpn-windscribe.md` | Windscribe setup, the Discord/Steam egress story, and the DNS tie-break |
 | `docs/exsecutor-kernel-roadmap.md` | the Exsecutor/ring-0 agent-sandbox assessment and its dependency-ordered roadmap |
+| `docs/policy-compiler.md` | the policy compiler's first step: plugind's install-time policy facts certified against an Exsecutor statement of them |
 | `README.md` | the in-character satire (technical tables near the bottom are the source of truth) |
 
 <!-- truth:claim

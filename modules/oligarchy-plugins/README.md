@@ -179,6 +179,12 @@ host/src/
   guest.rs                    the tier 2 peer: same binary, vsock side, inside the VM
 modules/guest.nix             the microVM guest's NixOS config
 tests/wx-probe.c              a real plugin that asks the kernel what it is allowed
+potestas-cert/                TEST-ONLY: certifies check_id, authorize's lexical
+                              forbidden-path half, the anchor rule and W^X
+                              (Rust and the Nix mirror) against Exsecutor's
+                              potestas unit. Not in plugind's build: the
+                              derivation's source filter admits host/ and wit/
+                              only. See docs/policy-compiler.md in Oligarchy
 examples/                     five manifests + README.md indexing them. Start at
                               dcf-talk (a real app: chat over DCF, control-only)
                               and hello-control (the minimal floor). gain,

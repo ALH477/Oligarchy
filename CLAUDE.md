@@ -33,6 +33,7 @@ Large: tens of thousands of lines of Nix, Rust and Shell. `docs/architecture.md`
 | `secure-boot-enrollment.md`, `bios-uma-unlock.md` | firmware procedures — read before running either |
 | `dcf-mesh-agent.md` | the read-write UDP mesh endpoint kept out of the MCP surface |
 | `exsecutor-kernel-roadmap.md` | the Exsecutor/ring-0 agent-sandbox assessment: what the hardware actually allows, the six language prerequisites before any kernel object, and which phases are already built here. Claims about this tree are TrvthNvke-bound; Exsecutor claims are pinned by commit |
+| `policy-compiler.md` | the first step toward Phase K1's policy compiler: plugind's id, forbidden-path, anchor and W^X facts stated once in Exsecutor and certified differentially against plugind's own Rust and the Nix `wxEnforced` mirror (`modules/oligarchy-plugins/potestas-cert/`, test-only); the route to one declaration lowering to drop-in, Landlock and seccomp; and the check-before-expansion gap it found |
 | `localization-roadmap.md` | i18n/l10n design: `custom.locale.*` contract, catalogs, installer round-trip (`oligarchy-adopt`), gates. Stages 0-2 landed (`custom.locale`, `oligarchy-adopt`); §3 is the measured part |
 
 <!-- truth:claim
