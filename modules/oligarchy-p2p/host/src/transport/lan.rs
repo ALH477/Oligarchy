@@ -311,6 +311,27 @@ pub(crate) mod ureq_like {
     use std::net::{SocketAddr, TcpStream};
     use std::time::Duration;
 
+    /// The most a peer's status line and headers may occupy, together.
+    pub(crate) const HEAD_CAP: u64 = 16 * 1024;
+
+    /// One line, charged against `budget`. Refuses a line the budget cannot
+    /// hold rather than returning a truncated one, so a header can never be
+    /// split into two and read as two. An empty return means end of stream.
+    pub(crate) fn bounded_line<R: BufRead>(r: &mut R, budget: &mut u64) -> Result<String> {
+        if *budget == 0 {
+            // Not "end of stream": with no budget left, take(0) would read
+            // nothing and the caller would mistake that for the blank line.
+            bail!("peer response head exceeds {HEAD_CAP} bytes");
+        }
+        let mut line = String::new();
+        let n = r.by_ref().take(*budget).read_line(&mut line)? as u64;
+        *budget -= n;
+        if n > 0 && !line.ends_with('\n') && *budget == 0 {
+            bail!("peer response head exceeds {HEAD_CAP} bytes");
+        }
+        Ok(line)
+    }
+
     pub struct Client {
         connect_timeout: Duration,
     }
@@ -366,8 +387,13 @@ pub(crate) mod ureq_like {
             w.flush()?;
 
             let mut reader = BufReader::new(stream);
-            let mut line = String::new();
-            reader.read_line(&mut line)?;
+            // The status line and headers are the peer's, and read_line on an
+            // attacker's stream is unbounded: a peer that trickles header
+            // bytes (each read inside the per-read timeout) grew these
+            // Strings without limit. The body was always capped by `take`;
+            // now the head is too. 16 KiB is far beyond what peer.rs sends.
+            let mut budget: u64 = HEAD_CAP;
+            let line = bounded_line(&mut reader, &mut budget)?;
             let status: u16 = line
                 .split_whitespace()
                 .nth(1)
@@ -376,8 +402,8 @@ pub(crate) mod ureq_like {
 
             let mut content_length = None;
             loop {
-                let mut h = String::new();
-                if reader.read_line(&mut h)? == 0 {
+                let h = bounded_line(&mut reader, &mut budget)?;
+                if h.is_empty() {
                     break;
                 }
                 let t = h.trim_end();
@@ -447,6 +473,43 @@ pub(crate) mod ureq_like {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_peer_cannot_grow_the_response_head_without_bound() {
+        use super::ureq_like::{bounded_line, HEAD_CAP};
+        // One endless header line.
+        let mut r = std::io::Cursor::new(vec![b'a'; (HEAD_CAP as usize) * 4]);
+        let mut budget = HEAD_CAP;
+        assert!(bounded_line(&mut r, &mut budget).is_err());
+        // Many small header lines that together exceed the cap.
+        let many = "X: y\r\n".repeat((HEAD_CAP as usize) / 4);
+        let mut r = std::io::BufReader::new(many.as_bytes());
+        let mut budget = HEAD_CAP;
+        let mut lines = 0;
+        let err = loop {
+            match bounded_line(&mut r, &mut budget) {
+                Ok(l) if l.is_empty() => break None,
+                Ok(_) => lines += 1,
+                Err(e) => break Some(e),
+            }
+        };
+        assert!(err.is_some(), "read {lines} lines past the cap");
+        // Lines that end exactly on the cap: the next read is an error, not
+        // a blank line that would end the head early.
+        let exact = "X: yy\r\n".repeat((HEAD_CAP as usize) / 7) + &"z".repeat((HEAD_CAP as usize) % 7 - 1) + "\n";
+        assert_eq!(exact.len() as u64, HEAD_CAP);
+        let bytes = format!("{exact}More: 1\r\n").into_bytes();
+        let mut r = std::io::BufReader::new(bytes.as_slice());
+        let mut budget = HEAD_CAP;
+        while budget > 0 {
+            bounded_line(&mut r, &mut budget).unwrap();
+        }
+        assert!(bounded_line(&mut r, &mut budget).is_err());
+        // An ordinary head fits.
+        let mut r = std::io::BufReader::new(&b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n"[..]);
+        let mut budget = HEAD_CAP;
+        assert_eq!(bounded_line(&mut r, &mut budget).unwrap(), "HTTP/1.1 200 OK\r\n");
+    }
 
     #[test]
     fn accepts_every_range_strict_egress_already_allows() {
