@@ -215,9 +215,9 @@ impl Policy {
 
         for path in m.caps.fs_read.iter().chain(m.caps.fs_read_write.iter()) {
             for forbidden in &self.forbidden_paths {
-                if is_under(path, forbidden) {
+                if let Some(how) = overlaps(path, forbidden) {
                     bail!(
-                        "plugin {} requests access to {path:?}, which is under the \
+                        "plugin {} requests access to {path:?}, which {how} the \
                          forbidden prefix {forbidden:?}",
                         m.id
                     );
@@ -227,6 +227,49 @@ impl Policy {
 
         Ok(())
     }
+}
+
+/// Does a capability for `path` reach anything under `forbidden`? `Some` says
+/// how. Landlock grants a whole subtree, so there are two directions, and the
+/// path is opened by the kernel, so there are two spellings:
+///
+/// - **under**: `path` is at or beneath `forbidden` (the original check);
+/// - **contains**: `forbidden` is beneath `path`. `fs_read_write = ["/"]` or
+///   `["/etc"]` passed every check before, and a subtree grant on `/` includes
+///   `/proc` -- the complete W^X bypass the `/proc` entry exists to refuse;
+/// - **resolves to**: either side through symlinks. Landlock opens the path,
+///   so `/var/run/secrets` (NixOS: `/var/run` -> `/run`) IS `/run/secrets`,
+///   and sops-nix's real store is `/run/secrets.d/<n>` behind the
+///   `/run/secrets` symlink -- neither matched lexically.
+///
+/// Resolution is done here, at install time, as root. A path that does not
+/// exist cannot be resolved and is compared lexically only. `$STATE` and the
+/// other expansion variables are per-plugin directories and never resolved.
+fn overlaps(path: &str, forbidden: &str) -> Option<&'static str> {
+    let resolve = |p: &str| -> Option<String> {
+        if p.starts_with('$') {
+            return None;
+        }
+        std::fs::canonicalize(p).ok().map(|r| r.to_string_lossy().into_owned())
+    };
+    let paths = [Some(path.to_string()), resolve(path)];
+    let forbs = [Some(forbidden.to_string()), resolve(forbidden)];
+    for (i, p) in paths.iter().enumerate() {
+        for (j, f) in forbs.iter().enumerate() {
+            let (Some(p), Some(f)) = (p, f) else { continue };
+            let resolved = i == 1 || j == 1;
+            if is_under(p, f) {
+                return Some(if resolved { "resolves to a path under" } else { "is under" });
+            }
+            // A '$'-anchored or relative path is not an ancestor of anything
+            // absolute; is_under's "refuse what it cannot reason about"
+            // answers belong to the path side only, so skip them here.
+            if !p.starts_with('$') && std::path::Path::new(p.as_str()).is_absolute() && is_under(f, p) {
+                return Some(if resolved { "resolves to a path containing" } else { "contains" });
+            }
+        }
+    }
+    None
 }
 
 /// Is `path` at or under `prefix`, comparing path components?
@@ -330,6 +373,62 @@ mod tests {
                  FOLL_FORCE writes to its own .text"
             );
         }
+    }
+
+    /// A capability on an ANCESTOR of a forbidden path grants the forbidden
+    /// path too (Landlock rules cover a subtree). Each of these passed
+    /// authorize() before; `/` and `/proc`'s parent are the W^X bypass.
+    #[test]
+    fn an_ancestor_of_a_forbidden_path_is_refused() {
+        let p = Policy::default();
+        for cap in ["/", "/etc", "/run", "/var/lib", "//", "/./etc"] {
+            for rw in [false, true] {
+                let mut m = manifest(Tier::Wasm, Jit::None, Trust::Untrusted);
+                if rw {
+                    m.caps.fs_read_write.push(cap.into());
+                } else {
+                    m.caps.fs_read.push(cap.into());
+                }
+                let e = p.authorize(&m).expect_err(cap);
+                assert!(format!("{e:#}").contains("contains"), "{cap}: {e:#}");
+            }
+        }
+        // Siblings and unrelated paths are still fine.
+        for cap in ["/srv/audio", "/etc-like", "/homework", "$STATE/x"] {
+            let mut m = manifest(Tier::Wasm, Jit::None, Trust::Untrusted);
+            m.caps.fs_read.push(cap.into());
+            assert!(p.authorize(&m).is_ok(), "{cap}");
+        }
+    }
+
+    /// Landlock opens the path, so a symlink on either side must not split
+    /// one directory into two names. Modelled on the two real cases:
+    /// NixOS's `/var/run` -> `/run`, and sops-nix's `/run/secrets` ->
+    /// `/run/secrets.d/<n>`.
+    #[test]
+    fn a_symlinked_spelling_of_a_forbidden_path_is_refused() {
+        let root = std::env::temp_dir().join(format!("plugind-links-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("run/secrets.d/1")).unwrap();
+        std::os::unix::fs::symlink(root.join("run/secrets.d/1"), root.join("run/secrets")).unwrap();
+        std::fs::create_dir_all(root.join("var")).unwrap();
+        std::os::unix::fs::symlink(root.join("run"), root.join("var/run")).unwrap();
+        let r = |p: &str| root.join(p).to_string_lossy().into_owned();
+
+        let mut p = Policy::default();
+        p.forbidden_paths = vec![r("run/secrets")];
+        for cap in [r("run/secrets.d"), r("run/secrets.d/1"), r("var/run/secrets"), r("var/run")] {
+            let mut m = manifest(Tier::Wasm, Jit::None, Trust::Untrusted);
+            m.caps.fs_read.push(cap.clone());
+            assert!(p.authorize(&m).is_err(), "{cap} was admitted");
+        }
+        let mut m = manifest(Tier::Wasm, Jit::None, Trust::Untrusted);
+        m.caps.fs_read.push(r("var"));
+        // var contains var/run -> run, but not lexically or by resolution of
+        // `var` itself; the symlink inside a granted tree is Landlock's to
+        // refuse at open time (it checks the resolved target).
+        assert!(p.authorize(&m).is_ok());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

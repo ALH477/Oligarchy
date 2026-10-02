@@ -695,6 +695,25 @@ Two smaller corrections found on the way:
   anything. The test is `id_bearing_verbs_refuse_a_bad_id_before_acting`, and
   it fails if the check is removed from `disable`. Found by an inventory pass
   in 2026-10.
+- **`forbiddenPaths` covered the subtree beneath each entry and nothing
+  above it.** `authorize` asked only whether a requested path was *under* a
+  forbidden prefix. But a Landlock rule grants a whole subtree, so a cap on
+  an ancestor grants everything forbidden beneath it, and
+  `fs_read_write = ["/"]` passed every check. That includes `/proc`, so it is
+  the W^X bypass the `/proc` entry exists to refuse. The check was also purely
+  lexical, while Landlock opens the path, so symlinked spellings of the same
+  directory slipped past:
+  - `/var/run/secrets` (NixOS links `/var/run` to `/run`);
+  - `/run/secrets.d`, which holds sops-nix's real secrets behind the
+    `/run/secrets` symlink.
+
+  `policy::overlaps` now refuses in both directions, on the lexical and the
+  canonicalised spelling of each side. Canonicalisation happens at install
+  time, as root. `$STATE`-style expansions are never resolved, and a path
+  that does not exist is compared lexically only. The tests are
+  `an_ancestor_of_a_forbidden_path_is_refused` and
+  `a_symlinked_spelling_of_a_forbidden_path_is_refused`, and both fail
+  against the old under-only check.
 
 ### Current wiring (stage 4)
 
