@@ -1,3 +1,4 @@
+pub mod arca;
 pub mod archive;
 pub mod cli;
 pub mod config;

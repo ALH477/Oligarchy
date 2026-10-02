@@ -19,6 +19,10 @@ sha2 = "0.10"
 thiserror = "1"
 walkdir = "2"
 
+[build-dependencies]
+# Compiles arca/arca.gen.c, the Exsecutor-generated tar-header judge.
+cc = "1"
+
 [[bin]]
 name = "reliquary"
 path = "src/main.rs"

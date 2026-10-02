@@ -52,6 +52,18 @@ pub fn verify_sum_file(directory: &Path, name: &str) -> Result<Vec<String>> {
     if !sums.exists() {
         return Ok(vec![format!("missing {name}")]);
     }
+    // Bounded before it is read. The sums file can come off a USB stick
+    // (usb::pull_block copies the block in before anything is verified), and
+    // BufReader::lines() on a newline-free multi-GB file grows one String
+    // until root runs out of memory. write_sum_files emits a line per payload
+    // file plus its PAR2 volumes: kilobytes. 1 MiB is generous.
+    const MAX_SUMS: u64 = 1 << 20;
+    let len = std::fs::metadata(&sums)?.len();
+    if len > MAX_SUMS {
+        return Ok(vec![format!(
+            "{name}: {len} bytes, refusing to read more than {MAX_SUMS}"
+        )]);
+    }
     let algo256 = name.contains("256");
     let mut problems = Vec::new();
     let mut parsed_any = false;
@@ -128,6 +140,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// A sums file from a stick is bounded before it is read: a newline-free
+    /// multi-GB file would otherwise grow one String in a root process.
+    #[test]
+    fn an_oversized_sums_file_is_refused_unread() {
+        let d = tmpdir("oversized");
+        let f = File::create(d.join("SHA256SUMS")).unwrap();
+        f.set_len((1 << 20) + 1).unwrap();
+        let problems = verify_sum_file(&d, "SHA256SUMS").unwrap();
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("refusing to read"), "{problems:?}");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// The regression: a sums file that parsed to zero entries returned zero

@@ -18,6 +18,32 @@ payload tarball may one day be someone else's.
    refuses anything mounted on `/`, `/boot`, `/nix`, or `/home*`.
 5. **Flake packaged the Python prototype.** The flake now builds the
    Rust crate.
+6. **Item 3 checked names, never member types.** Measured as root with
+   GNU tar 1.35 and the extract flags above, a hostile payload became:
+   - a world-readable block device (`brw-r--r--`, here `259,0`, an NVMe
+     disk), which any local user could read;
+   - a FIFO;
+   - a symlink to `/etc/shadow`.
+
+   The name check passed all three. Every payload is now judged before
+   `tar -x` runs, and before the destination is created, by
+   `archive::judge_payload`. The judge is Exsecutor's `examples/arca`,
+   emitted as C (`arca/`, provenance in `arca/PROVENANCE.md`) and driven by
+   `src/arca.rs`. It admits only GNU tar's own output shape:
+   - regular files, directories and GNU long names;
+   - exact checksum, size, mode, uid, gid and mtime forms;
+   - names with no `..`, no absolute path, no control byte;
+   - nothing after the end block.
+
+   Upstream it is held to GNU tar by a header fuzz: zero cases the judge
+   admits and tar reads differently, over 18,000 mutants. Tests:
+   `a_device_or_symlink_payload_is_refused_before_anything_is_created`
+   (fails with the judge removed: the device node is created) and
+   `a_packed_tree_is_admitted_and_extracts`.
+7. **A sums file was read without a bound.** `BufReader::lines()` on a
+   newline-free multi-GB `SHA256SUMS` from a stick grows one String in a
+   root process. `verify_sum_file` now refuses a sums file over 1 MiB
+   unread. Test: `an_oversized_sums_file_is_refused_unread`.
 
 ## Still open — do not ignore
 
