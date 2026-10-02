@@ -681,6 +681,20 @@ Two smaller corrections found on the way:
   signature says who wrote something, not that the operator wants it JITing.
   Bundling them means the *next* concession is added in one place rather than as
   a third bool some call site forgets.
+- **Every id that reaches root is validated, not only a manifest's.**
+  `remove`, `enable` and `disable` take an id typed by an install-group member,
+  and the id is interpolated into a unit name and into the path `remove_dropin`
+  hands to `remove_dir_all`. `Manifest::validate` checked ids loaded from
+  `plugin.toml`, but nothing checked these. Worse, `remove` called `disable`
+  before looking the id up. So `disable` with the id
+  `X.service.d/../../../../etc/systemd/system/sshd` had root stop that unit and
+  delete `sshd.service.d`, and `remove` could stop a *declared* plugin that the
+  caller never installed. `manifest::check_id` is now the one grammar
+  (`[A-Za-z0-9_-]`, 1..=64 characters). Each of the three verbs applies it
+  before any side effect, and `remove` refuses an unknown id before disabling
+  anything. The test is `id_bearing_verbs_refuse_a_bad_id_before_acting`, and
+  it fails if the check is removed from `disable`. Found by an inventory pass
+  in 2026-10.
 
 ### Current wiring (stage 4)
 

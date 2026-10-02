@@ -91,6 +91,31 @@ pub struct Manifest {
     pub meta: BTreeMap<String, String>,
 }
 
+/// The plugin id grammar: 1..=64 of `[A-Za-z0-9_-]`.
+///
+/// An id becomes a systemd instance name (`unit_name`) and a path component
+/// (`dropin_dir`, `gcroots/<id>`, `state/<id>`), and root acts on both. So
+/// this is checked wherever an id enters, not only where a manifest is
+/// loaded: the control socket's `remove`/`enable`/`disable` carry an id
+/// typed by an install-group member, and before this was shared,
+/// `disable("X.service.d/../../../../etc/systemd/system/sshd")` had root stop
+/// a unit and `remove_dir_all` a drop-in directory outside the plugin tree.
+pub fn check_id(id: &str) -> Result<()> {
+    if id.is_empty() || id.len() > 64 {
+        bail!(
+            "plugin id {id:?} must be 1..=64 characters (it becomes a systemd \
+             instance name, and an empty one would target the template)"
+        );
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        bail!("plugin id {id:?} must be [A-Za-z0-9_-]+ (it becomes a systemd instance name)");
+    }
+    Ok(())
+}
+
 fn default_jit() -> Jit {
     Jit::None
 }
@@ -129,20 +154,7 @@ impl Manifest {
         // also outrank a declared plugin's. Today the install happens to abort
         // later when nix-store cannot unlink a directory; that is luck, not a
         // control.
-        if self.id.is_empty() || self.id.len() > 64 {
-            bail!(
-                "plugin id {:?} must be 1..=64 characters (it becomes a systemd \
-                 instance name, and an empty one would target the template)",
-                self.id
-            );
-        }
-        if !self
-            .id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        {
-            bail!("plugin id {:?} must be [A-Za-z0-9_-]+ (it becomes a systemd instance name)", self.id);
-        }
+        check_id(&self.id)?;
         if self.entry.starts_with('/') || self.entry.contains("..") {
             bail!("entry {:?} must be relative and must not escape the store path", self.entry);
         }

@@ -379,11 +379,16 @@ impl Store {
     }
 
     pub fn remove(&mut self, id: &str) -> Result<()> {
+        // Validate and look up BEFORE disabling: `disable` stops a unit and
+        // deletes a directory, and an id nobody installed has no business
+        // reaching either (a declared plugin is not in `entries`, and an
+        // unprivileged `remove` must not be able to stop it).
+        crate::manifest::check_id(id)?;
+        if !self.reg.entries.contains_key(id) {
+            bail!("no such plugin {id}");
+        }
         self.disable(id).ok();
-        self.reg
-            .entries
-            .remove(id)
-            .with_context(|| format!("no such plugin {id}"))?;
+        self.reg.entries.remove(id);
         // Unrooting is just unlinking: the indirect entry under
         // /nix/var/nix/gcroots/auto is left dangling and Nix prunes it on the
         // next collection.
@@ -405,6 +410,7 @@ impl Store {
     /// Write the drop-in, reload, record the plugin as enabled, and — unless
     /// `start` is false — start it.
     pub fn enable(&mut self, id: &str, start: bool) -> Result<()> {
+        crate::manifest::check_id(id)?;
         let root = self.root.clone();
         let e = self
             .reg
@@ -432,6 +438,9 @@ impl Store {
     }
 
     pub fn disable(&mut self, id: &str) -> Result<()> {
+        // Before any side effect: the id is interpolated into a unit name and
+        // into the path `remove_dropin` hands to `remove_dir_all`.
+        crate::manifest::check_id(id)?;
         let _ = systemctl(&["stop", &unit_name(id)]);
         remove_dropin(id)?;
         daemon_reload()?;
@@ -1027,6 +1036,37 @@ fn now_stamp() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every control-socket verb that takes an id refuses a bad one before
+    /// any side effect. The traversal case is the one that reached root's
+    /// `systemctl stop` and `remove_dir_all` before `check_id` was shared.
+    #[test]
+    fn id_bearing_verbs_refuse_a_bad_id_before_acting() {
+        let dir = std::env::temp_dir().join(format!("plugind-id-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut store = Store::open(&dir).unwrap();
+        for bad in [
+            "",
+            "X.service.d/../../../../etc/systemd/system/sshd",
+            "../x",
+            "a b",
+            "a\nUser=root",
+            &"a".repeat(65),
+        ] {
+            for (verb, r) in [
+                ("disable", store.disable(bad)),
+                ("enable", store.enable(bad, false)),
+                ("remove", store.remove(bad)),
+            ] {
+                let e = r.expect_err(&format!("{verb}({bad:?}) was accepted"));
+                assert!(format!("{e:#}").contains("plugin id"), "{verb}({bad:?}): {e:#}");
+            }
+        }
+        // A well-formed id nobody installed: refused as unknown, not acted on.
+        let e = store.remove("never-installed").unwrap_err();
+        assert!(format!("{e:#}").contains("no such plugin"), "{e:#}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn signature_walk_handles_both_path_info_shapes() {
