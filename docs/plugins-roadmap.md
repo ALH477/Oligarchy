@@ -714,6 +714,30 @@ Two smaller corrections found on the way:
   `an_ancestor_of_a_forbidden_path_is_refused` and
   `a_symlinked_spelling_of_a_forbidden_path_is_refused`, and both fail
   against the old under-only check.
+- **The path checked was not the path granted.** `authorize` judged a
+  capability as written, and launch then granted `expand(cap)`. The two
+  differed in two ways:
+  - **A variable inside a path.** `expand` substituted a variable *anywhere*
+    in the string. `"/home$STORE"` is the single component `home$STORE`, so
+    it is not under `/home` and was not refused, yet it opened
+    `/home/nix/store/…`.
+  - **A symlink in the plugin's own directory.** `$STATE` and `$CONFIG` are
+    plugin-writable, and the launch sites (Landlock rules, bwrap binds, WASI
+    preopens) all follow symlinks. A plugin that replaced `$STATE/x` with a
+    symlink to `/proc` got `/proc` granted, and because state is kept, that
+    survived a reinstall.
+
+  Three changes close both:
+  - `manifest::anchored` allows a variable only as the whole first
+    component, with no `$` anywhere else;
+  - `expand` substitutes only that leading variable;
+  - every launch site calls `expand_checked`, which refuses a
+    `$STATE`/`$CONFIG` capability that resolves outside its own directory.
+
+  The bug was found by the `potestas-cert` differential's agent while
+  mirroring the anchor rule. The tightened rule then made that same
+  differential report 2,879 disagreements until Exsecutor's `ancora` was
+  updated to match, which is the mirror doing its job.
 
 ### Current wiring (stage 4)
 

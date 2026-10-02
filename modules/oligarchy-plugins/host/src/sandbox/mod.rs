@@ -48,10 +48,10 @@ pub fn prepare(m: &Manifest, state_dir: &Path, store_path: &Path) -> Result<Conf
     }
 
     for r in &m.caps.fs_read {
-        fs.allow_read(m.expand(r, state_dir, store_path));
+        fs.allow_read(m.expand_checked(r, state_dir, store_path)?);
     }
     for w in &m.caps.fs_read_write {
-        fs.allow_read_write(m.expand(w, state_dir, store_path));
+        fs.allow_read_write(m.expand_checked(w, state_dir, store_path)?);
     }
 
     fs.allow_all_tcp = m.caps.network && m.caps.tcp_connect.is_empty();

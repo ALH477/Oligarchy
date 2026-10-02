@@ -323,7 +323,7 @@ impl WasmPlugin {
             // Was passing store_path for BOTH state_dir and store_path here,
             // so `$STATE` expanded into the read-only store. It needs the real
             // state dir.
-            let host_path = m.expand(dir, state_dir, store_path);
+            let host_path = m.expand_checked(dir, state_dir, store_path)?;
             wasi.preopened_dir(
                 &host_path,
                 dir,

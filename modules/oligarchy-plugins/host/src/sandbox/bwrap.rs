@@ -153,7 +153,7 @@ pub fn plan(m: &Manifest, p: Paths<'_>, bwrap: PathBuf, plugind: &Path) -> Resul
     // Manifest-declared extra reads. These are also in the Landlock ruleset:
     // bwrap makes them *visible*, Landlock makes them *permitted*.
     for r in &m.caps.fs_read {
-        let path = m.expand(r, p.state_dir, p.store_path);
+        let path = m.expand_checked(r, p.state_dir, p.store_path)?;
         a.bind_same("--ro-bind-try", &path);
     }
 

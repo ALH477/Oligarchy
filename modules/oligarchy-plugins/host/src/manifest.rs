@@ -91,6 +91,41 @@ pub struct Manifest {
     pub meta: BTreeMap<String, String>,
 }
 
+/// The leading variable of a capability and the rest after it, when the
+/// variable is a whole component: `"$STATE"` or `"$STATE/..."`.
+fn split_var(s: &str) -> Option<(&'static str, &str)> {
+    for v in ["$STATE", "$CONFIG", "$STORE"] {
+        if let Some(rest) = s.strip_prefix(v) {
+            if rest.is_empty() || rest.starts_with('/') {
+                return Some((v, rest));
+            }
+        }
+    }
+    None
+}
+
+fn join_rest(base: PathBuf, rest: &str) -> PathBuf {
+    let rest = rest.trim_start_matches('/');
+    if rest.is_empty() {
+        base
+    } else {
+        base.join(rest)
+    }
+}
+
+/// An fs capability names a place: an absolute path, or one expansion
+/// variable as its whole first component. `$` appears nowhere else, because
+/// `expand` substitutes only that leading variable and the forbidden-path
+/// check reads the rest as written.
+pub fn anchored(cap: &str) -> bool {
+    let rest = match split_var(cap) {
+        Some((_, rest)) => rest,
+        None if cap.starts_with('/') => cap,
+        None => return false,
+    };
+    !rest.contains('$')
+}
+
 /// The plugin id grammar: 1..=64 of `[A-Za-z0-9_-]`.
 ///
 /// An id becomes a systemd instance name (`unit_name`) and a path component
@@ -193,7 +228,12 @@ impl Manifest {
         // never match a relative spelling, so a cap written relatively
         // silently bypasses forbidden_paths (including the /proc W^X entry).
         // Require an explicit anchor: an absolute path, or exactly one of
-        // the three expansion variables.
+        // the three expansion variables -- as a whole leading component, and
+        // nowhere else. `expand` used to substitute a variable ANYWHERE, so
+        // "/home$STORE" -- one component, `home$STORE`, so not under /home as
+        // written -- passed the forbidden-prefix check and opened
+        // /home/nix/store/... at launch: the check and the grant saw
+        // different paths. See `anchored`.
         for cap in self
             .caps
             .fs_read
@@ -203,11 +243,7 @@ impl Manifest {
             if cap.is_empty() {
                 bail!("fs capability must not be empty");
             }
-            let anchored = cap.starts_with('/')
-                || cap.starts_with("$STATE")
-                || cap.starts_with("$CONFIG")
-                || cap.starts_with("$STORE");
-            if !anchored {
+            if !anchored(cap) {
                 bail!(
                     "fs capability {cap:?} must be absolute or start with \
                      $STATE/$CONFIG/$STORE; a relative path resolves against \
@@ -301,19 +337,108 @@ impl Manifest {
     }
 
     /// Expand `$STATE`, `$CONFIG`, `$STORE` in capability paths.
+    /// Expand a capability. Only a LEADING variable is expanded (validate()
+    /// refuses a `$` anywhere else), so the path checked at install is the
+    /// path granted at launch, modulo the variable's own directory.
     pub fn expand(&self, s: &str, state_dir: &Path, store_path: &Path) -> PathBuf {
-        let config = state_dir.join("config").join(&self.id);
-        PathBuf::from(
-            s.replace("$STATE", &state_dir.join("state").join(&self.id).to_string_lossy())
-                .replace("$CONFIG", &config.to_string_lossy())
-                .replace("$STORE", &store_path.to_string_lossy()),
-        )
+        match split_var(s) {
+            Some(("$STATE", rest)) => join_rest(state_dir.join("state").join(&self.id), rest),
+            Some(("$CONFIG", rest)) => join_rest(state_dir.join("config").join(&self.id), rest),
+            Some(("$STORE", rest)) => join_rest(store_path.to_path_buf(), rest),
+            _ => PathBuf::from(s),
+        }
+    }
+
+    /// `expand`, for the launch sites (Landlock rules, bwrap binds, WASI
+    /// preopens -- each of which FOLLOWS symlinks when it opens the path).
+    ///
+    /// `$STATE` and `$CONFIG` are the plugin's own writable directories, so
+    /// the plugin decides what a name under them is. A cap `"$STATE/x"`
+    /// whose `x` the plugin replaced with a symlink to `/proc` passed
+    /// `authorize` (it was checked as written) and then had the sandbox
+    /// grant `/proc` -- the W^X bypass, and it survives a reinstall because
+    /// state is kept. So a cap under a plugin-writable base must still
+    /// resolve inside that base; anything else refuses the launch. A path
+    /// that does not exist yet is left to the layer that opens it (bwrap's
+    /// `-try` binds skip it; Landlock and WASI fail on it).
+    pub fn expand_checked(&self, s: &str, state_dir: &Path, store_path: &Path) -> Result<PathBuf> {
+        let path = self.expand(s, state_dir, store_path);
+        let base = match split_var(s) {
+            Some(("$STATE", _)) => state_dir.join("state").join(&self.id),
+            Some(("$CONFIG", _)) => state_dir.join("config").join(&self.id),
+            _ => return Ok(path),
+        };
+        let (Ok(real), Ok(real_base)) = (std::fs::canonicalize(&path), std::fs::canonicalize(&base)) else {
+            return Ok(path);
+        };
+        if !real.starts_with(&real_base) {
+            bail!(
+                "plugin {}: capability {s:?} resolves to {} outside its own directory {}; \
+                 refusing to grant it (a symlink planted in plugin-writable state)",
+                self.id,
+                real.display(),
+                real_base.display()
+            );
+        }
+        Ok(path)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The two shapes that passed `authorize` as written and were granted as
+    /// something else at launch: a variable inside a path, and a symlink the
+    /// plugin planted in its own state directory.
+    #[test]
+    fn a_variable_only_leads_and_expands_only_there() {
+        for ok in ["$STATE", "$STATE/x", "$CONFIG/a/b", "$STORE/share", "/srv/audio"] {
+            assert!(anchored(ok), "{ok}");
+        }
+        for bad in ["/home$STORE", "$STATEX/y", "$STATE/a$STORE", "/proc$STATE", "STATE", "$PATH/x", "x$STATE"] {
+            assert!(!anchored(bad), "{bad}");
+        }
+        let m = plain();
+        let st = Path::new("/var/lib/oligarchy/plugins");
+        let store = Path::new("/nix/store/aaaa-p");
+        assert_eq!(m.expand("$STATE/x", st, store), st.join("state/p/x"));
+        assert_eq!(m.expand("$STORE", st, store), store.to_path_buf());
+        assert_eq!(m.expand("/srv/a", st, store), PathBuf::from("/srv/a"));
+        // validate() refuses a variable inside a path, not just anchored().
+        let e = parse(&format!("{}\n[caps]\nfs_read = [\"/home$STORE\"]\n", PLAIN)).unwrap_err();
+        assert!(e.to_string().contains("must be absolute"), "{e}");
+    }
+
+    const PLAIN: &str = r#"
+            id = "p"
+            version = "1.0.0"
+            tier = "wasm"
+            trust = "untrusted"
+            entry = "p.wasm"
+            abi = "oligarchy:plugin@0.1.0"
+        "#;
+
+    fn plain() -> Manifest {
+        parse(PLAIN).unwrap()
+    }
+
+    #[test]
+    fn a_symlink_planted_in_state_is_refused_at_launch() {
+        let root = std::env::temp_dir().join(format!("plugind-plant-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("state/p/data")).unwrap();
+        std::os::unix::fs::symlink("/proc", root.join("state/p/x")).unwrap();
+        std::os::unix::fs::symlink(root.join("state/p/data"), root.join("state/p/inside")).unwrap();
+        let m = plain();
+        let store = Path::new("/nix/store/aaaa-p");
+        let e = m.expand_checked("$STATE/x", &root, store).unwrap_err();
+        assert!(format!("{e:#}").contains("outside its own directory"), "{e:#}");
+        assert!(m.expand_checked("$STATE/data", &root, store).is_ok());
+        assert!(m.expand_checked("$STATE/inside", &root, store).is_ok(), "a link staying inside is fine");
+        assert!(m.expand_checked("$STATE/not-yet", &root, store).is_ok(), "absent: left to the opener");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     fn parse(s: &str) -> Result<Manifest> {
         let m: Manifest = toml::from_str(s)?;

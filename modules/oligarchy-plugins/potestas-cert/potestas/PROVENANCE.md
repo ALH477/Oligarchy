@@ -6,10 +6,10 @@ that the Exsecutor compiler emits from one Exsecutor source file:
 | | |
 |---|---|
 | Exsecutor repository | `github.com/ALH477/exsecutor` |
-| Commit | `711c19d1a1507b100b0ce675824fcdbbb3cf4e43` (branch `wt/potestas`; not yet on upstream `main`) |
+| Commit | `720e6acaebdb6dd6003f38f90fb39937da5df09b` (branch `ccr-5d6bd334-hasnvm`; not yet on upstream `main`) |
 | Source | `examples/potestas/potestas.exsc` (with its README and `potestas.h`) |
 | Command | `exsc aedifica --hospes x86_64-linux --emitte c examples/potestas/potestas.exsc -o potestas.gen.c` |
-| Output | 60,048 bytes, sha256 `4db18a47484c5e04b703f13a407d7efcc7b191e5d4fc7e9092089d6a81491fed` |
+| Output | 63,570 bytes, sha256 `3e0a97189f25497c8051a5b70bd3f84bda703712e37d95af1f458cc6cafdbe18` |
 
 The unit states plugind's install-time policy facts that are pure functions
 of bytes:
