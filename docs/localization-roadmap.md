@@ -705,6 +705,31 @@ matching `nixosConfigurations.*` target*) grows two lines printing the current
 front of the user **on the ISO**, before they have made the choice they are
 about to lose.
 
+### 6a. Revisited (2026-10-02): (A) built, differently
+
+The installer now installs Oligarchy (`docs/installer.md`). The locale it
+collects lands in `custom.locale.*` (`installer/installed.nix`), normalised by
+the same rules `oligarchy-adopt` uses. Each objection above, and what answers
+it:
+
+- **"A patch against upstream Python forever."** Nothing upstream is patched.
+  A separate Calamares job replaces `nixos` in the exec sequence, and
+  `settings.conf` is regenerated. The cost that remains is real but bounded:
+  `installer/calamares/extensions.nix` refuses to build against an upstream
+  shape it does not know, and it has already met two (25.11 and unstable,
+  both 0.3.23).
+- **"Unable to install plain NixOS."** "Plain NixOS" is on the target page
+  and runs upstream's job, imported, unmodified.
+- **"A generic installer that happens to be ours."** The live ISO is
+  unchanged: it still force-disables the production services. What is
+  installed is the chosen target, which is what an Oligarchy user wanted all
+  along.
+
+(B) stays, and stays correct, for every machine that did not come from this
+ISO: plain NixOS installed by hand, another distribution's installer, the
+"Plain NixOS" choice. `oligarchy-hw-detect` now names the installer first and
+the adopt path second.
+
 ## 7. Staging
 
 Six stages. File ownership is disjoint per stage so stages 3 and 4 can be

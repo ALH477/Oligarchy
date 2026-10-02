@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Installs the distribution's own flake (see main.py). Replaces the `nixos`
+# job in the exec sequence; "plain" still runs that job, unmodified.
+---
+type:       "job"
+name:       "distroinstall"
+interface:  "python"
+script:     "main.py"

@@ -1,7 +1,15 @@
-{ config, pkgs, lib, theme ? { }, features ? { }, username ? "asher", ... }:
+{ config, pkgs, lib, theme ? { }, features ? { }, username ? "asher", osConfig ? { }, ... }:
 
 let
   p = theme; # Shorthand for palette
+
+  # Git identity comes from custom.user (modules/user.nix), not a literal: a
+  # machine installed from the ISO is somebody else's, and a hardcoded
+  # identity here would sign every commit they make with the maintainer's
+  # name and address. The fallbacks are for standalone Home Manager, where
+  # osConfig is { }.
+  gitName = osConfig.custom.user.fullName or "Asher";
+  gitEmail = osConfig.custom.user.email or "demodllc@gmail.com";
 in
 {
   # ════════════════════════════════════════════════════════════════════════════
@@ -70,10 +78,11 @@ in
   programs.git = {
     enable = true;
     settings = {
-      user.name = "Asher";
       # was "${username}@localhost" — every commit authored on this box would
       # carry an unroutable identity GitHub can't associate with your account.
-      user.email = "demodllc@gmail.com";
+      # A null email is left unset: git then refuses to commit until one is
+      # configured, which beats guessing.
+      user = { name = gitName; } // lib.optionalAttrs (gitEmail != null) { email = gitEmail; };
       init.defaultBranch = "main";
       pull.rebase = true;
       push.autoSetupRemote = true;
