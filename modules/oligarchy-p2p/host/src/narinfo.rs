@@ -29,6 +29,16 @@ pub const SIGNED_FIELDS: &[&str] = &["StorePath", "NarHash", "NarSize", "Referen
 pub enum NarInfoError {
     #[error("line {0} has no `: ` separator")]
     Separator(usize),
+    #[error("line {0}: field name is empty or not [A-Za-z0-9-]")]
+    BadKey(usize),
+    #[error("line {0} is empty")]
+    EmptyLine(usize),
+    #[error("line {0} contains a carriage return")]
+    CarriageReturn(usize),
+    #[error("the last line has no terminating newline")]
+    Unterminated,
+    #[error("field {0} appears more than once")]
+    Duplicate(String),
     #[error("missing required field {0}")]
     Missing(&'static str),
     #[error("{0} is not a number")]
@@ -53,17 +63,54 @@ pub struct NarInfo {
 }
 
 impl NarInfo {
+    /// Parse a narinfo, accepting ONLY the grammar on which this parser and
+    /// Nix's (`NarInfo::NarInfo` in libstore/nar-info.cc) provably read the
+    /// same fields. A narinfo outside it is refused, not interpreted.
+    ///
+    /// This matters because the adapter judges a narinfo (hash part, peer
+    /// scope, NarHash) and then hands the same bytes to nix-daemon, which
+    /// judges them again with its own parser. Any input the two parse
+    /// differently is a way to show the adapter one store path and Nix
+    /// another — exactly the bypass of `acceptFromPeers` that §2 forbids. Two
+    /// such inputs were real before this grammar:
+    ///
+    /// - a repeated `StorePath:`. `get` returns the first; Nix assigns on
+    ///   every occurrence, so the LAST wins. The same holds for NarHash,
+    ///   NarSize and URL. Hence: no field may repeat, except `Sig`, which Nix
+    ///   accumulates and so do we.
+    /// - a blank line. `str::lines` skipped it; Nix does not split on lines at
+    ///   all — it searches for the next ':' from the current position, so a
+    ///   blank line glues itself onto the next key (`"\nStorePath"`), which
+    ///   Nix then ignores as unknown. A `StorePath:` after a blank line was
+    ///   read by the adapter and invisible to Nix. Hence: no empty lines.
+    ///
+    /// The rest closes the same class at its edges. `lines()` also strips a
+    /// `\r` that Nix keeps in the value, so no `\r` anywhere. Nix requires
+    /// every line to end in `\n` ("expecting '\n'"), so must we. A field name
+    /// containing ':' or a newline is what lets Nix's colon search drift from
+    /// line boundaries, so names are `[A-Za-z0-9-]` (every real field, and the
+    /// `X-Oligarchy-*` transport hints, fit). `split_once(": ")` agrees with
+    /// Nix's `colon + 2` only because the name has no ':' of its own.
     pub fn parse(s: &str) -> Result<Self, NarInfoError> {
-        let mut fields = Vec::new();
-        for (n, line) in s.lines().enumerate() {
+        let body = s.strip_suffix('\n').ok_or(NarInfoError::Unterminated)?;
+        let mut fields: Vec<(String, String)> = Vec::new();
+        for (n, line) in body.split('\n').enumerate() {
+            let n = n + 1;
             if line.is_empty() {
-                continue;
+                return Err(NarInfoError::EmptyLine(n));
             }
-            // Nix splits on the first ':' and skips exactly one following
-            // space (`colon + 2` in nar-info.cc). A value may itself contain
-            // colons — `Sig:` and `URL:` both do — so split_once is required
-            // and splitn on ':' would be wrong.
-            let (k, v) = line.split_once(": ").ok_or(NarInfoError::Separator(n + 1))?;
+            if line.contains('\r') {
+                return Err(NarInfoError::CarriageReturn(n));
+            }
+            // A value may itself contain colons — `Sig:` and `URL:` both do —
+            // so split_once is required and splitn on ':' would be wrong.
+            let (k, v) = line.split_once(": ").ok_or(NarInfoError::Separator(n))?;
+            if k.is_empty() || !k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+                return Err(NarInfoError::BadKey(n));
+            }
+            if k != "Sig" && fields.iter().any(|(seen, _)| seen == k) {
+                return Err(NarInfoError::Duplicate(k.to_string()));
+            }
             fields.push((k.to_string(), v.to_string()));
         }
         let me = Self { fields };
@@ -307,6 +354,36 @@ Sig: cache.nixos.org-1:TqYPBscpSVaO5LQnJYnNe2tvRnibuig5TV+kjyOIr+UUzmK+CLy7czpeN
             ),
         ] {
             assert!(NarInfo::parse(&bad).is_err(), "accepted a narinfo with {why}");
+        }
+    }
+
+    /// The peer-scope bypass this grammar closes: the adapter must never read
+    /// a different StorePath than Nix does. Each case was accepted before.
+    #[test]
+    fn refuses_every_input_nix_would_read_differently() {
+        let allowed = "StorePath: /nix/store/lcxc2z1h2g8wq8dxfpizy1di85kyxnqx-hello-2.12.3\n";
+        let evil = "StorePath: /nix/store/lcxc2z1h2g8wq8dxfpizy1di85kyxnqx-glibc-2.42-67\n";
+        let rest = HELLO.strip_prefix(allowed).unwrap();
+        let cases: Vec<(String, NarInfoError)> = vec![
+            // Nix: last StorePath wins.
+            (format!("{allowed}{evil}{rest}"), NarInfoError::Duplicate("StorePath".into())),
+            // Nix: the blank line glues onto the next key, which it then ignores.
+            (
+                format!("URL: x\n\n{allowed}{evil}{}", rest.replacen("URL: ", "X-Old-URL: ", 1)),
+                NarInfoError::EmptyLine(2),
+            ),
+            (format!("{allowed}{}", rest.replacen("NarHash", "NarHash: sha256:1n71v0lypd23hmqq1zbhzcd9v49r8g6n2f0hsyfv99pkgmajraw2\nNarHash", 1)),
+                NarInfoError::Duplicate("NarHash".into())),
+            (format!("{allowed}{rest}NarSize: 1\n"), NarInfoError::Duplicate("NarSize".into())),
+            (format!("{allowed}{rest}URL: nar/elsewhere.nar\n"), NarInfoError::Duplicate("URL".into())),
+            (HELLO.replacen("\n", "\r\n", 1), NarInfoError::CarriageReturn(1)),
+            (HELLO.trim_end_matches('\n').to_string(), NarInfoError::Unterminated),
+            (format!("{HELLO}Store:Path: x\n"), NarInfoError::BadKey(11)),
+            (format!("{HELLO}: x\n"), NarInfoError::BadKey(11)),
+            (format!("{HELLO}StorePath:/nix/store/x\n"), NarInfoError::Separator(11)),
+        ];
+        for (bad, want) in cases {
+            assert_eq!(NarInfo::parse(&bad), Err(want), "{bad:?}");
         }
     }
 

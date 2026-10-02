@@ -454,6 +454,31 @@ custom.p2pCache = {
   deliberately does not do. Asking whether a peer key is involved needs no
   verification and cannot be gamed by adding signatures.
   `appending_a_junk_upstream_signature_does_not_lift_the_scope` is the test.
+- **The adapter must read every narinfo exactly as Nix does, or the scope
+  check judges a different path than Nix installs.** The adapter decides
+  (hash part, scope, `NarHash`) and then hands the *same bytes* to nix-daemon,
+  which parses them again. Two inputs were parsed differently, and either one
+  bypassed `acceptFromPeers` for any holder of a peer key:
+  - **A repeated `StorePath:`.** `NarInfo::get` returned the first one, while
+    `nar-info.cc` assigns on every occurrence, so the last wins. A narinfo
+    could name an in-scope path first and `glibc` second, under the same hash
+    part, signed by the peer key.
+  - **A blank line.** `str::lines` skipped it. Nix does not split on lines; it
+    searches for the next `:`, so a blank line glues itself onto the following
+    key (`"\nStorePath"`), which Nix then ignores as unknown. A `StorePath:`
+    after a blank line was read by the adapter and invisible to Nix.
+
+  `NarInfo::parse` now accepts only the grammar on which the two provably
+  agree:
+  - every line is `Key: Value\n`;
+  - keys are `[A-Za-z0-9-]`;
+  - no `\r`, no blank line, and a final newline;
+  - no key repeats except `Sig`.
+
+  The test is `refuses_every_input_nix_would_read_differently`. **Found by an
+  inventory pass in 2026-10, not by a gate:** `.#p2p-peer-scope` only serves narinfos
+  that `oligarchy-p2p-seed` minted, all well-formed, so no case in it could
+  have shown this.
 - **A version suffix must start with a digit.** `starts_with(entry + "-")` is
   not a version test: it lets `glibc` reach `glibc-locales` and `linux` reach
   `linux-firmware`, both real nixpkgs paths in every system closure. Nix splits

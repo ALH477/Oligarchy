@@ -202,6 +202,15 @@ which this crate deliberately does not do — Nix does the crypto. Asking "is a
 peer key involved at all" needs no verification and cannot be gamed by *adding*
 signatures.
 
+**The adapter reads a narinfo exactly as Nix does, or not at all.** The scope
+check judges the bytes, and then nix-daemon parses the same bytes again. A
+repeated `StorePath:` (where Nix keeps the last and `get` returned the first),
+or a blank line (which Nix glues onto the next key and then ignores), let the
+adapter approve one path while Nix installed another. `NarInfo::parse` now
+refuses anything outside the grammar both parsers agree on: `Key: Value\n`
+lines, `[A-Za-z0-9-]` keys, no `\r`, no blank lines, and no repeated key
+except `Sig`. The test is `refuses_every_input_nix_would_read_differently`.
+
 **A version suffix has to start with a digit.** Matching `entry + "-"` is not a
 version test: it lets `glibc` reach `glibc-locales` and `linux` reach
 `linux-firmware`, both of which are in every system closure. Nix splits a name
