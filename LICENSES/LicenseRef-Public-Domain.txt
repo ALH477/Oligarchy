@@ -1,0 +1,12 @@
+Public domain text
+
+Files annotated with this identifier contain text that no one holds copyright
+in, so no licence is needed to copy, change or distribute it.
+
+In this repository that is scripture text from the King James Version with
+Apocrypha (KJVA), taken from the Scrollmapper bible_databases dump
+(https://github.com/scrollmapper/bible_databases). The King James Version is in
+the public domain in the United States and most other countries. In the United
+Kingdom the Crown holds perpetual rights in it under letters patent,
+administered by Cambridge University Press; anyone distributing there should
+check those terms.
