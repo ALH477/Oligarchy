@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright (c) 2025-2026, Asher LeRoy
+# Copyright (c) 2025-2026, DeMoD LLC
 #
 # rebuild — NixOS rebuild with resource caps and optional input updates.
 # Defaults to pinned (locked) inputs. Use --update to bump inputs first.

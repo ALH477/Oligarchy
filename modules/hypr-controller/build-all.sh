@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright (c) 2025-2026, Asher LeRoy
+# Copyright (c) 2025-2026, DeMoD LLC
 #
 # nixos-rebuild + HyprController APK, tuned so neither half can wedge this
 # laptop. Run from anywhere:  modules/hypr-controller/build-all.sh

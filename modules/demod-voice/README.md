@@ -543,4 +543,4 @@ Built on the shoulders of giants:
 
 ---
 
-**DeMoD LTD** - Digital Signal Processing and AI Infrastructure
+**DeMoD LLC** - Digital Signal Processing and AI Infrastructure
