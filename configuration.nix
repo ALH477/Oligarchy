@@ -201,13 +201,17 @@
 
         # Audio source — MIDI gets synthesized, audio files normalized
         # soundFile = ./assets/boot-chime.mid;
-        # Or use a wav/mp3/flac:
-        soundFile = ./assets/modretro.wav;
+        # Or use a wav/mp3/flac: the module runs any non-MIDI file through
+        # ffmpeg to 48 kHz stereo WAV at build time, so the mp3 needs no
+        # conversion step here. booting-oligarchy2.mp3 is DeMoD's own
+        # recording; the ModRetro boot sound that used to sit here was not
+        # ours to ship and has been removed.
+        soundFile = ./assets/booting-oligarchy2.mp3;
         volume = 40;
-        # Optional: Background video (loops behind waveform)
-        # Re-enable once assets/modretro.mp4 is added & git-tracked (absent from
-        # the repo, so referencing it fails pure flake eval).
-        # backgroundVideo = ./assets/modretro.mp4;
+        # Optional: Background video (loops behind waveform). Any video must
+        # be one we have the right to ship and must be git-tracked, or pure
+        # flake eval cannot see it.
+        # backgroundVideo = ./assets/<your-video>.mp4;
 
         # Visual tuning
         resolution = "2560x1600"; # Match your Framework 16 display
