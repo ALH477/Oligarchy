@@ -4,7 +4,8 @@ Decentralized voice and text over the 17-byte `DeModFrame`, packaged as a
 sub-flake in the same shape as `demod-voice/` and `mcp-servers/`.
 
 **LGPL-3.0-only**, dual-licensed — same terms as the HydraMesh Lua it packages.
-Commercial terms on request; see `LICENSING.md` in HydraMesh.
+Commercial terms on request; see `LICENSING.md` in HydraMesh. The texts are in
+`LICENSE` (LGPL-3.0) and `COPYING` (the GPL-3.0 it incorporates).
 
 ## Read this before enabling
 
