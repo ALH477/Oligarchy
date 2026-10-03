@@ -240,3 +240,20 @@ jobs:
       # forward table that admits UDP/ICMP to the guest and drops the rest.
       - name: nix build .#dsp-route-contract
         run: nix build --no-update-lock-file --print-build-logs .#dsp-route-contract
+
+  # Every file's copyright and licence must be declared, in its own SPDX header
+  # or in REUSE.toml, with the licence text in LICENSES/. No Nix needed, so it
+  # is its own job rather than a step behind the evaluation above.
+  reuse:
+    name: reuse lint
+    if: vars.OLIGARCHY_CI == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # A venv: the runner's system Python refuses a plain pip install (PEP 668).
+      - name: reuse lint
+        run: |
+          python3 -m venv "$RUNNER_TEMP/reuse"
+          "$RUNNER_TEMP/reuse/bin/python" -m pip install --quiet reuse==6.2.0
+          "$RUNNER_TEMP/reuse/bin/reuse" lint

@@ -5,7 +5,7 @@
 
 **Framework 16 Native · 68K LoC · AMD 7040 · Intel · Nvidia Optimus · Hyprland · Plasma 6 · IceWM · LeftWM · X11/Wayland · CachyOS/Zen kernel · ~5–7 W idle · Nuclear-grade DSP coprocessor · Per-plugin W^X sandbox runtime · P2P Nix substituter · Compiled screensaver engine · Calamares Install · DeMoD Branded · DCF Compute Fabric**
 
-![logo](Untitled.jpg)
+![logo](assets/wallpaperalt.jpg)
 
 > This README is written in-character (satire — decrees, fake legal threats, all of it). For the plain, practical version — what this actually is and how to build/customize it — see [`docs/architecture.md`](docs/architecture.md).
 
@@ -14,7 +14,7 @@
 Oligarchy NixOS isn’t some boring distro hack.  
 It’s the **first personal OS in history** to unleash a **self-healing, real-time DSP coprocessor** that obliterates latency with **~0.38–2.66 ms round-trip** — forged straight from the same flake that rules your host. 
 
-![](./assets/framework_rotating.gif) ![](./assets/demod.gif)
+![](./assets/demod.gif)
 
 The Host (CachyOS kernel) is a raging sports car built for raw speed and high FPS. The DSP VM (RT BORE kernel) is a flawless Swiss watch that never misses a beat. You wouldn’t put a watch engine in a race car, and you sure as hell wouldn’t put a race-car engine in a precision instrument.
 
@@ -537,8 +537,6 @@ Status: **in the forge.** Vaporware is for those who don't ship. The Oligarchy s
 ## Contributing – Join the Legion
 
 Fork, improve, test, PR. Keep it Framework-compliant and flake-pure.
-
-![meme](./assets/meme.png)
 
 
 ## License — The Tyranny You May Legally Clone

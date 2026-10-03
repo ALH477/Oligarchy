@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright (c) 2025-2026, Asher LeRoy
+# Copyright (c) 2025-2026, DeMoD LLC
 """
 demod-hypr-bridge — DCF-Hypr control/telemetry bridge for a Hyprland session.
 

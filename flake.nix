@@ -1159,7 +1159,7 @@
         # the tree.
         #
         # Reads `$src` in place rather than copying it first: the tracked tree
-        # is ~114 MB (assets/ is most of it) and `verify` opens files read-only
+        # is ~38 MB (assets/ is most of it) and `verify` opens files read-only
         # — only `--receipt` would write, and we do not pass it. The upstream
         # README's copy-then-verify recipe is for trees that need to be
         # writable; this one does not.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// Copyright (c) 2025-2026, Asher LeRoy
+// Copyright (c) 2025-2026, DeMoD LLC
 // Top-level build file — plugin versions only, applied per-module below.
 plugins {
     id("com.android.application") version "8.6.0" apply false

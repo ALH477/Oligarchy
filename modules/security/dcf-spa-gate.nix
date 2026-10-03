@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# Copyright (c) 2025-2026, Asher LeRoy
+# Copyright (c) 2025-2026, DeMoD LLC
 # ═══════════════════════════════════════════════════════════════════════════════
 # DCF-SPA port gate — single-packet authorization for one UDP service
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -8,7 +8,7 @@ xtts:
   temperature: 0.65
   length_penalty: 1.0
   repetition_penalty: 2.0
-  license_accepted: true
+  license_accepted: false
 output:
   sample_rate: 22050
   format: wav
