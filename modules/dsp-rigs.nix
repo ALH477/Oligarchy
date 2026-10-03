@@ -60,10 +60,12 @@ let
   # Resolve each rig to a small metadata file the runner reads at runtime.
   rigMetaFor = name: r:
     let
-      bin = if r.type == "faust" && r.faustSrc != null
-            then "${faustRig name r.faustSrc}/bin/dsp-rig-${name}"
-            else "";
-    in ''
+      bin =
+        if r.type == "faust" && r.faustSrc != null
+        then "${faustRig name r.faustSrc}/bin/dsp-rig-${name}"
+        else "";
+    in
+    ''
       type=${r.type}
       description=${r.description}
       plugins=${concatStringsSep " " r.plugins}
@@ -158,7 +160,7 @@ in
       type = types.attrsOf rigModule;
       default = {
         bypass = { type = "bypass"; description = "Bypass — direct passthrough"; };
-        comp   = { type = "lv2"; description = "LSP compressor"; plugins = [ "http://lsp-plug.in/plugins/lv2/comp_stereo" ]; };
+        comp = { type = "lv2"; description = "LSP compressor"; plugins = [ "http://lsp-plug.in/plugins/lv2/comp_stereo" ]; };
         # Faust example (opt-in: uncomment to compile at build time):
         # drive = { type = "faust"; description = "Soft-clip overdrive"; faustSrc = ./dsp-rigs/drive.dsp; };
       };

@@ -232,7 +232,9 @@ jobs:
 
       # dsp-route-contract: .#nixos with the DSP VM and the companions hub on,
       # and the guest image's configuration built from it. One more host
-      # evaluation, then a grep and `nft -c` over three small files. It guards
+      # evaluation, then a grep and nft over three small files (nft parses
+      # only here: this runner refuses the nested user namespace `nft -c`'s
+      # evaluation needs, and the contract reports that as SKIP). It guards
       # the scoping that nothing at runtime would report: forwarding on for
       # the tap and wg-companions only (never net.ipv4.ip_forward), and a
       # forward table that admits UDP/ICMP to the guest and drops the rest.
