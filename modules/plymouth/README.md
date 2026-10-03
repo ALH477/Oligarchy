@@ -227,4 +227,5 @@ If the theme doesn't appear:
 
 ## License
 
-Free to use and modify.
+BSD-3-Clause, copyright DeMoD LLC: use, modification and redistribution are
+permitted under the conditions in [`LICENSE`](LICENSE).

@@ -162,7 +162,7 @@ docker run --gpus all -v $(pwd):/workspace \
 - First run downloads XTTS models (~1.8 GB) to `~/.local/share/tts/`
 - The Nix flake handles all dependencies reproducibly
 - GitHub Actions will automate future builds on tags
-- MIT Licensed - free for commercial and personal use
+- MIT Licensed code - free for commercial and personal use; the XTTS-v2 model weights are under the noncommercial Coqui Public Model License (CPML)
 
 ## 🆘 Troubleshooting
 

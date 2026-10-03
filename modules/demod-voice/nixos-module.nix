@@ -4,28 +4,35 @@ with lib;
 
 let
   cfg = config.services.demod-voice;
-in {
+in
+{
   options.services.demod-voice = {
     enable = mkEnableOption "DeMoD Voice - Local TTS and Voice Cloning";
-    
+
     package = mkOption {
       type = types.package;
       default = (import ../demod-voice/flake.nix).packages.${pkgs.stdenv.hostPlatform.system}.demod-voice;
       description = "The demod-voice package to use";
     };
-    
+
     configFile = mkOption {
       type = types.path;
       default = ../demod-voice/config.yaml;
-      description = "Path to demod-voice configuration file";
+      description = ''
+        Path to demod-voice configuration file. The default sets
+        `xtts.license_accepted = false`: the XTTS-v2 model weights are under
+        the Coqui Public Model License 1.0.0 (CPML), which permits
+        noncommercial use only. Supplying a file with it set to true means you
+        accept the CPML yourself; DeMoD does not accept it on your behalf.
+      '';
     };
-    
+
     openFirewall = mkOption {
       type = types.bool;
       default = false;
       description = "Open firewall ports for demod-voice API server";
     };
-    
+
     port = mkOption {
       type = types.port;
       default = 5002;
@@ -35,22 +42,22 @@ in {
 
   config = mkIf cfg.enable {
     environment.systemPackages = [ cfg.package ];
-    
+
     environment.etc."demod-voice/config.yaml".source = cfg.configFile;
-    
-    users.groups.demod-voice = {};
-    
+
+    users.groups.demod-voice = { };
+
     users.users.demod-voice = {
       isSystemUser = true;
       group = "demod-voice";
       description = "DeMoD Voice service user";
     };
-    
+
     systemd.services.demod-voice = {
       description = "DeMoD Voice - Local TTS and Voice Cloning";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
-      
+
       serviceConfig = {
         Type = "simple";
         Restart = "on-failure";
@@ -61,15 +68,15 @@ in {
         ProtectSystem = "strict";
         ProtectHome = true;
         ReadWritePaths = [ "/var/lib/demod-voice" "/tmp" ];
-        
+
         ExecStart = "${cfg.package}/bin/demod-voice serve --port ${toString cfg.port}";
-        
+
         Environment = [
           "PYTHONPATH=${cfg.package}/lib/python3.11/site-packages"
         ];
       };
     };
-    
+
     networking.firewall = mkIf cfg.openFirewall {
       allowedTCPPorts = [ cfg.port ];
     };

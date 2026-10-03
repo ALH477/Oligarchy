@@ -32,7 +32,7 @@ stdenv.mkDerivation {
 
   meta = with lib; {
     description = "Modern Plymouth boot theme for Oligarchy NixOS with DeMoD palette";
-    license = licenses.free;
+    license = licenses.bsd3;
     platforms = platforms.linux;
     maintainers = [ ];
   };

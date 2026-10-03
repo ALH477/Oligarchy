@@ -478,12 +478,17 @@ passthru.tests = {
 
 ## License Compliance
 
-All dependencies are compatible with MIT:
+The code dependencies are compatible with MIT:
 - PyTorch: BSD-style
-- Coqui TTS: MPL 2.0
+- Coqui TTS (code): MPL 2.0
 - Piper: MIT
 - ONNX Runtime: MIT
 - tinygrad: MIT
+
+Model weights are licensed separately from code. XTTS-v2 is under the Coqui
+Public Model License 1.0.0 (CPML), noncommercial use only, and
+`xtts.license_accepted` defaults to false so that nothing accepts it on the
+user's behalf.
 
 ## Maintenance
 

@@ -10,7 +10,7 @@ DeMoD Voice Clone is a production-grade local voice cloning and text-to-speech s
 
 ### Is DeMoD Voice Clone free?
 
-Yes, DeMoD Voice Clone is completely free and open source under the MIT License. All dependencies are also MIT-compatible.
+DeMoD Voice Clone's own code is free and open source under the MIT License. The XTTS-v2 model it downloads is not: Coqui licenses it under the Coqui Public Model License 1.0.0 (CPML), which permits noncommercial use only. See "XTTS-v2 model licence" in the README.
 
 ### What languages are supported?
 
@@ -227,7 +227,10 @@ Yes! DeMoD Voice Clone is designed for production use with:
 
 ### What about licensing for commercial use?
 
-All components are MIT-licensed and free for commercial use. However:
+The demod-voice code is MIT-licensed and may be used commercially. The
+XTTS-v2 model is not: its CPML licence permits noncommercial use only, so
+commercial XTTS-v2 use needs a licence from Coqui. Piper voices carry their
+own per-voice licences. Also:
 - Check model licenses if using custom models
 - Respect voice rights and privacy laws
 - Consider ethical implications of voice cloning

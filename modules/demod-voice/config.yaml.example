@@ -29,6 +29,14 @@ xtts:
   # Repetition penalty (higher = less repetition)
   repetition_penalty: 2.0
 
+  # The XTTS-v2 model weights are licensed by Coqui under the Coqui Public
+  # Model License 1.0.0 (CPML, https://coqui.ai/cpml), which permits
+  # NONCOMMERCIAL use only. Setting this to true is your own statement that
+  # you have read and accept the CPML yourself (or hold a commercial licence
+  # from Coqui); DeMoD does not accept it for you. See README.md, "XTTS-v2
+  # model licence".
+  license_accepted: false
+
 # Piper settings
 piper:
   # Default speaker ID for multi-speaker models

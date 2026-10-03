@@ -17,7 +17,9 @@ Production-grade local voice cloning and text-to-speech system built with Nix. P
   - Korean
   - Bengali
   - Additional languages via num2words integration
-- **MIT licensed** and fully open source
+- **MIT licensed** and fully open source (the demod-voice code; the XTTS-v2
+  model weights are Coqui's, under the noncommercial CPML; see
+  [XTTS-v2 model licence](#xtts-v2-model-licence))
 
 ## Quick Start
 
@@ -324,30 +326,33 @@ docker run -v $(pwd):/workspace \
   --output /workspace/test-output.wav
 ```
 
-### XTTS License Acceptance
+### XTTS-v2 model licence
 
-The XTTS model requires license confirmation. To avoid interactive prompts:
+The XTTS-v2 model weights are not part of demod-voice and are not covered by
+its MIT licence. Coqui licenses them under the **Coqui Public Model License
+1.0.0 (CPML, <https://coqui.ai/cpml>), which permits noncommercial use only**;
+commercial use needs a separate licence from Coqui. Nothing in this repository
+accepts the CPML for you.
 
-```bash
-# Create config to pre-accept license
-mkdir -p ~/.config/demod-voice
-cat > ~/.config/demod-voice/config.yaml << EOF
-default_language: en
-gpu:
-  enabled: true
-  device_id: 0
-  mixed_precision: true
+`xtts.license_accepted` in `config.yaml` defaults to `false`. Setting it to
+`true` is your own statement that you have read the CPML and accept it
+yourself, for noncommercial use (or that you hold a commercial licence from
+Coqui):
+
+```yaml
 xtts:
-  cache_dir: null
-  temperature: 0.65
-  length_penalty: 1.0
-  repetition_penalty: 2.0
-output:
-  sample_rate: 22050
-  format: wav
-  quality: high
-EOF
+  license_accepted: true   # I accept the Coqui CPML myself; noncommercial use only
 ```
+
+What the program does today: demod-voice does not read this key. The prompt
+comes from Coqui TTS itself (v0.22.0, `TTS/utils/manage.py`): the first time
+XTTS-v2 is downloaded it asks on stdin whether you have a commercial licence
+or agree to the noncommercial CPML. Answering `y` writes `tos_agreed.txt`
+into the model directory and the question is not asked again; setting
+`COQUI_TOS_AGREED=1` in the environment skips it. Either one is you accepting
+the CPML. Without either (for example in a non-interactive run, where the
+prompt gets end-of-file), Coqui refuses the download and `xtts-zero-shot`
+exits 1 with "Failed to load XTTS model". Piper commands are unaffected.
 
 ### Health Check
 
