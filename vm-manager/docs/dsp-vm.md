@@ -165,7 +165,9 @@ them.
   and neither happens before the guest's router exists.
 - `nix build .#dsp-route-contract` evaluates `.#nixos` with the VM and the
   companions hub on, and the guest built from it: tap, forwarding scope,
-  the forward table (`nft -c`), the guest's units and addresses.
+  the forward table (`nft -c`; parse only, with the evaluation reported
+  SKIP, where the sandbox refuses a private network namespace, as on
+  GitHub's runners), the guest's units and addresses.
 
 ## Troubleshooting
 

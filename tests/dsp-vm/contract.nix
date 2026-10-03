@@ -6,8 +6,10 @@
 #
 # One complete host evaluation (Home Manager included) plus the guest, so it
 # lives in legacyPackages, like installer-contract: `nix flake check` never
-# pays for it. The forward table is also checked by nft itself (`nft -c`, in
-# a user namespace of its own).
+# pays for it. The forward table is also checked by nft itself: parsed and
+# evaluated (`nft -c` in a network namespace of its own) where the build
+# sandbox allows one, parsed only where it does not, as on GitHub's Ubuntu
+# runners. The evaluation is then reported as SKIP, never as a pass.
 #
 #   nix build .#dsp-route-contract
 #
@@ -210,10 +212,24 @@ pkgs.runCommand "dsp-route-contract"
     cat "$reportPath"; echo
     fail=${if failed == [ ] then "0" else "1"}
     ${fileCheckScript}
-    # nft parses and type-checks the table the host loads, in a network
-    # namespace of its own.
-    if unshare -rn nft -c -f ${routeRules}; then echo "PASS: nft -c accepts the forward table"
-    else echo "FAIL: nft -c rejects the forward table"; fail=1; fi
+    # nft -c evaluates the table against the kernel, so it needs CAP_NET_ADMIN
+    # in some network namespace: a private one where the sandbox lets the
+    # builder make one. GitHub's Ubuntu runners refuse nested user namespaces
+    # ("write failed /proc/self/uid_map"). There nft can still parse: it reads
+    # the whole file before it touches netlink, so a syntax error is reported
+    # and a clean parse stops at exactly the permission line below. Anything
+    # else fails. What a parse cannot see (a bad address, a type mismatch) is
+    # the evaluation, reported as SKIP rather than passed.
+    if unshare -rn true 2>/dev/null; then
+      if unshare -rn nft -c -f ${routeRules}; then echo "PASS: nft -c accepts the forward table (parsed and evaluated, private netns)"
+      else echo "FAIL: nft -c rejects the forward table"; fail=1; fi
+    else
+      nftout=$(nft -c -f ${routeRules} 2>&1) || true
+      if [ "$nftout" = "netlink: Error: cache initialization failed: Operation not permitted" ]; then
+        echo "PASS: nft parses the forward table (grammar only)"
+        echo "SKIP: nft evaluation of the forward table: this sandbox grants no network namespace (unshare -rn refused)"
+      else echo "FAIL: nft rejects the forward table:"; echo "$nftout"; fail=1; fi
+    fi
     echo "${toString (lib.length checks - lib.length failed)}/${toString (lib.length checks)} eval checks passed"
     [ $fail = 0 ] || exit 1
     cp "$reportPath" $out
