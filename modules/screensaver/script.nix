@@ -72,6 +72,8 @@ writeShellApplication {
         abyssus) echo 6 ;;
         titulus) echo 7 ;;
         signum) echo 8 ;;
+        fulmen) echo 9 ;;
+        cruor) echo 10 ;;
         *) echo "oligarchy-screensaver: unknown somnium '$1'" >&2; return 1 ;;
       esac
     }

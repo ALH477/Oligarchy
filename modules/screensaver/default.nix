@@ -82,6 +82,8 @@ in
         "abyssus"
         "titulus"
         "signum"
+        "fulmen"
+        "cruor"
       ]);
       default = [ "pluvia" "titulus" "stellae" "signum" "cuniculus" "abyssus" "plasma" "ignis" "vita" ];
       description = ''
@@ -91,9 +93,12 @@ in
         navy; `abyssus` a Mandelbrot deep zoom; `titulus` the title card --
         rain that flies together into OLIGARCHY, then EXSECVTOR PINXIT and
         PVNCTIM CECINIT typed beneath; `signum` the Exsecutor logo turning
-        in the starfield, rendered by Exsecutor's own 3D engine. The default
-        order lets the rain resolve into the title and the stars lead into
-        the logo. One entry runs that effect alone, with no cycling.
+        in the starfield, rendered by Exsecutor's own 3D engine; `fulmen`
+        five lightning bolts on a night sky; `cruor` gore drips pooling at
+        the bottom. fulmen and cruor need an exsecutor pin that includes
+        somnium 9 and 10 -- the locked d581c64 engine refuses those ids.
+        The default order lets the rain resolve into the title and the stars
+        lead into the logo. One entry runs that effect alone, with no cycling.
       '';
     };
 

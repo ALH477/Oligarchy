@@ -9,6 +9,8 @@ there). It has nine effects:
 |---|---|
 | `titulus` | the title card: rain flies together into **OLIGARCHY**, then *EXSECVTOR PINXIT* ("Exsecutor painted it") and *PVNCTIM CECINIT* ("Punctim sang it") type in beneath |
 | `signum` | the Exsecutor logo turning in the starfield, drawn by **Exsecutor's own 3D engine** (`examples/signaculum/forma.exsc`, unmodified) |
+| `fulmen` | five lightning bolts, white core, cyan sheath, night sky |
+| `cruor` | gore drips gathering in a pool along the bottom edge |
 | `pluvia` | digital rain |
 | `stellae` | warp starfield |
 | `cuniculus` | the demoscene XOR tunnel, in the logo's crimson and navy |
