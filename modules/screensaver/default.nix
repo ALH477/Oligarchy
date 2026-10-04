@@ -5,7 +5,7 @@
 # of its own, nine effects, one of them the language's own 3D engine turning
 # its logo. It reads a request on stdin and writes raw 160x100 rgb24 frames
 # on stdout; ./script.nix pipes those into a fullscreen, borderless mpv,
-# which scales and presents them on the GPU (mpv's default gpu-next output;
+# which scales and presents them on the GPU (mpv --vo=gpu --gpu-api=opengl;
 # on the Framework 16, the 780M iGPU the compositor already renders on --
 # DRI_PRIME is unset below, see docs/dgpu-steam-forcing.md). Two builds of
 # the one source, picked by `backend`: exsc's C backend (default, fast) or

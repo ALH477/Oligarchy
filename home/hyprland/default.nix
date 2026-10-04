@@ -657,9 +657,18 @@ in
 
         # custom.screensaver's viewer (modules/screensaver/script.nix sets
         # this app-id). mpv already asks for fullscreen; the rule makes it
-        # unconditional, and noanim keeps the wake-up from animating the
-        # window away over the desktop. Inert unless that window exists.
+        # unconditional. float is load-bearing: a tiled mpv paints its
+        # 160x100 scene clipped inside the tile, which looks like graphical
+        # corruption (same class as Windscribe above). pin keeps scratchpads
+        # off it. opaque/noblur/nodim stop wallpaper and dim_inactive showing
+        # through. noanim keeps wake-up from animating the window away.
+        # Inert unless that window exists.
+        "float, class:^(oligarchy-screensaver)$"
         "fullscreen, class:^(oligarchy-screensaver)$"
+        "pin, class:^(oligarchy-screensaver)$"
+        "opaque, class:^(oligarchy-screensaver)$"
+        "noblur, class:^(oligarchy-screensaver)$"
+        "nodim, class:^(oligarchy-screensaver)$"
         "noanim, class:^(oligarchy-screensaver)$"
 
         # PiP support
@@ -817,6 +826,23 @@ in
           || lib.hasPrefix "DRI_PRIME," v)
         (lib.flatten (config.wayland.windowManager.hyprland.settings.env or [ ])));
       message = "Do not set AQ_DRM_DEVICES/WLR_DRM_DEVICES toward the dGPU (no display path, fatal SIGABRT) nor a session-wide DRI_PRIME (whole desktop on dGPU; hyprlock TTM wedge; dGPU pinned awake). Offload is opt-in per-app. See docs/dgpu-steam-forcing.md.";
+    }
+    {
+      # Tiled mpv paints its 160x100 scene inside whatever surface Hyprland
+      # hands it — the Windscribe corruption (windowrulev2 comment above)
+      # wearing a screensaver. fullscreen+noanim alone is not enough: --fs
+      # races map, and without float the first frames tile. nodim is required
+      # because decoration.dim_inactive is on. pin keeps a scratchpad from
+      # covering it. opaque/noblur stop the wallpaper showing through.
+      assertion =
+        let
+          rules = lib.flatten (config.wayland.windowManager.hyprland.settings.windowrulev2 or [ ]);
+          class = "class:^(oligarchy-screensaver)$";
+          has = prefix: lib.elem "${prefix}, ${class}" rules;
+        in
+        has "fullscreen" && has "noanim" && has "float" && has "pin"
+        && has "opaque" && has "noblur" && has "nodim";
+      message = "oligarchy-screensaver windowrulev2 must include fullscreen, noanim, float, pin, opaque, noblur, nodim (class:^(oligarchy-screensaver)$). Tiled or dimmed mpv looks like panel corruption. See home/hyprland/default.nix windowrulev2.";
     }
     {
       # The autologin boot lock hangs off a RUNTIME condition

@@ -141,17 +141,31 @@ writeShellApplication {
       --demuxer=rawvideo
       --demuxer-rawvideo-w=160 --demuxer-rawvideo-h=100
       --demuxer-rawvideo-mp-format=rgb24
+      --demuxer-rawvideo-size=48000
       "--demuxer-rawvideo-fps=$fps"
       # mpv inhibits idle while it plays video, by default. hypridle honours
       # inhibitors, so without this the lock and DPMS-off listeners never
       # fire while the screensaver runs -- the screensaver would keep the
       # screen on and the session unlocked indefinitely.
       --stop-screensaver=no
+      # Presentation: do not use mpv's default gpu-next. That VO speaks
+      # Vulkan and can pick the dGPU even when DRI_PRIME is unset, which on
+      # this machine is a cross-device dmabuf import (flicker). --vo=gpu +
+      # --gpu-api=opengl is the path boot-intro already pins, honours the
+      # unit's UnsetEnvironment=DRI_PRIME, and scales in the client so
+      # Hyprland is not asked to scan out a 160x100 buffer. display-resample
+      # duplicates 20 fps onto the 165 Hz BOE panel; without it VFR-class
+      # flicker (stale wallpaper through the window) is the reported glitch.
+      # --hwdec=no: this is raw rgb24, not a codec.
+      --vo=gpu --gpu-api=opengl --gpu-context=wayland --hwdec=no
+      --video-sync=display-resample
+      --ao=null
       --fs --no-border --osc=no --osd-level=0 --cursor-autohide=always
       --no-input-default-bindings
       --wayland-app-id=oligarchy-screensaver --title=oligarchy-screensaver
       --cache=no
-      ${lib.optionalString pixelated "--scale=nearest"}
+      --keepaspect=no
+      ${lib.optionalString pixelated "--scale=nearest --cscale=nearest --dscale=nearest"}
     )
 
     case "''${1:-}" in

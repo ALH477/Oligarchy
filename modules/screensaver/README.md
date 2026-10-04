@@ -53,9 +53,11 @@ input.
   exsecutor's golden frames and prints each one's frames per second per
   effect.
 - **The GPU's share is presentation.** mpv scales the 160x100 frame and
-  presents it with its default `gpu-next` output, on the 780M iGPU the
+  presents it with `mpv --vo=gpu --gpu-api=opengl`, on the 780M iGPU the
   compositor already renders on (`DRI_PRIME` is unset, per
   `docs/dgpu-steam-forcing.md`, so there is no cross-device copy).
+  Hyprland rules are `float,fullscreen,pin,opaque,noblur,nodim,noanim` on
+  class `oligarchy-screensaver`; the gate still does not cover the compositor.
   Exsecutor cannot yet put a parallel loop on an AMD GPU: its device path
   runs a whole program as one workitem, a correctness certificate rather
   than a speed-up. `docs/design/somnium.md` §6 in the exsecutor repo says

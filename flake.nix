@@ -2820,12 +2820,28 @@
                 fi
               done
 
-              # ── 4. the idle-inhibit trap ────────────────────────────────
-              if grep -qF -- '--stop-screensaver=no' ${command}/bin/oligarchy-screensaver; then
-                pass "the viewer is told not to inhibit idle"
-              else
-                no "--stop-screensaver=no is missing: mpv would inhibit idle and hypridle would never lock"
-              fi
+              # ── 4. the idle-inhibit trap + presentation path ────────────
+              # vo=null in --headless overrides --vo=gpu; the live argv must
+              # still contain --vo=gpu so a Wayland session does not get
+              # mpv's default gpu-next (Vulkan, may pick the dGPU).
+              SCRIPT=${command}/bin/oligarchy-screensaver
+              for flag in \
+                  '--stop-screensaver=no' \
+                  '--vo=gpu' \
+                  '--gpu-api=opengl' \
+                  '--hwdec=no' \
+                  '--ao=null' \
+                  '--video-sync=display-resample' \
+                  '--scale=nearest' \
+                  '--cscale=nearest' \
+                  '--dscale=nearest'
+              do
+                if grep -qF -- "$flag" "$SCRIPT"; then
+                  pass "viewer argv has $flag"
+                else
+                  no "$flag is missing from oligarchy-screensaver"
+                fi
+              done
 
               # ── measurement, not assertion ──────────────────────────────
               for build in reference:${reference} c:${fast}; do
