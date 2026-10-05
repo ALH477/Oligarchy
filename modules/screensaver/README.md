@@ -11,6 +11,7 @@ there). It has nine effects:
 | `signum` | the Exsecutor logo turning in the starfield, drawn by **Exsecutor's own 3D engine** (`examples/signaculum/forma.exsc`, unmodified) |
 | `fulmen` | five lightning bolts, white core, cyan sheath, night sky |
 | `cruor` | gore drips gathering in a pool along the bottom edge |
+| `pyramis` | Sierpinski tetrahedron: white beam in, seven-band rainbow out |
 | `pluvia` | digital rain |
 | `stellae` | warp starfield |
 | `cuniculus` | the demoscene XOR tunnel, in the logo's crimson and navy |

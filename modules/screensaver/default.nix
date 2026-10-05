@@ -84,6 +84,7 @@ in
         "signum"
         "fulmen"
         "cruor"
+        "pyramis"
       ]);
       default = [ "pluvia" "titulus" "stellae" "signum" "cuniculus" "abyssus" "plasma" "ignis" "vita" ];
       description = ''
@@ -95,8 +96,10 @@ in
         PVNCTIM CECINIT typed beneath; `signum` the Exsecutor logo turning
         in the starfield, rendered by Exsecutor's own 3D engine; `fulmen`
         five lightning bolts on a night sky; `cruor` gore drips pooling at
-        the bottom. fulmen and cruor need an exsecutor pin that includes
-        somnium 9 and 10 -- the locked d581c64 engine refuses those ids.
+        the bottom; `pyramis` a Sierpinski tetrahedron with a white beam in
+        and a seven-band rainbow out. fulmen, cruor and pyramis need an
+        exsecutor pin that includes somnium 9–11 -- the locked d581c64
+        engine refuses those ids.
         The default order lets the rain resolve into the title and the stars
         lead into the logo. One entry runs that effect alone, with no cycling.
       '';
