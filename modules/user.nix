@@ -41,16 +41,24 @@ with lib;
 
     sshAuthorizedKeys = mkOption {
       type = types.listOf types.str;
-      default = [
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKUnqq4zcVhHe5NyupFpnlU8+b1/Gvw3O2VRbgZm/eNi root@deepcomputing"
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM6HhsWIY7VCGLpu/ucXvzkuuf4GOtUMraf7sVflf775 ubuntu@deepcomputing"
-        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL+eqhrKR37FkxmiCuyZav4XVF7JK/1/yFA0rKaBBlbE hermes@framework16"
-      ];
+      # Default is EMPTY: shipping maintainer keys as the default meant a
+      # fresh clone of this repo authorized the maintainer's keys on any
+      # machine that evaluated it. The installer sets this from the keys the
+      # user provides at install time. On THIS host the deployed layer
+      # (~/.config/oligarchy/local.nix) is the source of truth and is updated
+      # separately — see the security-overhaul commit that introduces that
+      # override. The lockout-guard assertion in modules/security/hardening.nix
+      # refuses to disable SSH password auth without at least one entry here,
+      # so an empty default fails LOUDLY (build error) rather than silently
+      # shipping an unreachable host.
+      default = [];
       description = ''
-        SSH public keys allowed to log in as custom.user.name. Replace the
-        default list with your own keys before deploying to a new machine —
-        modules/security/hardening.nix's lockout-guard assertion requires at
-        least one entry here before it will disable SSH password auth.
+        SSH public keys allowed to log in as custom.user.name. The installer
+        populates this at install time. Leave empty only if the host is not
+        reachable over SSH. modules/security/hardening.nix's lockout-guard
+        assertion requires at least one entry here before it will disable SSH
+        password auth — an empty list on a hardened host is a build error, not
+        a silent lockout.
       '';
     };
   };
