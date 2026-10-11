@@ -1511,8 +1511,13 @@
           ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="32ac", ATTR{power/control}="on"
           ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="32ac", ATTR{power/autosuspend}="-1"
 
-          # Thunderbolt authorize (Framework expansion bay)
-          ACTION=="add", SUBSYSTEM=="thunderbolt", ATTR{authorized}=="0", ATTR{authorized}="1"
+          # Thunderbolt devices are NOT auto-authorized on hot-plug. The rule
+          # that used to sit here (ATTR{authorized}="1" on every thunderbolt
+          # add event) silently authorized every Thunderbolt device without
+          # user confirmation — the textbook evil-maid/DMA prerequisite on a
+          # travel laptop. hardware.bolt.enable (above) provides the userspace
+          # authorization path; a device is authorized when the user runs
+          # `boltctl authorize <uuid>` or approves it via the desktop prompt.
         '';
 
         logind.settings.Login = {
