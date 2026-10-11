@@ -548,8 +548,23 @@
           "threadirqs"
           "hugepagesz=2M"
           "hugepages=0"
+          # amd_iommu=on enables the IOMMU. iommu=pt (passthrough) was set
+          # here for lower DMA latency, but passthrough mode means devices
+          # that the kernel does not explicitly map get direct memory access
+          # — which is the DMA attack surface from malicious Thunderbolt/PCIe
+          # devices. The vault CPU preset (modules/cpu-security.nix) sets
+          # iommu.passthrough=0 (no passthrough: all DMA translated). Setting
+          # iommu=pt here CONFLICTS with that — the kernel receives both and
+          # the behavior is last-one-wins/undefined. VFIO-bound devices (the
+          # DSP guest's USB controllers and audio device) are explicitly mapped
+          # by the IOMMU regardless of passthrough mode, so removing iommu=pt
+          # does not affect their isolation — it only closes the passthrough
+          # hole for everything ELSE on the bus. The vault preset's
+          # iommu.passthrough=0 takes effect when (and only when) the preset
+          # is active; on the hardened preset the kernel runs with no
+          # iommu.passthrough parameter at all (kernel default), which is
+          # also not passthrough mode.
           "amd_iommu=on"
-          "iommu=pt"
         ]
       );
 
