@@ -318,6 +318,23 @@ let
     mv "$RUNDIR/resolved.txt.new" "$RUNDIR/resolved.txt"
     echo "strict-egress: resolved $(wc -l < "$RUNDIR/resolved.txt") entries ($failed domains failed)"
 
+    # ── Write set counts for the unprivileged status script ─────────────────
+    # The status script (strict-egress-status) used to call `sudo nft list set`
+    # to count entries, which fails when sudo requires a password — so it
+    # always reported "0 entries" regardless of the actual set contents. The
+    # resolver (running as root) now writes the counts to a world-readable
+    # file, and the status script reads that instead.
+    dyn4_count=$($NFT list set inet strict-egress egress_dyn4 2>/dev/null | grep -c 'elements' || true)
+    dyn6_count=$($NFT list set inet strict-egress egress_dyn6 2>/dev/null | grep -c 'elements' || true)
+    {
+      echo "dyn4=$dyn4_count"
+      echo "dyn6=$dyn6_count"
+      echo "resolved=$(wc -l < "$RUNDIR/resolved.txt")"
+      echo "failed=$failed"
+      echo "timestamp=$(date -Iseconds)"
+    } > "$RUNDIR/status"
+    chmod 644 "$RUNDIR/status"
+
     ${optionalString (!cfg.recovery.dryRun) ''
       # Post-flight: enforcing a broken allowlist must not brick nixos-rebuild
       # — or the interactive session. Probe several independently-hosted
@@ -357,13 +374,29 @@ let
 
   statusScript = pkgs.writeShellScriptBin "strict-egress-status" ''
     set -u
-    NFT=${pkgs.nftables}/bin/nft
     echo "Mode      : ${if cfg.recovery.dryRun then "DRY-RUN (logging only)" else "ENFORCING"} (preset: ${cfg.preset})"
-    echo "Dyn v4    : $(sudo $NFT list set inet strict-egress egress_dyn4 2>/dev/null | grep -c 'timeout' || echo 0) entries"
-    echo "Dyn v6    : $(sudo $NFT list set inet strict-egress egress_dyn6 2>/dev/null | grep -c 'timeout' || echo 0) entries"
-    if [ -f /run/strict-egress/resolved.txt ]; then
+    # Read the counts the resolver (running as root) wrote to /run/strict-egress/status.
+    # The previous version called `sudo nft list set` here, which fails when sudo
+    # requires a password — so it always reported "0 entries" regardless of the
+    # actual set contents, making the dynamic-set population unverifiable.
+    if [ -f /run/strict-egress/status ]; then
+      # Count actual elements in each set by parsing the status file's dyn4/dyn6
+      # values. These are the number of SETS with elements, not element counts;
+      # for element counts, parse resolved.txt (one line per domain->IP pair).
+      dyn4=$(grep '^dyn4=' /run/strict-egress/status | cut -d= -f2)
+      dyn6=$(grep '^dyn6=' /run/strict-egress/status | cut -d= -f2)
+      resolved=$(grep '^resolved=' /run/strict-egress/status | cut -d= -f2)
+      ts=$(grep '^timestamp=' /run/strict-egress/status | cut -d= -f2)
+      echo "Dyn v4    : $dyn4 entries"
+      echo "Dyn v6    : $dyn6 entries"
+      echo "Resolved  : $resolved domain->IP entries (last refresh: $ts)"
+    elif [ -f /run/strict-egress/resolved.txt ]; then
+      echo "Dyn v4    : ? (status file missing — resolver may predate the fix)"
+      echo "Dyn v6    : ? (status file missing — resolver may predate the fix)"
       echo "Resolved  : $(wc -l < /run/strict-egress/resolved.txt) domain->IP entries"
     else
+      echo "Dyn v4    : ? (resolver has not run yet)"
+      echo "Dyn v6    : ? (resolver has not run yet)"
       echo "Resolved  : resolver has not run yet"
     fi
     echo "Recent ${if cfg.recovery.dryRun then "would-blocks" else "blocks"}:"

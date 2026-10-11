@@ -1158,6 +1158,10 @@
             "api.anthropic.com"
             "claude.ai"
             "statsig.anthropic.com"
+            # opencode (the AI coding agent) — Cloudflare-fronted, used for
+            # its API and telemetry. Observed in WOULDBLOCK logs during the
+            # dry-run soak (172.65.90.x:443 = Cloudflare for api.opencode.ai).
+            "api.opencode.ai"
             # ollama (model pulls) + blipply-assistant (model downloads)
             "ollama.com"
             "registry.ollama.ai"
