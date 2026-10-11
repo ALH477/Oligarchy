@@ -827,19 +827,17 @@
                 # because there it is running plugins somebody else wrote.
                 allowedTiers = [ "wasm" "native" "lua" "microvm" ];
 
-                # The concession, and it is a real one: a plugin declaring
-                # jit = "self" runs with MemoryDenyWriteExecute=no. It emits a build
-                # warning on purpose. Verified on this hardware rather than assumed
-                # — `plugind selftest` reports mprotect(PROT_EXEC) and memfd_create
-                # DENIED for jit=none and allowed for jit=self on the zen kernel.
-                #
-                # Two things keep it bounded. Manifest validation refuses
-                # untrusted + jit=self outside tier 2 outright, and a request that
-                # arrived over the control socket cannot ask for it at all
-                # (Authority::Socket) — whether a signed plugin may hold W+X pages
-                # is the operator's call, not something install-group membership
-                # buys.
-                allowSelfJit = true;
+                # W^X is enforced: a plugin declaring jit = "self" is refused
+                # unless it is routed through tier 2 (microvm), where W+X lives
+                # inside the guest kernel, not the host. The previous posture
+                # (allowSelfJit = true) let a signed plugin hold W+X pages on the
+                # host — a real concession, since the seccomp filter's MDWE
+                # escape is bypassable via memfd dual-mapping (see
+                # docs/plugins-roadmap.md). Manifest validation already refuses
+                # untrusted + jit=self outside tier 2; this closes the remaining
+                # host-side path. A plugin that genuinely needs self-JIT must be
+                # declared (declaredPlugins) so it lands in a microVM.
+                allowSelfJit = false;
 
                 # Tightened now that native code can load: refuse a manifest that
                 # only claims "untrusted". Read it as a filter on a claim rather
