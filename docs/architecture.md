@@ -121,11 +121,11 @@ and one headless CI build server (`builder`, §5d) — plus the installer ISO
 3. **Local modules + sub-flakes** — pinned `path:` inputs for `boot-intro`,
    `greeting`, `blipply-assistant`, `vm-manager`, `demod-voice`, `dsp-ctl`,
    `mcp-servers`, `oligarchy-forge`, `oligarchy-plugins`, `demod-talk`,
-   `minecraft`, `android-mirror` — plus the `./modules/*.nix` files and `./configuration.nix`.
+   `minecraft`, `android-mirror`, `haven` — plus the `./modules/*.nix` files and `./configuration.nix`.
 
 `specialArgs` threads `inputs`, `nixpkgs-unstable`, `vm-manager`,
-`dsp-ctl`, `oligarchy-forge`, `mcp-servers`, `hydramesh`, `nnnvim` and
-`demod-talk` into every module. The commented-out
+`dsp-ctl`, `oligarchy-forge`, `mcp-servers`, `hydramesh`, `nnnvim`,
+`demod-talk` and `haven` into every module. The commented-out
 `archibaldos` input is the template for adding the external DSP
 coprocessor when available.
 
@@ -301,6 +301,7 @@ input.
 | `modules/oligarchy-plugins/` | tiered sandboxed plugin runtime — one WIT ABI across three sandbox tiers, with per-instance W^X. The FX Bazaar's foundation. **Read-write**, so also outside the MCP surface. See §5b | `nixosModules.plugins` / `.default` |
 | `modules/demod-talk/` | pure-Lua DCF chat stack (certified text + voice L3, SuperPack/Reed-Solomon transport, StreamDB history). Plaintext by design, so `interface` is mandatory and asserted to be WireGuard | `services.demod-talk` |
 | `modules/android-mirror/` | USB scrcpy `phone-mirror` wrapper (H264, 0 video buffer, UHID, no DRI_PRIME) for playing phone games on the desktop. Off by default; `configuration.nix` mkDefaults it to `enablePersonalApps` | `nixosModules.default` (`custom.androidMirror`) |
+| `modules/haven/` | self-hosted Discord alternative (Haven, **AGPL-3.0** upstream), built unmodified from an immutable release tag (never vendored). Sandboxed to a dynamic user with a near-total systemd hardening stanza (one deliberate exemption: `MemoryDenyWriteExecute=false` for Node's V8 JIT — see the module header). Tailnet-only: binds loopback, port admitted on `tailscale0` only; voice is peer-to-peer so no UDP/relay. `haven-smoke` boots it on loopback and probes `/api/version` | `nixosModules.default` (`services.oligarchyHaven`) |
 | `modules/ArchibaldOS/` | the RT DSP guest OS, its own flake under `modules/ArchibaldOS/modules/` | its own modules |
 
 ### 5a. Boot → login ordering

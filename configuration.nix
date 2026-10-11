@@ -1290,6 +1290,21 @@
         # };
       };
 
+      # Haven — self-hosted Discord alternative (services.oligarchyHaven). AGPL-3.0
+      # upstream, built unmodified; see modules/haven/README.md. Reachable over
+      # the tailnet only: binds loopback and port 3000 is admitted on tailscale0
+      # alone, never globally. Voice is peer-to-peer, so no UDP ports/relay.
+      # First registration becomes admin; register `admin` at
+      # https://<host>.<tailnet>.ts.net:3000 (accept the self-signed cert once).
+      services.oligarchyHaven = {
+        enable = false;
+        serverName = "The War Machine";
+        interface = "tailscale0";
+        # port = 3000;
+        # adminUsername = "admin";
+        # sops.enable = true;   # pair with custom.secrets.haven.enable
+      };
+
       # Tailscale mesh — join with: sudo tailscale up
       services.tailscale = {
         enable = true;

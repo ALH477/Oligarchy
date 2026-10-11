@@ -33,6 +33,16 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # haven — self-hosted private chat (services.oligarchyHaven). AGPL-3.0 upstream,
+    # built UNMODIFIED from an immutable release tag (never vendored). Opt-in,
+    # defaults OFF, so like android-mirror it declares no always-on unit and
+    # the ISO needs no mkForce. See modules/haven/README.md for the licence
+    # posture (AGPL §13) and the sandbox.
+    haven = {
+      url = "path:./modules/haven";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # windscribe-app — the vendor Windscribe desktop client, helper daemon and
     # CLI (custom.windscribeApp). Repackaged from the upstream GPLv2 release
     # artifact, because upstream's own Linux build drives vcpkg against a
@@ -357,6 +367,7 @@
     , oligarchy-p2p
     , oligarchy-vault
     , reliquary
+    , haven
     , warroom
     , demod-voice
     , mcp-servers
@@ -390,7 +401,7 @@
         inherit inputs nixpkgs-unstable chaotic;
         inherit vm-manager dsp-ctl oligarchy-forge mcp-servers hydramesh;
         inherit nnnvim;
-        inherit demod-talk oligarchy-vault reliquary;
+        inherit demod-talk oligarchy-vault reliquary haven;
       };
 
       # ════════════════════════════════════════════════════════════════════════
@@ -510,6 +521,10 @@
         # USB scrcpy phone-mirror (custom.androidMirror). Opt-in, defaults OFF,
         # so the ISO needs no mkForce. See modules/android-mirror/README.md.
         android-mirror.nixosModules.default
+        # Haven self-hosted chat (services.oligarchyHaven). Opt-in, defaults OFF, no
+        # always-on unit, so the ISO needs no mkForce. AGPL-3.0 upstream built
+        # unmodified; see modules/haven/README.md.
+        haven.nixosModules.default
 
         # Windscribe vendor client (custom.windscribeApp). Opt-in, defaults
         # OFF, and an assertion refuses to run alongside custom.vpn — both take
@@ -1982,6 +1997,16 @@
         # installs when custom.androidMirror.enable is set.
         #   nix run .#phone-mirror
         phone-mirror = android-mirror.packages.${system}.default;
+
+        # Haven self-hosted chat (AGPL-3.0 upstream, built unmodified). Same
+        # derivation services.oligarchyHaven installs. `haven-smoke` boots it on loopback
+        # and probes /api/version — the "it builds but won't start" gate.
+        #   nix build .#haven
+        #   nix build .#haven-smoke
+        haven = haven.packages.${system}.default;
+        haven-smoke = pkgs.callPackage ./modules/haven/tests/smoke.nix {
+          haven = haven.packages.${system}.default;
+        };
 
         # ════════════════════════════════════════════════════════════════════
         # Run the real Paper + Geyser + Floodgate stack in a scratch directory,

@@ -35,6 +35,17 @@ path = [
 SPDX-FileCopyrightText = "2026 DeMoD LLC"
 SPDX-License-Identifier = "MIT"
 
+# --- modules/haven/: our glue around AGPL-3.0 upstream ---------------------------
+# The module, package scaffolding, README and smoke gate are DeMoD BSD-3-Clause.
+# The upstream Haven source is NOT vendored here — it is fetched at build time by
+# packages/haven.nix and its own AGPL-3.0 LICENSE ships inside the derivation.
+# Deploying that unmodified build imposes no AGPL §13 source-offer obligation;
+# see modules/haven/README.md for the full posture and the rule for forks.
+[[annotations]]
+path = "modules/haven/**"
+SPDX-FileCopyrightText = "2026 DeMoD LLC"
+SPDX-License-Identifier = "BSD-3-Clause"
+
 # Reliquary arrived as a vendored tarball whose LICENSE names "Reliquary
 # contributors"; that notice is kept as written (see CLAUDE.md, reliquary).
 [[annotations]]

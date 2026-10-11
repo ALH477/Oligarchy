@@ -747,6 +747,22 @@
       },
       "parent": []
     },
+    "haven": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "path": "./modules/haven",
+        "type": "path"
+      },
+      "original": {
+        "path": "./modules/haven",
+        "type": "path"
+      },
+      "parent": []
+    },
     "home-manager": {
       "inputs": {
         "nixpkgs": [
@@ -1713,6 +1729,7 @@
         "dsp-ctl": "dsp-ctl",
         "exsecutor": "exsecutor",
         "greeting": "greeting",
+        "haven": "haven",
         "home-manager": "home-manager_2",
         "hydramesh": "hydramesh_2",
         "lanzaboote": "lanzaboote",

@@ -57,6 +57,13 @@ in
       Mint it with `oligarchy-vpn import <windscribe.conf>`; the plaintext
       .conf is gitignored and the .enc.conf is safe to commit.
     '';
+
+    haven.enable = mkEnableOption ''
+      the encrypted Haven JWT secret (modules/secrets/haven.enc.env, sops
+      dotenv format, key JWT_SECRET). Decrypted to a root-only runtime path
+      consumed by services.haven via LoadCredential, so the value never lands
+      world-readable in the store or in the unit file.
+    '';
   };
 
   config = mkIf cfg.enable {
@@ -72,6 +79,11 @@ in
         option = "custom.secrets.vpn.enable";
         name = "windscribe-wg.enc.conf";
         mint = "oligarchy-vpn import <windscribe.conf>";
+      })
+      (missingEncrypted cfg.haven.enable ./secrets/haven.enc.env {
+        option = "custom.secrets.haven.enable";
+        name = "haven.enc.env";
+        mint = "printf 'JWT_SECRET=<long random string>\\n' > modules/secrets/haven.env && sops --encrypt modules/secrets/haven.env > modules/secrets/haven.enc.env, see .sops.yaml";
       })
     ];
 
@@ -99,6 +111,17 @@ in
           # Deliberately no restartUnits: the tunnel is on-demand
           # (custom.vpn.autoStart = false), so a rebuild must never yank a
           # live session down to re-provision a file it already copied.
+        };
+      })
+
+      (mkIf cfg.haven.enable {
+        "haven-jwt" = {
+          format = "dotenv";
+          sopsFile = ./secrets/haven.enc.env;
+          # Root-only. services.haven reads JWT_SECRET out of this via
+          # LoadCredential + a 0400 runtime env file, so the value never
+          # appears in the unit file or world-readable in the store.
+          mode = "0400";
         };
       })
     ];
