@@ -43,6 +43,12 @@ enum Command {
     /// Open the interactive extension picker for the current directory's
     /// oligarchy-forge.toml (bootstraps one if it doesn't exist yet).
     Edit,
+    /// Print the effective sandbox posture for the current project's
+    /// oligarchy-forge.toml: the exact argv `run` would pass to the
+    /// container backend, so the flags are legible without starting
+    /// anything. This is the "security legibility" half of Phase 3 —
+    /// the active posture visible at a glance.
+    Posture,
     /// Print the generated flake.nix to stdout and exit, without building
     /// anything or touching Podman.
     ///
@@ -99,6 +105,26 @@ fn run(cli: Cli) -> Result<i32> {
             let cfg = load_config()?;
             forge_core::process::ensure_image(&cfg, rebuild)?;
             forge_core::process::container_run(&cfg, &[])
+        }
+        Some(Command::Posture) => {
+            let cfg = load_config()?;
+            let cwd = std::env::current_dir().context("resolving current directory")?;
+            println!("backend:      {}", cfg.runtime.backend.binary());
+            println!("image:        {}:latest", cfg.image_name());
+            println!("volume mode:  {:?}", cfg.runtime.volume_mode);
+            println!("sandbox:");
+            println!("  read-only rootfs : {}", cfg.runtime.sandbox.read_only_rootfs);
+            println!("  seccomp          : {}", cfg.runtime.sandbox.seccomp);
+            println!("  network          : {:?}", cfg.runtime.sandbox.network);
+            println!("  memory           : {} MiB", cfg.runtime.sandbox.memory_mib);
+            println!("  cpu              : {}% of one core", cfg.runtime.sandbox.cpu_percent);
+            println!("  pids             : {}", cfg.runtime.sandbox.pids_limit);
+            println!();
+            println!("argv ({} run):", cfg.runtime.backend.binary());
+            for arg in forge_core::process::run_argv(&cfg, &cwd, &[]) {
+                println!("  {arg}");
+            }
+            Ok(0)
         }
         Some(Command::Render) => {
             let cfg = load_config()?;

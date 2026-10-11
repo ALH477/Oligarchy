@@ -58,3 +58,12 @@ require_bound_fences = false
 path = "docs/exsecutor-kernel-roadmap.md"
 required_headings = ["Summary of findings", "Measured starting point", "E. Roadmap by dependency order", "Verification status"]
 require_bound_fences = true
+
+# The K5 design answer: per-task forge containers + long-lived tier-2
+# identity guests. The load-bearing statements about THIS tree (the forge
+# posture flags, the tier-2 substrate, the vsock channel) are bound by
+# claims; the topology itself is a design argument, marked as such.
+[[docs]]
+path = "docs/agent-sandbox-design.md"
+required_headings = ["The constraint", "The answer: split the two lifecycles", "What is NOT yet built (the honest list)"]
+require_bound_fences = true

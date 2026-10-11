@@ -386,6 +386,8 @@ so the CLI can show the effective flags. What remains:
 - [ ] Skill checklist + description preview pane; toggling writes into
       `oligarchy-forge.toml`'s skills array and mounts into
       `/home/agent/skills`
+- [x] Effective-posture display: `oligarchy-forge posture` prints the
+      six sandbox fields and the exact argv `run` would pass (2026-10-11)
 - [ ] Runtime panel: switch security tier `base` ↔ `security-strict`
       (adds `--runtime=runsc` gVisor + a network allowlist) live in the TUI
 - [ ] Standardize image builds on **`nix2container`** (nlewo) instead of
@@ -413,6 +415,11 @@ so the CLI can show the effective flags. What remains:
 
 ## Changelog (living document — append newest at top)
 
+- **`oligarchy-forge posture` subcommand (2026-10-11):** prints the
+  effective sandbox posture for the current project's TOML — the six
+  fields and the exact argv `run` would pass — without starting
+  anything. The "security legibility" half of Phase 3, ahead of the
+  TUI runtime panel.
 - **Sandbox posture locked down by default (2026-10-11):** `forge-core`
   gained `Sandbox` (six fields, strict by default), `run_argv` (the argv
   `container_run` will pass, public for tests and CLI display), and
