@@ -671,13 +671,16 @@ rollout runbook.
 | SSH keys-only + fail2ban | `custom.security.hardening` (preset `hardened`) | **on** | `PasswordAuthentication no`, `AllowUsers`, `MaxAuthTries 3`; brute-force banning with private ranges exempt. Lockout-guard assertion requires a declared key |
 | AppArmor + auditd | `custom.security.hardening.{apparmor,auditd}` | off (soak first) | Flip on after a clean soak; complain-first profiles |
 | USBGuard | `custom.security.hardening.usbguard` (preset `paranoid`) | off | Blocks newly-plugged USB; disruptive with Framework expansion cards |
-| Strict egress firewall | `networking.firewall.strictEgress` | **on, enforcing** | Default-deny outbound allowlist as a standalone nft `output` table (coexists with the ingress firewall + IP blocker). Flipped from dry-run to `recovery.dryRun = false` on the soaked `nixos` host allowlist (`preset = "developer"` + ollama/blipply-assistant/dcf-node-binary domains); `recovery.failOpen = true` still flushes the chain if `cache.nixos.org` becomes unreachable, so a bad allowlist can't brick a rebuild |
-| Malware Shield | `custom.malwareShield` (level `monitor`) | **on** | ClamAV + lynis/unhide + AIDE + YARA; log-only until you raise to `quarantine`. YARA walks via `find(1)` (no `-L`) to dodge symlink cycles. `custom.malwareShield.yara.excludePaths` skips known structural false positives: Claude Code transcripts, and this repo's own `modules/security/yara-rules/eicar.yar` + `docs/security-hardening.md` (both legitimately contain the EICAR test string — the rule *is* the EICAR test, and self-matches whenever a checkout of this repo lives under a scanned path). Closure scanned at build via `nix build .#malwareScan` |
+| Strict egress firewall | `networking.firewall.strictEgress` | **on, dry-run** | Default-deny outbound allowlist as a standalone nft `output` table (coexists with the ingress firewall + IP blocker). In dry-run on the deployed host since 2026-08-16 after a resolver bug (empty dynamic sets) made the previous "enforcement" hollow. The resolver now uses `${pkgs.getent}/bin/getent`, and the status script reads set counts from `/run/strict-egress/status` (written by the resolver) instead of calling `sudo nft` (which silently failed without passwordless sudo). `recovery.failOpen = true` still flushes the chain if `cache.nixos.org` becomes unreachable after enforcement, so a bad allowlist can't brick a rebuild |
+| Malware Shield | `custom.malwareShield` (level `monitor`) | **on** | ClamAV + lynis/unhide + AIDE + YARA; log-only until you raise to `quarantine`. YARA walks via `find(1)` (no `-L`) to dodge symlink cycles. `custom.malwareShield.yara.excludePaths` skips known structural false positives: Claude Code transcripts, opencode transcripts/logs (`~/.local/share/opencode/{storage,log}` — same structural issue as Claude: AI-agent conversation logs legitimately contain EICAR strings and shell one-liners as text), and this repo's own `modules/security/yara-rules/eicar.yar` + `docs/security-hardening.md` (both legitimately contain the EICAR test string — the rule *is* the EICAR test, and self-matches whenever a checkout of this repo lives under a scanned path). Closure scanned at build via `nix build .#malwareScan` |
 | Ingress IP blocklist | `services.demod-ip-blocker` | **on** | Refreshes every 24h |
 | Rootless Docker | `virtualisation.docker.rootless` | **on** | Daemon runs as the user; no root-equivalent `docker` group |
 | Secure Boot | `custom.secureBoot.enable` | off | lanzaboote signed chain + optional TPM2 LUKS |
 | Secrets | `custom.secrets` (sops-nix) | **on** | Age key lives at `/var/lib/sops-nix/key.txt` (never in-store); encrypted `*.enc.env` only |
-| Plugin runtime W^X | `custom.plugins` (`allowedTiers`, `allowSelfJit`, `requireSignature`) | off | Per-*instance* `MemoryDenyWriteExecute` from the plugin's own manifest, plus a seccomp filter that also denies anonymous `PROT_EXEC`, `ptrace` and `userfaultfd`, and `NoExecPaths=/ <stateDir>` against plain-file dual mapping. Signed-only install with nobody in `trusted-users`. See §5b |
+| Plugin runtime W^X | `custom.plugins` (`allowedTiers`, `allowSelfJit`, `requireSignature`) | **on** on `nixos` (`allowSelfJit = false`) | Per-*instance* `MemoryDenyWriteExecute` from the plugin's own manifest, plus a seccomp filter that also denies anonymous `PROT_EXEC`, `ptrace` and `userfaultfd`, and `NoExecPaths=/ <stateDir>` against plain-file dual mapping. `allowSelfJit = false` on the workstation: `jit = "self"` plugins are only permitted inside a tier-2 microVM, where W+X lives inside the guest kernel. Signed-only install with nobody in `trusted-users`. See §5b |
+| MCP runner path pinning | `runner::run` in `modules/mcp-servers/crates/core/src/runner.rs` | **on** | Allowlisted CLIs resolve ONLY against `/run/current-system/sw/bin` (pinned). Resolved paths are canonicalized and verified to live under `/nix/store` or `/run/current-system`. The ambient `PATH` is never consulted — closing the PATH-shadowing attack where a file written to `~/.local/bin` (or any earlier PATH dir) gets executed under the aspect's identity. Programs not in the pinned path return `Error::NotInPinnedPath` |
+| Thunderbolt auto-authorize | udev rule in `configuration.nix` | **removed** | Thunderbolt devices are no longer auto-authorized on hot-plug. `hardware.bolt.enable` provides the userspace authorization path (`boltctl authorize <uuid>` or desktop prompt). Closes the evil-maid/DMA prerequisite on a travel laptop |
+| Disk encryption | LUKS / Secure Boot / vault preset | **off** (planned: Phase R of the security overhaul) | No LUKS on root; Secure Boot off; `cpuSecurity.preset = "hardened"` (not `vault`). The reinstall-with-LUKS + Secure Boot + vault-preset path is planned — see `docs/security-hardening.md` Phase R |
 | Steam/game sandbox | `steam-noswap.slice` + `systemd-run` launch wrapper (icewm menu + `home/apps/desktop-entries.nix`) | **on** | `MemorySwapMax=0` (isolates games from swap/zram — a memory ceiling OOM-kills the game instead of thrashing) plus `NoNewPrivileges`, `ProtectHostname`/`Clock`/`Kernel{Tunables,Logs,Modules}`/`ControlGroups`, `RestrictSUIDSGID`, `LockPersonality`. No `ProtectHome` — Steam's library is in `$HOME`. Deliberately excludes `RestrictNamespaces`/`SystemCallFilter` (breaks Proton's pressure-vessel sandbox), `MemoryDenyWriteExecute` (breaks Wine/Mono JIT), `RestrictRealtime` (GameMode may want RT scheduling) |
 
 `oligarchy-security status` (also `oligarchy-ctl status`, the DCF tray,
@@ -737,10 +740,15 @@ path: modules/mcp-servers/crates/core/src/allowlist.rs
 Each aspect server reaches a CLI only through `runner::run(ASPECT, prog, …)`,
 which refuses and audit-logs any `prog` outside that aspect's list in
 `modules/mcp-servers/crates/core/src/allowlist.rs`. That check is at
-**runtime**. The build-time gates (`crates/core/tests/no_open_sockets.rs` and
-`nix build .#mcp-self-audit`) source-scan every crate for socket and
-HTTP-client patterns; they do *not* verify `Command::new` literals against the
-lists, so a crate bypassing `runner::run` would slip past them.
+**runtime**. The runner then resolves `prog` against a **pinned** directory
+(`/run/current-system/sw/bin` only) and canonicalizes the result, refusing
+anything whose target is not under `/nix/store` or `/run/current-system` —
+so the ambient `PATH` (which includes `~/.local/bin`, `~/.cargo/bin`, etc.)
+is never consulted, closing the PATH-shadowing attack. The build-time gates
+(`crates/core/tests/no_open_sockets.rs` and `nix build .#mcp-self-audit`)
+source-scan every crate for socket and HTTP-client patterns; they do *not*
+verify `Command::new` literals against the lists, so a crate bypassing
+`runner::run` would slip past them.
 <!-- truth:end -->
 
 ### `ports-sec` — the dedicated auditor

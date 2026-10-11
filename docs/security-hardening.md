@@ -95,11 +95,29 @@ ai-stack stop; docker compose ... # ai-stack handles this; first start re-pulls
 
 ## Phase 4 — Strict egress: dry-run → enforce
 
-**Status on `nixos`: done.** After soaking dry-run and adding the domains the
-resolver flagged as missing (`ollama.com`, `registry.ollama.ai`,
-`huggingface.co`, `api.demod.ltd`), `recovery.dryRun = false` is live. The
-steps below are kept for reference (re-soaking after a new service's domains
-show up, or bringing up a fresh host).
+**Status on `nixos`: dry-run, re-soaking after a resolver bug fix.** The
+2026-08-09 "enforced" soak proved nothing: the resolver pointed at a `getent`
+that did not exist, so the dynamic allowlist was empty on every generation
+and the WOULDBLOCK log was recording all public traffic. Enforcement on top
+of that dropped everything off-LAN, and the failOpen path then flushed the
+chain. Both bugs are fixed (the resolver uses `${pkgs.getent}/bin/getent`
+now, and the status script reads set counts from `/run/strict-egress/status`
+instead of calling `sudo nft` — which silently failed and always reported 0
+entries). The host is back in dry-run and re-soaking. As of 2026-10-10 the
+remaining WOULDBLOCK traffic is ~113 entries/30min: ~90 from Floorp browser
+telemetry (fixed by a `user.js` in the Floorp profile that disables all
+telemetry channels), ~12 from `opencode` (fixed by allowlisting
+`api.opencode.ai`), and a handful of ad-hoc WHOIS lookups (not from any
+service).
+
+When the WOULDBLOCK log is quiet, enforce in `~/.config/oligarchy/local.nix`:
+
+```nix
+networking.firewall.strictEgress.recovery.dryRun = false;
+```
+
+The steps below are kept for reference (re-soaking after a new service's
+domains show up, or bringing up a fresh host).
 
 Ships enabled in **dry-run** (`recovery.dryRun = true`) on a fresh host: it
 logs what it *would* block without dropping anything. It runs as a standalone
@@ -354,6 +372,55 @@ journalctl -u oligarchy-p2pd -f # "narinfo from a peer" / "fetched from a peer"
 Backing out is a one-line revert plus `nixos-rebuild`: nothing in boot or
 `nixos-rebuild` depends on the adapter, `cache.nixos.org` stays configured
 behind it, and a dead daemon is a transfer failure Nix routes around.
+
+---
+
+## Batch A — 2026-10-10 security overhaul (landed, `security-overhaul` branch)
+
+Six changes, each a separate commit. All gates green (cargo test 14/0,
+`mcp-self-audit`, `plugins-wx-enforcement`, `trvthnvke-docs`, dry-build).
+
+1. **Thunderbolt auto-authorize removed.** The udev rule in
+   `configuration.nix` that set `ATTR{authorized}="1"` on every thunderbolt
+   `add` event is gone. `hardware.bolt.enable` provides the userspace
+   authorization path. Closes the evil-maid/DMA prerequisite on a travel
+   laptop.
+
+2. **SSH authorized_keys default is empty.** `modules/user.nix` no longer
+   ships three maintainer keys as the default. A fresh clone evaluating on
+   any machine used to authorize those keys. The deployed host's keys live
+   in `~/.config/oligarchy/local.nix`.
+
+3. **`allowSelfJit = false` on `nixos`.** W^X is enforced: `jit = "self"`
+   plugins only run inside a tier-2 microVM. The previous posture let a
+   signed plugin hold W+X pages on the host (MDWE bypassable via memfd
+   dual-mapping). `nix build .#plugins-wx-enforcement` still passes.
+
+4. **MCP runner PATH pinning.** `runner::run` resolves allowlisted CLIs
+   ONLY against `/run/current-system/sw/bin`. Resolved paths are
+   canonicalized and verified under `/nix/store` or `/run/current-system`.
+   The ambient `PATH` is never consulted — closing the PATH-shadowing
+   attack (write to `~/.local/bin`, get execution under the aspect's
+   identity). Programs not in the pinned path return
+   `Error::NotInPinnedPath`. 4 new tests in `runner.rs`.
+
+5. **YARA excludes opencode transcripts/logs.** `~/.local/share/opencode/`
+   conversation transcripts contain EICAR strings and shell one-liners as
+   text — the same structural false-positive source as the existing
+   `.claude/projects` exclusion. Eliminates ~900 false positives/day.
+
+6. **DSP VM `iommu=pt` removed.** Passthrough mode let unmapped devices
+   get direct memory access (DMA attack surface). VFIO-bound devices are
+   explicitly mapped regardless. Removes the conflict with the vault
+   preset's `iommu.passthrough=0`.
+
+Also in this batch (egress dry-run prep, not yet enforcing):
+- `api.opencode.ai` added to the strict-egress allowlist.
+- `strict-egress-status` reads set counts from `/run/strict-egress/status`
+  (written by the resolver) instead of calling `sudo nft` — which silently
+  failed without passwordless sudo and always reported 0 entries.
+- Floorp browser telemetry disabled via `user.js` in the Floorp profile
+  (eliminates ~90/113 WOULDBLOCK entries per 30min).
 
 ---
 

@@ -568,13 +568,22 @@ the unprivileged `oligarchy` user, in its own systemd instance. Posture on the
 workstation — and **only** the workstation:
 
 ```nix
-allowedTiers = [ "wasm" "native" "lua" ];
-allowSelfJit = true;         # emits a build warning; that is the point
+allowedTiers = [ "wasm" "native" "lua" "microvm" ];
+allowSelfJit = false;        # W^X enforced; jit=self only in a microVM
 minTrust     = "trusted";    # tightened now that native code can load
 ```
 
 A stage rig or a shipped instrument keeps `[ "wasm" ]` and
 `allowSelfJit = false`. There it is running plugins somebody else wrote.
+
+**2026-10-10 change:** `allowSelfJit` was flipped from `true` to `false` on
+the `nixos` workstation (security-overhaul branch). The previous posture let
+a signed plugin hold W+X pages on the host — a real concession, since the
+seccomp filter's MDWE escape is bypassable via memfd dual-mapping. Now a
+plugin declaring `jit = "self"` is only permitted inside a tier-2 microVM,
+where W+X lives inside the guest kernel, not the host. A plugin that
+genuinely needs self-JIT must be declared (`declaredPlugins`) so it lands
+in a microVM. The `nix build .#plugins-wx-enforcement` gate still passes.
 
 **The gate, met on real hardware.** `plugind selftest` is a release-build verb
 that builds the filter for a synthetic manifest at each `jit` setting, installs
