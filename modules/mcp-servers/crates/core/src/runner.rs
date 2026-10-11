@@ -18,9 +18,21 @@ pub const QUICK_TIMEOUT: Duration = Duration::from_secs(20);
 /// Default timeout for "heavy" calls like `nixos-rebuild dry-build`.
 pub const HEAVY_TIMEOUT: Duration = Duration::from_secs(900);
 
+/// Directories searched for allowlisted programs, in order. STRICTEST
+/// posture: only the system generation's bin directory. The MCP server
+/// runs as the user's session with an ambient `PATH` that includes
+/// `~/.local/bin`, `~/.cargo/bin`, etc. — an attacker (or a prompt
+/// injection) that writes a file to an earlier PATH directory gets
+/// arbitrary execution under the aspect's identity. Pinning to the
+/// system path closes that: a program not in the pinned directory is
+/// refused, even if it is on `PATH`.
+const PINNED_BIN_DIRS: &[&str] = &["/run/current-system/sw/bin"];
+
 /// Runs `prog` with `args` after checking it is allowed for `aspect`.
-/// Returns combined stdout+stderr as a string. Programs not on PATH return
-/// `Error::Unavailable`; timeouts return `Error::Timeout`.
+/// Returns combined stdout+stderr as a string. Programs not on the
+/// allowlist return `Error::Unavailable`; programs not in the pinned
+/// system path return `Error::NotInPinnedPath`; timeouts return
+/// `Error::Timeout`.
 pub fn run(aspect: &str, prog: &str, args: &[&str], timeout: Duration) -> Result<String> {
     if !allowlist::is_allowed(aspect, prog) {
         // Log the rejection so capability drift is visible in the audit trail.
@@ -31,9 +43,15 @@ pub fn run(aspect: &str, prog: &str, args: &[&str], timeout: Duration) -> Result
     }
     let cmd_path = match which(prog) {
         Some(p) => p,
-        None => return Err(Error::Unavailable(prog.to_string())),
+        None => {
+            audit::log(aspect, "REJECTED", &format!("not in pinned path: {prog}"), prog);
+            return Err(Error::NotInPinnedPath(format!(
+                "{prog} is not in the pinned system path ({})",
+                PINNED_BIN_DIRS.join(", ")
+            )));
+        }
     };
-    audit::log(aspect, "exec", &args.join(" "), prog);
+    audit::log(aspect, "exec", &format!("{} {}", cmd_path.display(), args.join(" ")), prog);
 
     let mut cmd = Command::new(&cmd_path);
     cmd.args(args);
@@ -70,19 +88,40 @@ pub fn run(aspect: &str, prog: &str, args: &[&str], timeout: Duration) -> Result
     }
 }
 
-/// Tiny `which` — uses `PATH` lookups via `std::env::split_paths`.
+/// Pinned `which` — resolves `prog` ONLY against [`PINNED_BIN_DIRS`].
+/// The resolved path is canonicalized and verified to live under
+/// `/nix/store` or `/run/current-system`, so a symlink swap or a
+/// store-path impostor cannot redirect execution. The ambient `PATH`
+/// is deliberately NOT consulted: that is the attack surface this
+/// function exists to close.
 fn which(prog: &str) -> Option<std::path::PathBuf> {
     if prog.contains('/') {
-        return Some(std::path::PathBuf::from(prog));
+        // An explicit path: canonicalize and verify it is under the
+        // store or current-system. Anything else is refused.
+        let p = std::path::PathBuf::from(prog);
+        let canon = p.canonicalize().ok()?;
+        return if is_trusted_path(&canon) { Some(canon) } else { None };
     }
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(prog);
+    for dir in PINNED_BIN_DIRS {
+        let candidate = std::path::Path::new(dir).join(prog);
         if candidate.is_file() {
-            return Some(candidate);
+            // Canonicalize to resolve the /run/current-system symlink
+            // into the actual /nix/store path, then verify.
+            let canon = candidate.canonicalize().ok()?;
+            if is_trusted_path(&canon) {
+                return Some(canon);
+            }
         }
     }
     None
+}
+
+/// A resolved path is trusted if its canonical target lives under
+/// `/nix/store` (immutable, content-addressed) or `/run/current-system`
+/// (the current generation symlink tree). Anything else — a user-writable
+/// directory, a tmpfs, a FUSE mount — is refused.
+fn is_trusted_path(p: &std::path::Path) -> bool {
+    p.starts_with("/nix/store") || p.starts_with("/run/current-system")
 }
 
 /// Public presence probe (does NOT enforce the allowlist). Convenient for
@@ -136,5 +175,97 @@ mod tests {
         // `ls` is not on any allowlist.
         let res = run("system", "ls", &[], QUICK_TIMEOUT);
         assert!(matches!(res, Err(Error::Unavailable(_))));
+    }
+
+    #[test]
+    fn rejects_not_in_pinned_path() {
+        // `age` is on the secrets allowlist but is NOT in the pinned
+        // system path on a stock system. It must be refused even if
+        // it were on the ambient PATH.
+        let res = run("secrets", "age", &["--version"], QUICK_TIMEOUT);
+        // Either the program is genuinely absent (NotInPinnedPath) or
+        // the allowlist check rejects first (Unavailable). Either way it
+        // must NOT execute.
+        assert!(matches!(
+            res,
+            Err(Error::NotInPinnedPath(_)) | Err(Error::Unavailable(_))
+        ));
+    }
+
+    #[test]
+    fn resolves_systemctl_from_pinned_path() {
+        // `systemctl` is on the system allowlist and IS in the pinned
+        // path on a NixOS system. It must resolve to a canonical path
+        // under /nix/store.
+        let p = which("systemctl");
+        if let Some(path) = p {
+            assert!(
+                path.starts_with("/nix/store") || path.starts_with("/run/current-system"),
+                "systemctl resolved to untrusted path: {}",
+                path.display()
+            );
+        }
+        // If the test runs on a non-NixOS host (CI), which() returns None
+        // — that is acceptable; the test is a no-op there.
+    }
+
+    #[test]
+    fn path_shadowing_does_not_redirect() {
+        // Plant a fake `systemctl` in a temp dir and prepend it to PATH.
+        // The pinned resolver must NOT pick it up — it only searches
+        // PINNED_BIN_DIRS, ignoring the ambient PATH entirely.
+        let tmp = tempfile::tempdir().unwrap();
+        let fake = tmp.path().join("systemctl");
+        std::fs::write(&fake, "#!/bin/sh\necho PWNED\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&fake).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&fake, perms).unwrap();
+        }
+
+        // Poison the ambient PATH — the resolver must ignore it.
+        let old_path = std::env::var_os("PATH");
+        let mut new_path = std::ffi::OsString::from(tmp.path().as_os_str());
+        if let Some(ref p) = old_path {
+            new_path.push(":");
+            new_path.push(p);
+        }
+        std::env::set_var("PATH", &new_path);
+
+        let result = which("systemctl");
+
+        // Restore PATH so other tests are not affected.
+        match old_path {
+            Some(p) => std::env::set_var("PATH", p),
+            None => std::env::remove_var("PATH"),
+        }
+
+        // The resolved path must NOT be the fake one.
+        if let Some(path) = result {
+            assert_ne!(
+                path.canonicalize().unwrap(),
+                fake.canonicalize().unwrap(),
+                "PATH shadowing redirected resolution to a user-writable path"
+            );
+            assert!(
+                path.starts_with("/nix/store") || path.starts_with("/run/current-system"),
+                "resolved path is not under /nix/store or /run/current-system: {}",
+                path.display()
+            );
+        }
+        // None is also acceptable (systemctl not installed in the test env).
+    }
+
+    #[test]
+    fn explicit_path_must_be_trusted() {
+        // An explicit path outside the store (e.g. /tmp/evil) must be
+        // refused even if the file exists.
+        let tmp = tempfile::tempdir().unwrap();
+        let evil = tmp.path().join("evil");
+        std::fs::write(&evil, "#!/bin/sh\necho PWNED\n").unwrap();
+        let result = which(evil.to_str().unwrap());
+        assert!(result.is_none(), "untrusted explicit path was not refused");
     }
 }

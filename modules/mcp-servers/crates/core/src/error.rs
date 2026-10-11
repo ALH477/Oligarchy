@@ -18,6 +18,9 @@ pub enum Error {
     #[error("command unavailable on PATH: {0}")]
     Unavailable(String),
 
+    #[error("command not found in pinned system path: {0}")]
+    NotInPinnedPath(String),
+
     #[error("command timed out after {timeout}s: {cmd}")]
     Timeout { cmd: String, timeout: u64 },
 
