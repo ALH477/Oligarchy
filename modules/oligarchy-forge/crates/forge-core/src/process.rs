@@ -3,7 +3,7 @@
 //! daemon — shelling out is the deliberate Stage 0 choice (see
 //! docs/oligarchy-forge-roadmap.md §Deferred: nix-bindings-rust).
 
-use crate::schema::{Backend, ForgeConfig, VolumeMode};
+use crate::schema::{Backend, ForgeConfig, NetworkMode, VolumeMode};
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -164,11 +164,40 @@ pub fn ensure_image(cfg: &ForgeConfig, rebuild: bool) -> Result<()> {
 
 /// `<backend> run` with PWD mounted to `/workspace`, a per-project home
 /// volume (named or ephemeral per `runtime.volume_mode`), interactive stdio
-/// passthrough, and the safe-by-default flags Stage 3's tier switcher will
-/// later make configurable (cap-drop, no-new-privileges, rootless UID map).
+/// passthrough, and the sandbox posture from `runtime.sandbox` — locked down
+/// by default: read-only rootfs, strict seccomp, no network, cgroup limits.
+/// Every hardening flag is a per-project opt-OUT in `oligarchy-forge.toml`,
+/// so the relaxed shape is visible in the config rather than hidden in a
+/// default nobody reads. `--cap-drop=ALL` and `--security-opt
+/// no-new-privileges` are NOT configurable: they are the base tier, not a
+/// dial.
 pub fn container_run(cfg: &ForgeConfig, cmd: &[String]) -> Result<i32> {
     let cwd = std::env::current_dir().context("resolving current directory")?;
+    let args = run_argv(cfg, &cwd, cmd);
+
+    let bin = cfg.runtime.backend.binary();
+    let status = Command::new(bin)
+        .args(&args)
+        .status()
+        .with_context(|| format!("spawning `{bin} run` — is {bin} on PATH?"))?;
+    Ok(status.code().unwrap_or(1))
+}
+
+/// The strict seccomp profile shipped with the image, referenced by
+/// `run_argv` as `seccomp=seccomp_strict.json` (podman/docker resolve a
+/// bare filename against the image's working directory — the generated image
+/// places this file at its root). Default-deny on the kernel attack surface
+/// a coding-agent sandbox has no business touching: mount, ptrace, kexec,
+/// module loading, and the perf/open perf events. Everything else is
+/// allowed so ordinary toolchains (rustc, cargo, node, python) keep working.
+pub const SECCOMP_STRICT_JSON: &str = include_str!("seccomp_strict.json");
+
+/// Renders the argv `container_run` would pass to `<backend> run`, without
+/// spawning anything. Public so the CLI can show the effective posture, and
+/// so tests can assert on the flags directly.
+pub fn run_argv(cfg: &ForgeConfig, cwd: &Path, cmd: &[String]) -> Vec<String> {
     let backend = cfg.runtime.backend;
+    let sb = &cfg.runtime.sandbox;
 
     let mut args: Vec<String> = vec!["run".into(), "--rm".into(), "-it".into()];
     args.push(format!("--volume={}:/workspace", cwd.display()));
@@ -184,6 +213,7 @@ pub fn container_run(cfg: &ForgeConfig, cmd: &[String]) -> Result<i32> {
         }
     }
 
+    // The base tier — not configurable.
     args.push("--cap-drop=ALL".into());
     args.push("--security-opt=no-new-privileges".into());
     if backend == Backend::Podman {
@@ -195,25 +225,180 @@ pub fn container_run(cfg: &ForgeConfig, cmd: &[String]) -> Result<i32> {
         args.push("--userns=keep-id".into());
     }
 
+    // The per-project sandbox posture (defaults: all hard).
+    if sb.read_only_rootfs {
+        args.push("--read-only".into());
+        // A read-only rootfs leaves nowhere for /tmp scratch or for tools
+        // that insist on writing under /var; tmpfs mounts cover both
+        // without making the image itself writable.
+        args.push("--tmpfs=/tmp".into());
+        args.push("--tmpfs=/var/tmp".into());
+    }
+    if sb.seccomp {
+        args.push("--security-opt=seccomp=seccomp_strict.json".into());
+    }
+    match sb.network {
+        NetworkMode::None => args.push("--network=none".into()),
+        NetworkMode::Host => args.push("--network=host".into()),
+    }
+    if sb.memory_mib > 0 {
+        args.push(format!("--memory={}m", sb.memory_mib));
+    }
+    if sb.cpu_percent > 0 {
+        args.push(format!("--cpu-quota={}", sb.cpu_percent * 10_000));
+    }
+    if sb.pids_limit > 0 {
+        args.push(format!("--pids-limit={}", sb.pids_limit));
+    }
+
     args.push(format!("{}:latest", cfg.image_name()));
     if cmd.is_empty() {
         args.push("/bin/bash".into());
     } else {
         args.extend(cmd.iter().cloned());
     }
-
-    let bin = backend.binary();
-    let status = Command::new(bin)
-        .args(&args)
-        .status()
-        .with_context(|| format!("spawning `{bin} run` — is {bin} on PATH?"))?;
-    Ok(status.code().unwrap_or(1))
+    args
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::Extension;
+    use crate::schema::{Extension, NetworkMode, Sandbox};
+
+    fn demo_cfg(toml: &str) -> ForgeConfig {
+        ForgeConfig::parse(toml).unwrap()
+    }
+
+    const DEMO_TOML: &str = r#"
+        [project]
+        name = "demo"
+    "#;
+
+    #[test]
+    fn sandbox_defaults_to_locked_down() {
+        // No [runtime.sandbox] table at all: the posture must be the strict
+        // one — read-only rootfs, seccomp, no network, cgroup limits. A
+        // missing table meaning "relaxed" would invert the whole point.
+        let cfg = demo_cfg(DEMO_TOML);
+        assert!(cfg.runtime.sandbox.read_only_rootfs);
+        assert!(cfg.runtime.sandbox.seccomp);
+        assert_eq!(cfg.runtime.sandbox.network, NetworkMode::None);
+        assert!(cfg.runtime.sandbox.memory_mib > 0);
+        assert!(cfg.runtime.sandbox.cpu_percent > 0);
+        assert!(cfg.runtime.sandbox.pids_limit > 0);
+    }
+
+    #[test]
+    fn run_argv_locked_down_by_default() {
+        let cfg = demo_cfg(DEMO_TOML);
+        let argv = run_argv(&cfg, Path::new("/tmp/proj"), &[]);
+        let joined = argv.join(" ");
+        // The base tier is not a dial: always present.
+        assert!(argv.contains(&"--cap-drop=ALL".to_string()), "{joined}");
+        assert!(argv.contains(&"--security-opt=no-new-privileges".to_string()), "{joined}");
+        // The locked-down posture.
+        assert!(argv.contains(&"--read-only".to_string()), "{joined}");
+        assert!(argv.contains(&"--security-opt=seccomp=seccomp_strict.json".to_string()), "{joined}");
+        assert!(argv.contains(&"--network=none".to_string()), "{joined}");
+        assert!(argv.iter().any(|a| a.starts_with("--memory=")), "{joined}");
+        assert!(argv.iter().any(|a| a.starts_with("--cpu-quota=")), "{joined}");
+        assert!(argv.iter().any(|a| a.starts_with("--pids-limit=")), "{joined}");
+        // The workspace mount and image ref are still there.
+        assert!(argv.iter().any(|a| a.starts_with("--volume=/tmp/proj:/workspace")), "{joined}");
+        assert!(argv.contains(&"oligarchy-forge/demo:latest".to_string()), "{joined}");
+    }
+
+    #[test]
+    fn run_argv_opt_out_drops_exactly_that_flag() {
+        // A project that opts out of everything relaxed gets the historical
+        // shape back: no --read-only, no seccomp, host network, no limits —
+        // but --cap-drop=ALL and no-new-privileges stay, because those are
+        // the base tier, not a dial.
+        let cfg = demo_cfg(
+            r#"
+            [project]
+            name = "demo"
+            [runtime.sandbox]
+            read-only-rootfs = false
+            seccomp = false
+            network = "host"
+            memory-mib = 0
+            cpu-percent = 0
+            pids-limit = 0
+            "#,
+        );
+        let argv = run_argv(&cfg, Path::new("/tmp/proj"), &[]);
+        let joined = argv.join(" ");
+        assert!(!argv.contains(&"--read-only".to_string()), "{joined}");
+        assert!(!argv.iter().any(|a| a.starts_with("--security-opt=seccomp=")), "{joined}");
+        assert!(argv.contains(&"--network=host".to_string()), "{joined}");
+        assert!(!argv.iter().any(|a| a.starts_with("--memory=")), "{joined}");
+        assert!(!argv.iter().any(|a| a.starts_with("--cpu-quota=")), "{joined}");
+        assert!(!argv.iter().any(|a| a.starts_with("--pids-limit=")), "{joined}");
+        // Base tier survives every opt-out.
+        assert!(argv.contains(&"--cap-drop=ALL".to_string()), "{joined}");
+        assert!(argv.contains(&"--security-opt=no-new-privileges".to_string()), "{joined}");
+    }
+
+    #[test]
+    fn run_argv_partial_opt_out_keeps_the_rest() {
+        // Opting out of the network restriction alone must not silently
+        // drop the read-only rootfs or the seccomp profile.
+        let cfg = demo_cfg(
+            r#"
+            [project]
+            name = "demo"
+            [runtime.sandbox]
+            network = "host"
+            "#,
+        );
+        let argv = run_argv(&cfg, Path::new("/tmp/proj"), &[]);
+        let joined = argv.join(" ");
+        assert!(argv.contains(&"--network=host".to_string()), "{joined}");
+        assert!(argv.contains(&"--read-only".to_string()), "{joined}");
+        assert!(argv.contains(&"--security-opt=seccomp=seccomp_strict.json".to_string()), "{joined}");
+    }
+
+    #[test]
+    fn seccomp_profile_is_valid_json_and_denies_mount() {
+        let v: serde_json::Value = serde_json::from_str(SECCOMP_STRICT_JSON).unwrap();
+        assert_eq!(v["defaultAction"], "SCMP_ACT_ALLOW");
+        let names = v["syscalls"][0]["names"].as_array().unwrap();
+        let names: Vec<&str> = names.iter().map(|n| n.as_str().unwrap()).collect();
+        for required in ["mount", "ptrace", "kexec_load", "init_module", "perf_event_open"] {
+            assert!(names.contains(&required), "seccomp profile missing {required}");
+        }
+        assert_eq!(v["syscalls"][0]["action"], "SCMP_ACT_ERRNO");
+    }
+
+    #[test]
+    fn sandbox_toml_round_trips() {
+        let cfg = demo_cfg(
+            r#"
+            [project]
+            name = "demo"
+            [runtime.sandbox]
+            read-only-rootfs = false
+            network = "host"
+            memory-mib = 8192
+            "#,
+        );
+        let rendered = cfg.to_toml_string().unwrap();
+        let reloaded = ForgeConfig::parse(&rendered).unwrap();
+        assert!(!reloaded.runtime.sandbox.read_only_rootfs);
+        assert_eq!(reloaded.runtime.sandbox.network, NetworkMode::Host);
+        assert_eq!(reloaded.runtime.sandbox.memory_mib, 8192);
+        // Untouched fields keep their strict defaults through the round trip.
+        assert!(reloaded.runtime.sandbox.seccomp);
+    }
+
+    #[test]
+    fn sandbox_strict_is_the_default() {
+        let sb = Sandbox::default();
+        assert!(sb.read_only_rootfs);
+        assert!(sb.seccomp);
+        assert_eq!(sb.network, NetworkMode::None);
+    }
 
     #[test]
     fn persist_config_round_trips_via_toml() {

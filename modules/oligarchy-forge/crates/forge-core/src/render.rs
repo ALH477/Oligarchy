@@ -34,6 +34,10 @@ pub fn render_flake(cfg: &ForgeConfig) -> Result<String> {
         .map(|(name, url)| FlakeInput { name, url })
         .collect();
     ctx.insert("extra_flake_inputs", &extra_inputs);
+    // The seccomp profile travels with the image: the template copies it to
+    // the image root, where `--security-opt=seccomp=seccomp_strict.json`
+    // (a bare filename) resolves against the container's working directory.
+    ctx.insert("seccompStrictJson", crate::process::SECCOMP_STRICT_JSON);
 
     tera.render("flake.nix", &ctx)
         .context("rendering flake.nix from template")
@@ -211,5 +215,22 @@ mod tests {
         assert!(out.contains("cursor-cli"));
         assert!(!out.contains("claude-code-nix"));
         assert!(!out.contains("writeShellScriptBin"));
+    }
+
+    #[test]
+    fn rendered_flake_ships_the_seccomp_profile() {
+        // The image must carry seccomp_strict.json at its root: run_argv
+        // references it by bare filename, which podman/docker resolve
+        // against the container's working directory.
+        let cfg = ForgeConfig::parse(
+            r#"
+            [project]
+            name = "demo"
+            "#,
+        )
+        .unwrap();
+        let out = render_flake(&cfg).unwrap();
+        assert!(out.contains("seccomp-strict-json"), "{out}");
+        assert!(out.contains("$out/seccomp_strict.json"), "{out}");
     }
 }

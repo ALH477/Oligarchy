@@ -9,4 +9,4 @@ pub mod schema;
 pub mod stream;
 
 pub use render::render_flake;
-pub use schema::{Backend, Extension, ForgeConfig, Project, Runtime, VolumeMode};
+pub use schema::{Backend, Extension, ForgeConfig, HostSandboxDefaults, Project, Runtime, VolumeMode};

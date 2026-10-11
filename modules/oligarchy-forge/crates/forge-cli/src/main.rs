@@ -59,7 +59,9 @@ enum Command {
 fn load_config() -> Result<ForgeConfig> {
     let toml_str = std::fs::read_to_string("oligarchy-forge.toml")
         .context("reading oligarchy-forge.toml in the current directory")?;
-    ForgeConfig::parse(&toml_str)
+    let mut cfg = ForgeConfig::parse(&toml_str)?;
+    cfg.apply_host_defaults(&forge_core::HostSandboxDefaults::from_env());
+    Ok(cfg)
 }
 
 fn main() -> ExitCode {

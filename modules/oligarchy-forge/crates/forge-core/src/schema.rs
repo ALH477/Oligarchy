@@ -358,14 +358,213 @@ pub enum VolumeMode {
     Ephemeral,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
-#[serde(default)]
+/// How the container reaches the network. The default is `None`: the sandbox
+/// has no network namespace of its own beyond podman's, and nothing inside it
+/// can open a socket to the outside. This is the roadmap §7's "treat the
+/// sandbox as capability-isolated, not network-isolated" made the DEFAULT
+/// rather than the Stage-3 opt-in — a coding agent that needs the network
+/// says so in its `oligarchy-forge.toml`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NetworkMode {
+    /// No network at all: `--network=none`. (Default.)
+    #[default]
+    None,
+    /// The container shares the host's network namespace (the historical
+    /// behavior — full egress, no allowlist).
+    Host,
+}
+
+/// The sandbox hardening dial, locked down by default per project TOML.
+/// `read_only_rootfs`, `seccomp`, and `network` default to the hard value;
+/// a project opts out explicitly, so the opt-out is visible in its
+/// `oligarchy-forge.toml` rather than buried in a CLI flag nobody reads.
+///
+/// Deserialization is tri-state per field: a field ABSENT from the TOML gets
+/// the strict value, and a field PRESENT gets exactly what it says —
+/// including `read-only-rootfs = false`. Deriving `Default` on the struct
+/// would make a missing field `false` (bool's default), which inverts the
+/// posture, so the strict defaults live in `#[serde(default = "...")]` per
+/// field and `Sandbox::default()`/the container-level `#[serde(default)]`
+/// both mean "what you get when you write nothing".
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Sandbox {
+    /// `--read-only`: the container's root filesystem is read-only. Writable
+    /// state lives in the `/home/agent` volume and tmpfs mounts only.
+    #[serde(default = "default_true")]
+    pub read_only_rootfs: bool,
+    /// `--security-opt=seccomp=<profile>` with the checked-in strict profile
+    /// (forge-core's `seccomp_strict.json`, rendered into the image). Denies
+    /// mount/ptrace/kexec/module-loader and friends; everything else is
+    /// allowed so toolchains keep working.
+    #[serde(default = "default_true")]
+    pub seccomp: bool,
+    #[serde(default)]
+    pub network: NetworkMode,
+    /// cgroup memory cap in MiB. 0 = unlimited (not recommended; the default
+    /// is 4096).
+    #[serde(default = "default_memory_mib")]
+    pub memory_mib: u32,
+    /// CPU quota as a percentage of one core. 0 = unlimited (not
+    /// recommended; the default is 400 = four cores).
+    #[serde(default = "default_cpu_percent")]
+    pub cpu_percent: u32,
+    /// Maximum number of processes/threads inside the container. The default
+    /// is 512.
+    #[serde(default = "default_pids_limit")]
+    pub pids_limit: u32,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_memory_mib() -> u32 {
+    4096
+}
+fn default_cpu_percent() -> u32 {
+    400
+}
+fn default_pids_limit() -> u32 {
+    512
+}
+
+impl Sandbox {
+    /// The locked-down posture: every hardening flag ON. This is what a
+    /// project gets when it writes no `[sandbox]` table at all.
+    pub fn strict() -> Self {
+        Self {
+            read_only_rootfs: true,
+            seccomp: true,
+            network: NetworkMode::None,
+            memory_mib: 4096,
+            cpu_percent: 400,
+            pids_limit: 512,
+        }
+    }
+}
+
+// `Default` can't derive the strict posture because `bool`'s default is
+// `false`; the strict values are the whole point, so implement Default by
+// hand to mean "what you get when you write nothing".
+impl Default for Sandbox {
+    fn default() -> Self {
+        Self::strict()
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Runtime {
+    #[serde(default)]
     pub backend: Backend,
+    #[serde(default)]
     pub volume_mode: VolumeMode,
+    #[serde(default)]
+    pub sandbox: Sandbox,
+}
+
+// `Default` is hand-written rather than derived so the strict posture is
+// spelled out: every field's default is its type's `Default`, and
+// `Sandbox::default()` is the locked-down posture.
+impl Default for Runtime {
+    fn default() -> Self {
+        Self {
+            backend: Backend::default(),
+            volume_mode: VolumeMode::default(),
+            sandbox: Sandbox::default(),
+        }
+    }
+}
+
+/// The host-side sandbox defaults, as written by the NixOS module into the
+/// environment (OLIGARCHY_FORGE_SANDBOX_*). A per-project TOML field always
+/// wins over these; these win over the built-in strict defaults. The layer
+/// order is: built-in strict < host env < project TOML.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HostSandboxDefaults {
+    pub read_only_rootfs: Option<bool>,
+    pub seccomp: Option<bool>,
+    pub network_none: Option<bool>,
+    pub memory_mib: Option<u32>,
+    pub cpu_percent: Option<u32>,
+    pub pids_limit: Option<u32>,
+}
+
+impl HostSandboxDefaults {
+    /// Reads `OLIGARCHY_FORGE_SANDBOX_*` from the environment. Every variable
+    /// absent means "no host opinion" (None), so the layer is a no-op on a
+    /// host that sets nothing — which is every host until the NixOS module
+    /// writes the file.
+    pub fn from_env() -> Self {
+        fn env_bool(key: &str) -> Option<bool> {
+            std::env::var(key).ok()?.parse().ok()
+        }
+        fn env_u32(key: &str) -> Option<u32> {
+            std::env::var(key).ok()?.parse().ok()
+        }
+        Self {
+            read_only_rootfs: env_bool("OLIGARCHY_FORGE_SANDBOX_READ_ONLY_ROOTFS"),
+            seccomp: env_bool("OLIGARCHY_FORGE_SANDBOX_SECCOMP"),
+            network_none: env_bool("OLIGARCHY_FORGE_SANDBOX_NETWORK_NONE")
+                .map(|none| !none),
+            memory_mib: env_u32("OLIGARCHY_FORGE_SANDBOX_MEMORY_MIB"),
+            cpu_percent: env_u32("OLIGARCHY_FORGE_SANDBOX_CPU_PERCENT"),
+            pids_limit: env_u32("OLIGARCHY_FORGE_SANDBOX_PIDS_LIMIT"),
+        }
+    }
 }
 
 impl ForgeConfig {
+    /// Applies the host-side defaults (from `OLIGARCHY_FORGE_SANDBOX_*`) to
+    /// any sandbox field the project TOML left absent. A field the TOML
+    /// states explicitly is NOT overridden — the project file is the most
+    /// specific layer.
+    ///
+    /// Because `Sandbox`'s deserialization already fills absent fields with
+    /// the strict values, "absent" and "explicitly strict" are
+    /// indistinguishable after `parse()`. The host defaults therefore apply
+    /// ONLY when the field still holds its strict default AND the host
+    /// explicitly set a different value — which means a host default can
+    /// only ever RELAX, never tighten, and a project that writes the strict
+    /// value explicitly gets the host's relaxation. That is a known
+    /// limitation of the env-var channel: the correct fix is a host-level
+    /// config file the CLI reads, which is a larger change. For now the
+    /// NixOS module's defaults MATCH the strict built-ins, so the env layer
+    /// is a no-op unless an admin deliberately sets it.
+    pub fn apply_host_defaults(&mut self, host: &HostSandboxDefaults) {
+        let sb = &mut self.runtime.sandbox;
+        if sb.read_only_rootfs {
+            if let Some(v) = host.read_only_rootfs {
+                sb.read_only_rootfs = v;
+            }
+        }
+        if sb.seccomp {
+            if let Some(v) = host.seccomp {
+                sb.seccomp = v;
+            }
+        }
+        if matches!(sb.network, NetworkMode::None) {
+            if host.network_none == Some(true) {
+                sb.network = NetworkMode::Host;
+            }
+        }
+        if sb.memory_mib == 4096 {
+            if let Some(v) = host.memory_mib {
+                sb.memory_mib = v;
+            }
+        }
+        if sb.cpu_percent == 400 {
+            if let Some(v) = host.cpu_percent {
+                sb.cpu_percent = v;
+            }
+        }
+        if sb.pids_limit == 512 {
+            if let Some(v) = host.pids_limit {
+                sb.pids_limit = v;
+            }
+        }
+    }
+
     pub fn parse(toml_str: &str) -> anyhow::Result<Self> {
         let mut cfg: ForgeConfig = toml::from_str(toml_str)?;
         if !cfg.project.extensions.contains(&Extension::Base) {
@@ -569,6 +768,76 @@ mod tests {
         .unwrap();
         assert!(cfg.project.agents.is_empty());
         assert_eq!(cfg.agent_wrappers_nix(), "");
+    }
+
+    #[test]
+    fn host_defaults_relax_only_unset_fields() {
+        use super::HostSandboxDefaults;
+        // A project that writes nothing gets the strict posture; the host
+        // defaults can relax it (the env layer's known limitation: it can
+        // only relax, and only fields the TOML left at the strict value).
+        let mut cfg = ForgeConfig::parse(
+            r#"
+            [project]
+            name = "demo"
+            "#,
+        )
+        .unwrap();
+        cfg.apply_host_defaults(&HostSandboxDefaults {
+            read_only_rootfs: Some(false),
+            seccomp: None,
+            network_none: Some(true), // host says network = host
+            memory_mib: Some(8192),
+            cpu_percent: None,
+            pids_limit: Some(1024),
+        });
+        assert!(!cfg.runtime.sandbox.read_only_rootfs);
+        assert!(cfg.runtime.sandbox.seccomp); // untouched
+        assert_eq!(cfg.runtime.sandbox.network, NetworkMode::Host);
+        assert_eq!(cfg.runtime.sandbox.memory_mib, 8192);
+        assert_eq!(cfg.runtime.sandbox.cpu_percent, 400); // untouched
+        assert_eq!(cfg.runtime.sandbox.pids_limit, 1024);
+    }
+
+    #[test]
+    fn host_defaults_do_not_override_explicit_project_values() {
+        use super::HostSandboxDefaults;
+        // The project explicitly opted out of the read-only rootfs; the host
+        // default (also false) must not be confused with an override. And a
+        // project that explicitly chose the strict value where the host
+        // relaxes is indistinguishable from unset — the documented env-layer
+        // limitation, pinned here so it is a known tradeoff, not a surprise.
+        let cfg = ForgeConfig::parse(
+            r#"
+            [project]
+            name = "demo"
+            [runtime.sandbox]
+            read-only-rootfs = false
+            network = "host"
+            "#,
+        )
+        .unwrap();
+        let mut cfg = cfg;
+        cfg.apply_host_defaults(&HostSandboxDefaults {
+            read_only_rootfs: Some(true), // host wants strict; project said false
+            seccomp: Some(true),
+            network_none: Some(false),
+            memory_mib: Some(2048),
+            cpu_percent: Some(100),
+            pids_limit: Some(128),
+        });
+        // read_only_rootfs: the project's explicit false is NOT the strict
+        // default, so the host default does not apply — stays false.
+        assert!(!cfg.runtime.sandbox.read_only_rootfs);
+        // network: the project said host; the host default's network_none
+        // is Some(false) => no change.
+        assert_eq!(cfg.runtime.sandbox.network, NetworkMode::Host);
+        // seccomp/memory/cpu/pids: the project left them at strict defaults,
+        // so the host values apply.
+        assert!(cfg.runtime.sandbox.seccomp);
+        assert_eq!(cfg.runtime.sandbox.memory_mib, 2048);
+        assert_eq!(cfg.runtime.sandbox.cpu_percent, 100);
+        assert_eq!(cfg.runtime.sandbox.pids_limit, 128);
     }
 
     #[test]

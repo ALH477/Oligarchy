@@ -33,6 +33,14 @@
             mkdir -p $out/usr/bin
             ln -s ${pkgs.coreutils}/bin/env $out/usr/bin/env
           '')
+          # The seccomp profile `container_run` references by bare filename
+          # (--security-opt=seccomp=seccomp_strict.json resolves against the
+          # container's working directory). Shipped in the image so the
+          # profile travels with the sandbox it constrains.
+          (pkgs.runCommand "seccomp-strict-json" { } ''
+            mkdir -p $out
+            cp ${seccompStrictJson} $out/seccomp_strict.json
+          '')
         ];
         config = {
           Cmd = [ "/bin/bash" ];
