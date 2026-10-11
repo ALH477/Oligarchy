@@ -404,8 +404,15 @@ pattern: cap-drop
 -->
 What is thin is the forge, which is the sandbox this document proposes replacing.
 `modules/oligarchy-forge/crates/forge-core/src/process.rs` runs a container with
-`--cap-drop=ALL`, no-new-privileges and a kept-id user namespace — and no network
-isolation, no read-only rootfs, no seccomp profile and no resource limits. The escalation
+`--cap-drop=ALL`, no-new-privileges and a kept-id user namespace — and, as of
+2026-10-11, the posture is **locked down by default per project**: read-only
+rootfs, a strict seccomp profile (`seccomp_strict.json`, shipped in the image),
+`--network=none`, and cgroup memory/CPU/pids limits, all opt-out per field in
+the project's `oligarchy-forge.toml` (see `docs/oligarchy-forge-roadmap.md` §7).
+The base tier (cap-drop, no-new-privileges) is not configurable. What is still
+thin is the mediation: no egress allowlist proxy holding credentials, no
+host-side policy decision point on the vsock channel, and in-guest
+bubblewrap/Landlock (the tier currently downgrades to native inside the guest). The escalation
 ladder from rootless podman through gVisor to a microVM is already sketched in
 `docs/oligarchy-forge-research.md`, so this direction continues an existing roadmap
 rather than opening a new one.
@@ -567,6 +574,9 @@ Nothing here is legal advice; the derivative-work question and the licence excep
 - **Claims about this repository are bound by TrvthNvke** and fail `nix build .#trvthnvke-docs` when the tree stops matching them. That covers the verity pipeline, the plugin microVM tier and its hypervisor set, the forge's container flags, the `security.lsm` and kernel-variant owners, the root filesystem, Secure Boot and the nixpkgs pin.
 - **Hardware claims were measured on the target machine**, not inferred — see *Measured starting point*. The SEV-SNP and IBT statements in particular were asserted from general knowledge in earlier drafts and are now read from `/proc/cpuinfo` and the running kernel config.
 - **Claims about Exsecutor were read from a checkout and by driving the compiler directly**, including the target-triple table, the trap ABI, the import surface and the backend opcode coverage.
+- **K2 item 1 (float/SIMD prologue gate) is measured green** on the local checkout `/home/asher/Documents/EXSECUTOR` at commit `1d46f58` (2026-10-11): `tests/k2_nosse.sh` passes (integer `--emitte c` preprocesses without `vector_size` and compiles `-mno-sse -mgeneral-regs-only -mno-red-zone`).
+- **The K3-shape gate is measured green** on the same checkout: `tests/k2_kbuild.sh` (added 2026-10-11) emits the custos unit (entry-23 fixture + codec + `examples/custos/custos.exsc`), compiles it under `-mcmodel=kernel -mno-sse -mgeneral-regs-only -mno-red-zone -fno-stack-protector -ffreestanding -fno-builtin -fno-pie -O2 -Wall -Wextra -Werror`, asserts `nm -u` is exactly `{exsrt_abortus}`, asserts the largest frame is 48 bytes by `-fstack-usage` (criterion: < 4 KB), and runs the three verdict anchors (0 3 6) through a host shim. This satisfies the roadmap's K3 exit criterion **minus objtool** (no Kbuild tree on this machine).
+- **The exsecutor-for-linux stub repo** (`/home/asher/Documents/exsecutor-for-linux`, local git only, commit `0c256be`) links that unit into `exsecutor_enforce-y` and gates it with `tests/kbuild-shape.sh`, which additionally asserts the checked-in `src/custos.c` is byte-identical to what the pinned exsc re-emits (a mutated unit is refused — verified by hand). The stub's `exsrt_abortus` still `BUG()`s: K2 item 3 is open.
 
 **What is not, and cannot be here.**
 

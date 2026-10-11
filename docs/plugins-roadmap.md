@@ -966,6 +966,56 @@ formality.
     the tier and not a defect, but nothing warns an operator that enabling
     tier 2 for four plugins means four system closures and four rebuilds.
 
+### Agent-sandbox shape (declarative, tier 2)
+
+The roadmap's agent-isolation phase (Oligarchy
+`docs/exsecutor-kernel-roadmap.md` §K5) wants a coding-agent sandbox that is
+NOT the rootless-podman forge: an agent's model output is untrusted input,
+and tier 2 is the only tier whose boundary is a kernel rather than a filter.
+The shape, as a `declaredPlugins` entry — declarative, so the guest closure
+is pinned in the system and a rebuild is the unit of change:
+
+```nix
+custom.plugins = {
+  enable = true;
+  allowedTiers = [ "microvm" ];
+  microvm.enable = true;           # tier 2 host half (vsock proxy)
+  declaredPlugins.coding-agent = {
+    artifact = pkgs.callPackage ./path/to/agent-plugin { };
+    tier = "microvm";
+    jit = "self";                    # the agent carries its own runtime
+    trust = "untrusted";             # the default; say it anyway
+    autoStart = false;               # start per task, not at boot
+    caps = {
+      # A coding agent needs a writable workspace and nothing else.
+      fsReadWrite = [ "$STATE" ];    # per-plugin state dir
+      network = false;               # egress is a host-side proxy's job
+      tcpConnect = [ ];              # no direct TCP; the mediator decides
+      devices = [ ];                 # no /dev passthrough for an agent
+      hostServices = [ ];            # no host.has-capability surface
+      memoryMax = 4 * 1024 * 1024 * 1024;   # 4 GiB cgroup ceiling
+      cpuQuota = 200;                # two cores
+    };
+  };
+};
+```
+
+What this buys over the forge's podman sandbox: the agent's process runs in
+a guest kernel, so a kernel exploit inside the sandbox is a guest-kernel bug,
+not a host-kernel bug; the host side is a vsock proxy that never JITs, so
+`MemoryDenyWriteExecute=yes` holds on the host half; and `jit = "self"` is
+honest — the guest is where writable-then-executable memory exists, and the
+host never maps it. The **limitation**, stated in the kernel roadmap's D.1
+and repeated here because it is the one that bites: `declaredPlugins` is
+**declarative-only**. A guest needs a closure, so building one is a rebuild,
+and an agent sandbox created per task from a mutable workspace cannot accept
+that constraint unchanged. Until a per-task path exists, tier-2 agent
+sandboxes are long-lived (one per agent identity), not per-task. The forge
+remains the per-task tool; the flags added to it (read-only rootfs, strict
+seccomp, `--network=none`, cgroup limits — all default-on, per-project
+opt-out in `oligarchy-forge.toml`) are what make its per-task containers an
+acceptable substrate in the meantime.
+
 ---
 
 ## 7. Changelog

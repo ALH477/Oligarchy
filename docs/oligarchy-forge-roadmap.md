@@ -171,14 +171,44 @@ oligarchy-forge run -- echo hello
 
 ## 7. Security posture
 
-Stage 0's `container_run()` already bakes in the "base" tier from the
-source research's own tiered model, rather than deferring all security to
-Stage 3: `--cap-drop=ALL`, `--security-opt no-new-privileges`, and (Podman
-only) `--userns=keep-id` so bind-mounted `/workspace` files come out owned
-by the host user instead of a subuid range. Only `/workspace` (PWD) and the
-per-project home volume are mounted — no other host paths. Network is not
-yet restricted (an egress allowlist is Stage 3's `security-strict` tier);
-until then, treat the sandbox as capability-isolated, not network-isolated.
+Stage 0's `container_run()` bakes in the "base" tier from the source
+research's own tiered model: `--cap-drop=ALL`, `--security-opt
+no-new-privileges`, and (Podman only) `--userns=keep-id` so bind-mounted
+`/workspace` files come out owned by the host user instead of a subuid
+range. Only `/workspace` (PWD) and the per-project home volume are mounted
+— no other host paths.
+
+**Updated 2026-10-11 — the sandbox posture is now locked down by default,
+per project, not deferred to Stage 3.** A project that writes no
+`[runtime.sandbox]` table gets, in `forge-core`'s `Sandbox::default()`:
+
+| Field | Default | Flag |
+|---|---|---|
+| `read-only-rootfs` | `true` | `--read-only` + `--tmpfs=/tmp` + `--tmpfs=/var/tmp` |
+| `seccomp` | `true` | `--security-opt=seccomp=seccomp_strict.json` (shipped in the image) |
+| `network` | `"none"` | `--network=none` — no egress at all |
+| `memory-mib` | `4096` | `--memory=4096m` |
+| `cpu-percent` | `400` | `--cpu-quota=4000000` (4 cores) |
+| `pids-limit` | `512` | `--pids-limit=512` |
+
+The base tier (`--cap-drop=ALL`, `--security-opt no-new-privileges`) is NOT
+configurable — it is not a dial. The six posture fields are per-project
+opt-OUT in `oligarchy-forge.toml`, so the relaxed shape is visible in the
+config file rather than hidden in a default nobody reads. The NixOS module
+exposes the same six as `custom.oligarchyForge.sandbox.*` host defaults,
+exported to the CLI as `OLIGARCHY_FORGE_SANDBOX_*` environment variables;
+the host layer can only relax fields the project TOML left at the strict
+default (a known limitation of the env channel — a project that writes the
+strict value explicitly is indistinguishable from one that wrote nothing).
+The seccomp profile denies `mount`/`umount2`/`pivot_root`/`chroot`,
+`ptrace`, `bpf`, `kexec_*`, `init_module`/`finit_module`/`delete_module`,
+`perf_event_open`, `unshare`, `setns` and `clone3` with `EPERM`; everything
+else is allowed so ordinary toolchains keep working.
+
+The egress allowlist proxy (credentials outside the sandbox, injected as
+scoped tokens at a proxy) remains Stage 3's `security-strict` work; the
+kernel roadmap's D.1 design principles 1 and 4 are what this default
+implements.
 
 ## 8. Open questions (defaults will be applied if unanswered)
 
@@ -343,7 +373,12 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
   reading `Cargo.lock` for duplicate `ratatui`/`crossterm` entries after
   each dependency bump.
 
-## Phase 3 — Skill browser + security legibility (not started)
+## Phase 3 — Skill browser + security legibility (partially landed early)
+
+The container-hardening half of "security legibility" landed ahead of the
+TUI work (2026-10-11, commit on `haven-integration`): the sandbox posture
+is locked down by default per project (see §7), and `run_argv` is public
+so the CLI can show the effective flags. What remains:
 
 - [ ] `SKILL.md` scanner: walk configured skill dirs, parse YAML
       frontmatter (`name`, `description`), adopt Claude Code's
@@ -378,6 +413,17 @@ Status legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
 ## Changelog (living document — append newest at top)
 
+- **Sandbox posture locked down by default (2026-10-11):** `forge-core`
+  gained `Sandbox` (six fields, strict by default), `run_argv` (the argv
+  `container_run` will pass, public for tests and CLI display), and
+  `seccomp_strict.json` (shipped in the image at its root). The NixOS module
+  gained `custom.oligarchyForge.sandbox.*` host defaults exported as
+  `OLIGARCHY_FORGE_SANDBOX_*`. 8 new unit tests assert the locked-down argv
+  by default, the exact opt-out, partial opt-out, seccomp profile validity,
+  TOML round-trip, and host-default layering. `cargo test --workspace`:
+  35 passed. Closes the gap `docs/exsecutor-kernel-roadmap.md` D.1 named
+  ("no network isolation, no read-only rootfs, no seccomp profile and no
+  resource limits").
 - **Agent catalog expanded (2026-08-16):** `Agent::ALL` grew from one
   entry (`oh-my-pi`) to seven: `claude`, `opencode`, `ollama`, `codex`,
   `aider`, `cursor` added. Five of the six new agents are plain nixpkgs
