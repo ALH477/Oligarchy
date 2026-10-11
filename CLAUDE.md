@@ -588,9 +588,9 @@ The locale contract, catalogs and installer round-trip are specified in `docs/lo
 id: subflake-count
 kind: glob_count
 glob: modules/*/flake.nix
-equals: 20
+equals: 21
 -->
-Twenty directories under `modules/` carry their own `flake.nix`. Eighteen of them are `path:` inputs of the root flake; `ArchibaldOS` (the RT DSP guest OS) and `plymouth` (the boot splash) are standalone and are not inputs. `vm-manager` is the nineteenth input and sits outside `modules/`. Adding or removing a sub-flake changes this count and the two enumerations above.
+Twenty-one directories under `modules/` carry their own `flake.nix`. Nineteen of them are `path:` inputs of the root flake; `ArchibaldOS` (the RT DSP guest OS) and `plymouth` (the boot splash) are standalone and are not inputs. `vm-manager` is the twentieth input and sits outside `modules/`. Adding or removing a sub-flake changes this count and the two enumerations above. (Bumped 20 → 21 by `6aec935` adding `modules/haven/`; the prose did not follow it.)
 <!-- truth:end -->
 
 <!-- truth:claim
