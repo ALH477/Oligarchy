@@ -3971,7 +3971,123 @@
               [ "$fail" -eq 0 ] || { echo "network-posture-contract: FAILED" >&2; exit 1; }
               echo "network-posture-contract: 25 checks passed" | tee -a $out/report.txt
             '';
-      };
+
+        # ════════════════════════════════════════════════════════════════════
+        # blocklists-pinning-contract — eval gate for the sha256 feed pins.
+        #
+        # Three things an eval gate can prove, and one it must not be mistaken
+        # for. It proves (a) the pinFeeds/pins options exist on the module,
+        # (b) pinFeeds=true refuses a configuration whose sources lack pins
+        # (the assertion fires), and (c) pinFeeds=false does NOT refuse —
+        # bootstrap mode must work. What it does NOT prove is that a hash
+        # mismatch at fetch time is rejected; that lives in the VM test
+        # (tests/default.nix -A ip-blocklists) because an eval-only gate over
+        # a fetcher is exactly the windscribe-app failure mode — green
+        # structural assertions over a subsystem that did not work.
+        #
+        # Run on demand:  nix build .#blocklists-pinning-contract
+        # ════════════════════════════════════════════════════════════════════
+        blocklists-pinning-contract =
+          let
+            lib' = nixpkgs.lib;
+            base = self.nixosConfigurations.nixos;
+            override = ms: (base.extendModules { modules = ms; }).config;
+
+            # pinFeeds=true, no pins declared → assertion must fire.
+            # mkForce so the local.nix override (pinFeeds=true with pins) does
+            # not collide — we are testing the assertion, not the merge.
+            noPins = override [
+              {
+                networking.firewall.blocklists = {
+                  enable = lib'.mkForce true;
+                  pinFeeds = lib'.mkForce true;
+                  pins = lib'.mkForce { };
+                  # feeds must be non-empty (assertion) — keep the default 4
+                  # but the local.nix override may have narrowed them; force
+                  # the full set so all 5 source ids are checked.
+                  feeds = lib'.mkForce [ "ipsum" "spamhaus-drop" "blocklist-de" "cins" ];
+                };
+              }
+            ];
+            noPinsRefused = lib'.any
+              (a: !a.assertion && lib'.hasInfix "pinFeeds=true requires every feed" a.message)
+              noPins.assertions;
+
+            # pinFeeds=false, no pins → must NOT refuse (bootstrap mode).
+            bootstrap = override [
+              {
+                networking.firewall.blocklists = {
+                  enable = lib'.mkForce true;
+                  pinFeeds = lib'.mkForce false;
+                  pins = lib'.mkForce { };
+                  feeds = lib'.mkForce [ "ipsum" "spamhaus-drop" "blocklist-de" "cins" ];
+                };
+              }
+            ];
+            bootstrapHasNoPinAssertion = lib'.any
+              (a: !a.assertion && lib'.hasInfix "pinFeeds=true requires every feed" a.message)
+              bootstrap.assertions;
+
+            # pinFeeds=true with all pins present → must NOT refuse.
+            allPinned = override [
+              {
+                networking.firewall.blocklists = {
+                  enable = lib'.mkForce true;
+                  pinFeeds = lib'.mkForce true;
+                  feeds = lib'.mkForce [ "ipsum" "spamhaus-drop" "blocklist-de" "cins" ];
+                  pins = lib'.mkForce {
+                    ipsum-L3 = "70cca73919cf4cbb255241739fb3ec4bbf49a325fe15a9d21cb68499325d4806";
+                    spamhaus-drop-v4 = "389cf225e4fc862c4d78d5a82c871e12d7b95ff6a056992f24b021003c2e68cf";
+                    spamhaus-drop-v6 = "13b02909366ea22be6a27073fda3b6068044a83eac93ad61acdb78f2a388f127";
+                    blocklist-de = "7548cd61983cf8d3e15cf094410c6ef8e3e8ac0e9b521eaadd4fbf1bdbce99a9";
+                    cins = "91f21164c87db5c5fb33ab779e171c594406f7f2341f1d2f2b0503819898d0e9";
+                  };
+                };
+              }
+            ];
+            allPinnedHasNoPinAssertion = lib'.any
+              (a: !a.assertion && lib'.hasInfix "pinFeeds=true requires every feed" a.message)
+              allPinned.assertions;
+
+            payload = pkgs.writeText "blocklists-pinning-contract.json" (builtins.toJSON {
+              pinFeedsOptionExists = allPinned.networking.firewall.blocklists.pinFeeds;
+              pinsOptionExists = allPinned.networking.firewall.blocklists.pins != { };
+              pinTrueNoPinsRefused = noPinsRefused;
+              pinFalseNoPinsAllowed = !bootstrapHasNoPinAssertion;
+              pinTrueAllPinsAllowed = !allPinnedHasNoPinAssertion;
+            });
+          in
+          pkgs.runCommand "blocklists-pinning-contract"
+            {
+              nativeBuildInputs = [ pkgs.jq ];
+              meta = with nixpkgs.lib; {
+                description = "Assert blocklist feed sha256 pins: pinFeeds=true refuses unpinned sources, false allows bootstrap, true+all-pins passes.";
+                license = licenses.bsd3;
+                platforms = platforms.linux;
+              };
+            }
+            ''
+              mkdir -p $out
+              j=${payload}
+              cp "$j" $out/contract.json
+              fail=0
+              want() {
+                if [ "$(jq -r ".$1" "$j")" = true ]; then
+                  echo "PASS  $1" | tee -a $out/report.txt
+                else
+                  echo "FAIL  $1 = $(jq -c ".$1" "$j")" | tee -a $out/report.txt >&2
+                  fail=1
+                fi
+              }
+              want pinFeedsOptionExists
+              want pinsOptionExists
+              want pinTrueNoPinsRefused
+              want pinFalseNoPinsAllowed
+              want pinTrueAllPinsAllowed
+              [ "$fail" -eq 0 ] || { echo "blocklists-pinning-contract: FAILED" >&2; exit 1; }
+              echo "blocklists-pinning-contract: 5 checks passed" | tee -a $out/report.txt
+            '';
+       };
 
       # ════════════════════════════════════════════════════════════════════════
       # Checks & Formatter

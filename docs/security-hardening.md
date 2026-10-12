@@ -222,6 +222,11 @@ root). `rootkit` uses lynis + unhide (rkhunter/chkrootkit aren't in nixpkgs
 
 ## Phase 6 — AppArmor / auditd (after a soak)
 
+**Status: SHIPPED 2026-10-12.** Enabled in `~/.config/oligarchy/local.nix` on the
+primary host. The repo default stays off (`lib.mkDefault false` in
+`configuration.nix`) so fresh clones are unaffected; deployed hosts flip it in
+`local.nix`.
+
 ```nix
 custom.security.hardening = { apparmor = true; auditd = true; };
 ```
@@ -232,6 +237,9 @@ Switch, then watch for a day:
 journalctl -g apparmor -p warning      # denials
 journalctl -t audit                    # audit events
 ```
+
+AppArmor loads complain-first (`killUnconfinedConfinables = false`), so the
+first switch is non-disruptive — profiles apply on next exec.
 
 USBGuard stays opt-in (paranoid preset). To enroll present devices:
 
@@ -421,6 +429,52 @@ Also in this batch (egress dry-run prep, not yet enforcing):
   failed without passwordless sudo and always reported 0 entries.
 - Floorp browser telemetry disabled via `user.js` in the Floorp profile
   (eliminates ~90/113 WOULDBLOCK entries per 30min).
+
+---
+
+## Phase 6.5 — Blocklist feed pinning (shipped 2026-10-12)
+
+Threat-intel feeds are fetched over HTTPS but were not content-pinned: a
+compromised CDN, an upstream feed swap, or a truncated-but-200 response
+could silently change which IPs are blocked. `networking.firewall.blocklists`
+now carries `pinFeeds` (default `true`) and `pins` (an attrset of source-id →
+sha256 hex). With `pinFeeds = true`, every feed source MUST declare a pin or
+eval fails closed. At fetch time, the downloaded body is hashed and compared;
+a mismatch rejects the fetch and reuses the cached copy.
+
+```nix
+networking.firewall.blocklists = {
+  enable = true;
+  pinFeeds = true;
+  pins = {
+    ipsum-L3 = "70cca73919cf4cbb255241739fb3ec4bbf49a325fe15a9d21cb68499325d4806";
+    # …one entry per source id…
+  };
+};
+```
+
+Bootstrap a new feed: set `pinFeeds = false`, run the updater once, capture
+`sha256sum /var/lib/oligarchy-blocklists/cache/<id>.txt`, paste it into `pins`,
+set `pinFeeds = true`. To rotate a pin after an upstream feed change, update
+the hash and rebuild.
+
+Gates: `nix build .#blocklists-pinning-contract` (eval: option exists,
+`pinFeeds=true` refuses unpinned sources, `false` allows bootstrap, `true`+all-pins
+passes). `nix-build tests/default.nix -A ip-blocklists-pinning` (VM: pin
+option evaluates, cache path works).
+
+---
+
+## Phase 6.6 — Auto-upgrade (shipped 2026-10-12)
+
+`system.autoUpgrade` builds the new generation daily from the GitHub flake URL
+(`github:ALH477/Oligarchy#nixos`), so upstream nixpkgs CVE patches land without
+manual intervention. Never auto-reboots (`allowReboot = false`) — a Framework 16
+running DSP/audio work must not lose sessions to a surprise restart.
+`randomizedDelaySec = "1h"` spreads the load across hosts.
+
+Enabled in `~/.config/oligarchy/local.nix` on the primary host. The repo default
+is off (opt-in per host).
 
 ---
 

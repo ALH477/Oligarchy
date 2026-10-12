@@ -56,6 +56,14 @@ let
   # `min`/`max` are sanity bands, not precision: they exist to reject a
   # truncated body or an HTML error page served with 200, so they are set an
   # order of magnitude either side of the observed size.
+  #
+  # `sha256` is the content pin. With pinFeeds=true (the default) every source
+  # MUST declare one — a feed served over HTTPS is transport-integrity only;
+  # the pin is what stops a compromised CDN, an upstream feed swap, or a
+  # truncated-but-200 response from silently changing which IPs are blocked.
+  # Bootstrap: set pinFeeds=false, run the updater once, capture the hashes
+  # from `sha256sum /var/lib/oligarchy-blocklists/cache/*.txt`, paste them in,
+  # set pinFeeds=true.
   sourcesFor = feed: {
     ipsum = [{
       id = "ipsum-L${toString cfg.ipsumLevel}";
@@ -93,8 +101,19 @@ let
 
   sources = concatMap sourcesFor cfg.feeds;
 
+  # Attach pins from the pin table. A source without a pin entry is allowed
+  # only when pinFeeds=false (bootstrap mode); the assertion below enforces
+  # that.
+  pins = cfg.pins;
+  withPins = map (s:
+    if pins ? ${s.id} then s // { sha256 = pins.${s.id}; } else s
+  ) sources;
+
   sourceManifest = pkgs.writeText "oligarchy-blocklists-sources.json"
-    (builtins.toJSON (map (s: { inherit (s) id url min max; }) sources));
+    (builtins.toJSON (map (s: {
+      inherit (s) id url min max;
+      sha256 = s.sha256 or "";
+    }) withPins));
 
   # ── Merge / validate / filter ───────────────────────────────────────────────
   # Python rather than awk because every meaningful check here is CIDR
@@ -226,6 +245,7 @@ let
   updateScript = pkgs.writeShellScriptBin "oligarchy-blocklists-update" ''
     set -u
     export PATH=${makeBinPath [ pkgs.coreutils pkgs.curl pkgs.ipset pkgs.iproute2 pkgs.gnugrep pkgs.gawk pkgs.python3Minimal ]}:$PATH
+    # sha256sum lives in coreutils, already on PATH above.
 
     STATE=${stateDir}
     mkdir -p "$STATE/cache"
@@ -260,17 +280,27 @@ let
     fi
 
     # ── Fetch ────────────────────────────────────────────────────────────────
-    ${concatMapStringsSep "\n    " (s: ''
+    ${concatMapStringsSep "\n    " (s: let
+      expected = s.sha256 or "";
+    in ''
       tmp=$(mktemp)
       if curl -sS --fail --location --max-time 90 --retry 3 --retry-delay 5 \
           "${s.url}" -o "$tmp" && [ -s "$tmp" ]; then
+        ${optionalString (expected != "") ''
+        actual=$(sha256sum "$tmp" | cut -d' ' -f1)
+        if [ "$actual" != "${expected}" ]; then
+          echo "blocklists: HASH MISMATCH for ${s.id} (got $actual, want ${expected}) — reusing cache" >&2
+          rm -f "$tmp"
+          continue
+        fi
+        echo "blocklists: fetched ${s.id} (hash ok)"
+        ''}
         mv "$tmp" "$STATE/cache/${s.id}.txt"
-        echo "blocklists: fetched ${s.id}"
       else
         rm -f "$tmp"
         echo "blocklists: fetch FAILED for ${s.id} — reusing cache" >&2
       fi
-    '') sources}
+    '') withPins}
 
     # ── Validate + merge ─────────────────────────────────────────────────────
     if ! python3 ${filterScript} "$STATE" ${sourceManifest} "$PROT" ${escapeShellArgs cfg.allow.ips}; then
@@ -448,6 +478,37 @@ in
       description = "Refresh interval (systemd time span). Feeds update hourly to daily upstream.";
     };
 
+    pinFeeds = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Require every feed source to declare a sha256 content pin in
+        networking.firewall.blocklists.pins. When true, a source whose id
+        has no pin entry fails eval (fail closed). Set false only to
+        bootstrap pins for a new feed — run the updater once, capture the
+        hashes, add them to pins, set this back to true.
+      '';
+    };
+
+    pins = mkOption {
+      type = types.attrsOf types.str;
+      default = { };
+      description = ''
+        Content pins for feed sources, keyed by source id. The value is the
+        hex sha256 of the raw feed body (no trailing newline normalization —
+        `sha256sum /var/lib/oligarchy-blocklists/cache/<id>.txt`). A feed
+        whose fetched bytes do not match its pin is rejected and the cached
+        copy is reused, so a compromised upstream or CDN cannot silently
+        change which IPs are blocked.
+      '';
+      example = literalExpression ''
+        {
+          ipsum-L3 = "a1b2c3...";
+          spamhaus-drop-v4 = "d4e5f6...";
+        }
+      '';
+    };
+
     maxElem = mkOption {
       type = types.int;
       default = 300000;
@@ -485,6 +546,19 @@ in
       {
         assertion = cfg.feeds != [ ];
         message = "networking.firewall.blocklists.feeds is empty — either add a feed or set enable = false.";
+      }
+      {
+        assertion = !cfg.pinFeeds || (all (s: cfg.pins ? ${s.id}) sources);
+        message = let
+          missing = builtins.filter (s: !(cfg.pins ? ${s.id})) sources;
+        in ''
+          networking.firewall.blocklists.pinFeeds=true requires every feed
+          source to have a sha256 pin in networking.firewall.blocklists.pins.
+          Missing pins for: ${concatStringsSep ", " (map (s: s.id) missing)}.
+          Bootstrap: set pinFeeds=false, run the updater once, add the hashes
+          from /var/lib/oligarchy-blocklists/cache/*.txt to pins, set
+          pinFeeds=true.
+        '';
       }
     ];
 

@@ -1124,13 +1124,14 @@
       custom.secrets.wifi.enable = lib.mkDefault false;
 
       # Security hardening ladder (modules/security/hardening.nix):
-      # SSH keys-only + fail2ban now; apparmor/auditd flip on after soak.
+      # SSH keys-only + fail2ban now; apparmor/auditd default to mkDefault
+      # (off) so a fresh clone stays light. Deployed hosts flip them on in
+      # ~/.config/oligarchy/local.nix — Phase 6 of docs/security-hardening.md.
       custom.security.hardening = {
         enable = lib.mkDefault false;
         preset = "hardened";
-        # Deferred to Phase 6 of the rollout — enable after a clean soak:
-        apparmor = false;
-        auditd = false;
+        apparmor = lib.mkDefault false;
+        auditd = lib.mkDefault false;
       };
 
       # Strict egress filtering (modules/security/strict-egress.nix) —
