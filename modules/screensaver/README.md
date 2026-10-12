@@ -3,7 +3,7 @@
 An idle screensaver whose engine is written in **Exsecutor**, the
 capability-typed systems language at `github:ALH477/exsecutor`. The engine
 is `somnium` (`examples/somnium/` there, design in `docs/design/somnium.md`
-there). It has nine effects:
+there). It has thirteen effects:
 
 | name | what |
 |---|---|
@@ -12,6 +12,7 @@ there). It has nine effects:
 | `fulmen` | five lightning bolts, white core, cyan sheath, night sky |
 | `cruor` | gore drips gathering in a pool along the bottom edge |
 | `pyramis` | Sierpinski tetrahedron: white beam in, seven-band rainbow out |
+| `edictum` | scrolling 5x7: I HATE WINDOWS / I HATE MAC / I LOVE LINUX / BSD IS OK |
 | `pluvia` | digital rain |
 | `stellae` | warp starfield |
 | `cuniculus` | the demoscene XOR tunnel, in the logo's crimson and navy |
@@ -111,7 +112,7 @@ nix build .#screensaver-tests
 
 No KVM, no compositor. It checks four things:
 
-1. **Both** builds render all eleven effect fixtures byte-identical to
+1. **Both** builds render all fifteen effect fixtures byte-identical to
    exsecutor's goldens, and refuse all six bad requests with exit 1 and no
    output.
 2. The bash request encoder is byte-identical to exsecutor's fixture
@@ -154,8 +155,8 @@ animations, `assets/screensaver-*.gif`):
 - `nix build github:ALH477/exsecutor/<the rev in flake.lock>#somnium` succeeds,
   producing the freestanding binary and `share/somnium/signaculum_mesh.bin`.
 - Driven straight over stdin with the 17-byte request this module's
-  `script.nix` encodes, it renders all nine somnia. All **17** of exsecutor's
-  `tests/programs/somnium_*` fixtures pass against that binary: 11 render
+  `script.nix` encodes, it renders all thirteen somnia. All **21** of exsecutor's
+  `tests/programs/somnium_*` fixtures pass against that binary: 15 render
   `expected.out` byte-identical (including `abyssus`'s `f64` zoom and the
   `signum` model path), and 6 malformed requests are refused with exit 1 and
   zero bytes.

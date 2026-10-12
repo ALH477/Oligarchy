@@ -2748,7 +2748,7 @@
                 name=''${build%%:*}
                 bin=''${build#*:}/bin/somnium
                 found=0
-                for n in plasma ignis vita semen_nihil pluvia stellae cuniculus abyssus titulus titulus_volatus signum; do
+                for n in plasma ignis vita semen_nihil pluvia stellae cuniculus abyssus titulus titulus_volatus signum fulmen cruor pyramis edictum; do
                   found=$((found + 1))
                   if "$bin" < "$E/tests/data/somnium_$n.bin" > "$name.$n.out" \
                       && cmp -s "$name.$n.out" "$E/tests/programs/somnium_$n/expected.out"; then
@@ -2768,7 +2768,7 @@
                   fi
                 done
                 # A renamed fixture directory must not turn part 1 into a no-op.
-                [ "$found" -eq 17 ] || no "$name: part 1 inspected $found fixtures, expected 17"
+                [ "$found" -eq 21 ] || no "$name: part 1 inspected $found fixtures, expected 21"
               done
 
               # ── 2. the host encoder against exsecutor's requests ────────
@@ -2787,7 +2787,7 @@
               pluvia 3 40 1 0x51
               abyssus 6 300 1 0x54
               signum 8 20 1 0x56
-              ignotum 9 0 1 1
+              ignotum 13 0 1 1
               EOF
               if cmp -s <(tail -c 44801 "$E/tests/data/somnium_signum.bin") \
                   ${fast}/share/somnium/signaculum_mesh.bin; then
@@ -2845,7 +2845,7 @@
               for build in reference:${reference} c:${fast}; do
                 name=''${build%%:*}
                 bin=''${build#*:}/bin/somnium
-                for s in 0:plasma 1:ignis 2:vita 3:pluvia 4:stellae 5:cuniculus 6:abyssus 7:titulus 8:signum; do
+                for s in 0:plasma 1:ignis 2:vita 3:pluvia 4:stellae 5:cuniculus 6:abyssus 7:titulus 8:signum 9:fulmen 10:cruor 11:pyramis 12:edictum; do
                   id=''${s%%:*}; eff=''${s#*:}
                   if [ "$id" -eq 8 ]; then
                     { ${command}/bin/oligarchy-screensaver --request "$id" 0 60 7; cat ${fast}/share/somnium/signaculum_mesh.bin; } > req.bin

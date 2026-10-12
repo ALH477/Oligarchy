@@ -2,7 +2,7 @@
 #
 # The engine is `somnium` from github:ALH477/exsecutor (the `exsecutor` flake
 # input): a program written in Exsecutor with no clock and no entropy source
-# of its own, nine effects, one of them the language's own 3D engine turning
+# of its own, thirteen effects, one of them the language's own 3D engine turning
 # its logo. It reads a request on stdin and writes raw 160x100 rgb24 frames
 # on stdout; ./script.nix pipes those into a fullscreen, borderless mpv,
 # which scales and presents them on the GPU (mpv --vo=gpu --gpu-api=opengl;
@@ -85,6 +85,7 @@ in
         "fulmen"
         "cruor"
         "pyramis"
+        "edictum"
       ]);
       default = [ "pluvia" "titulus" "stellae" "signum" "cuniculus" "abyssus" "plasma" "ignis" "vita" ];
       description = ''
@@ -97,9 +98,8 @@ in
         in the starfield, rendered by Exsecutor's own 3D engine; `fulmen`
         five lightning bolts on a night sky; `cruor` gore drips pooling at
         the bottom; `pyramis` a Sierpinski tetrahedron with a white beam in
-        and a seven-band rainbow out. fulmen, cruor and pyramis need an
-        exsecutor pin that includes somnium 9–11 -- the locked d581c64
-        engine refuses those ids.
+        and a seven-band rainbow out; `edictum` a four-line 5x7 marquee
+        scrolling I HATE WINDOWS / I HATE MAC / I LOVE LINUX / BSD IS OK.
         The default order lets the rain resolve into the title and the stars
         lead into the logo. One entry runs that effect alone, with no cycling.
       '';
