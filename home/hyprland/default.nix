@@ -662,6 +662,14 @@ in
         # corruption (same class as Windscribe above). pin keeps scratchpads
         # off it. opaque/noblur/nodim stop wallpaper and dim_inactive showing
         # through. noanim keeps wake-up from animating the window away.
+        # idleinhibit none is the one that makes it a screensaver at all:
+        # without it, the generic `idleinhibit always, fullscreen:1` below
+        # matches this window the moment mpv maps fullscreen, Hyprland holds
+        # an idle inhibitor on its behalf, hypridle reads that as activity
+        # about a second after the screensaver started, and its on-resume
+        # kills the unit. mpv itself is already told not to inhibit
+        # (--stop-screensaver=no in script.nix); this rule stops the
+        # compositor doing it for the window instead.
         # Inert unless that window exists.
         "float, class:^(oligarchy-screensaver)$"
         "fullscreen, class:^(oligarchy-screensaver)$"
@@ -670,6 +678,7 @@ in
         "noblur, class:^(oligarchy-screensaver)$"
         "nodim, class:^(oligarchy-screensaver)$"
         "noanim, class:^(oligarchy-screensaver)$"
+        "idleinhibit none, class:^(oligarchy-screensaver)$"
 
         # PiP support
         "float, title:^(Picture.in.[Pp]icture)$"
@@ -841,8 +850,8 @@ in
           has = prefix: lib.elem "${prefix}, ${class}" rules;
         in
         has "fullscreen" && has "noanim" && has "float" && has "pin"
-        && has "opaque" && has "noblur" && has "nodim";
-      message = "oligarchy-screensaver windowrulev2 must include fullscreen, noanim, float, pin, opaque, noblur, nodim (class:^(oligarchy-screensaver)$). Tiled or dimmed mpv looks like panel corruption. See home/hyprland/default.nix windowrulev2.";
+        && has "opaque" && has "noblur" && has "nodim" && has "idleinhibit none";
+      message = "oligarchy-screensaver windowrulev2 must include fullscreen, noanim, float, pin, opaque, noblur, nodim, idleinhibit none (class:^(oligarchy-screensaver)$). Tiled or dimmed mpv looks like panel corruption; without idleinhibit none the generic fullscreen:1 rule inhibits idle and hypridle stops the screensaver a second after it starts. See home/hyprland/default.nix windowrulev2.";
     }
     {
       # The autologin boot lock hangs off a RUNTIME condition

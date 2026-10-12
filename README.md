@@ -255,9 +255,9 @@ id: screensaver-engine-pin
 kind: json_pointer
 path: flake.lock
 pointer: /nodes/exsecutor/locked/rev
-equals: d581c64a1dacb3e22e9f4de9768a4043793905d8
+equals: 517e1abce00e1d4fc9cf463f2cf472510124686a
 -->
-The engine is **`somnium`**, written in [Exsecutor](https://github.com/ALH477/exsecutor) — the capability-typed systems language whose own compiler is a freestanding x86-64 binary with no libc and a closed allowlist of nine syscalls. Every GIF on this page was rendered by the exact revision `flake.lock` pins, `d581c64`, and nothing else touched the pixels.
+The engine is **`somnium`**, written in [Exsecutor](https://github.com/ALH477/exsecutor) — the capability-typed systems language whose own compiler is a freestanding x86-64 binary with no libc and a closed allowlist of nine syscalls. Every GIF on this page was rendered by somnium pinned in `flake.lock`, and nothing else touched the pixels.
 <!-- truth:end -->
 
 The engine has **no clock and no entropy**. Time is the frame index. Randomness is one 32-bit seed the host hands it on stdin. The screen differs night to night because the host picks a fresh seed — but the same request renders the same bytes until the heat death of the Framework 16.
@@ -289,7 +289,7 @@ And the two builds are not permitted to drift. `backend`, in `modules/screensave
 
 That is not a slogan, and it is not a promise — it is a passing gate. Against Exsecutor's own conformance corpus, **both** builds render every effect fixture byte-identical to the goldens — plasma, fire, Life, rain, stars, tunnel, the `f64` Mandelbrot, the title card and the 3D logo — and **both** refuse every malformed request with exit 1 and zero bytes written. The C build clears 4,285 fps on the title card; the freestanding one, writing a single byte per system call, manages 40, and 21 on the 3D logo. Both of those beat the 20 fps the screensaver actually asks for, which means the purist build is not a museum piece.
 
-### The nine somnia
+### The somnia
 
 ![titulus: digital rain flies together into OLIGARCHY, then the two Latin inscriptions type in beneath](./assets/screensaver-titulus.gif) ![signum: the Exsecutor logo turning in a starfield, rendered by Exsecutor's own 3D engine](./assets/screensaver-signum.gif)
 
@@ -313,6 +313,10 @@ Every animation on this page is real `somnium` output — `assets/screensaver-*.
 | `plasma` | four summed sine waves through a three-phase palette |
 | `ignis` | heat-diffusion fire |
 | `vita` | Conway's Life, coloured by age, with fading trails |
+| `fulmen` | five lightning bolts, white core, cyan sheath, night sky |
+| `cruor` | gore drips pooling at the bottom edge |
+| `pyramis` | a Sierpinski tetrahedron: white beam in, seven-band rainbow out |
+| `edictum` | a four-line 5x7 marquee: I HATE WINDOWS / I HATE MAC / I LOVE LINUX / BSD IS OK |
 
 The default order is deliberate: the rain resolves into the title, and the stars lead into the sigil.
 
